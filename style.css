@@ -240,6 +240,7 @@ input, select, textarea { font-family: inherit; }
   width: 16px; height: 16px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
 }
+.alert-count.hidden { display: none; }
 
 /* Alert Drawer */
 .alert-drawer {
@@ -391,6 +392,12 @@ input, select, textarea { font-family: inherit; }
   color: var(--text-secondary);
 }
 .runtime-banner-main strong { color: var(--text-primary); }
+.runtime-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
 .runtime-banner-meta {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;

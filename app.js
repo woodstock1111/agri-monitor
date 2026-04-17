@@ -103,6 +103,7 @@ const RuntimeConfigStore = {
       proxyBaseUrl: '/proxy',
       healthEndpoint: '/health',
       syncPolicy: 'manual',
+      demoMode: false
     };
   },
   get() {
@@ -205,6 +206,7 @@ const LocalRepository = {
       lng: Number(location.lng) || 0,
       area: Number(location.area) || 0,
       notes: (location.notes || '').trim(),
+      metadata: location.metadata || {},
     };
   },
 
@@ -367,6 +369,44 @@ function defaultDevices() {
 
 function defaultAutomations() {
   return [];
+}
+
+function demoLocations() {
+  return [
+    { id:'demo-loc-1', name:'一号农田（蔬菜区）', type:'蔬菜地', lat:20.0450, lng:110.1980, area:120, notes:'演示地块', metadata:{ demo:true } },
+    { id:'demo-loc-2', name:'二号农田（水稻田）', type:'水稻田', lat:20.0430, lng:110.2010, area:300, notes:'演示地块', metadata:{ demo:true } },
+    { id:'demo-loc-3', name:'实验温室A', type:'温室大棚', lat:20.0465, lng:110.1950, area:20, notes:'演示地块', metadata:{ demo:true } },
+  ];
+}
+
+function demoDevices() {
+  return [
+    { id:'demo-dev-1', name:'环境传感器-A1', type:'sensor_env', locationId:'demo-loc-1', address:'0x01', protocol:'LoRa', streamUrl:'', notes:'演示设备', online:true, lat:20.0452, lng:110.1975, metadata:{ demo:true } },
+    { id:'demo-dev-2', name:'土壤传感器-A2', type:'sensor_soil', locationId:'demo-loc-1', address:'0x02', protocol:'LoRa', streamUrl:'', notes:'演示设备', online:true, lat:20.0448, lng:110.1985, metadata:{ demo:true } },
+    { id:'demo-dev-3', name:'环境传感器-B1', type:'sensor_env', locationId:'demo-loc-2', address:'0x03', protocol:'LoRa', streamUrl:'', notes:'演示设备', online:true, lat:20.0433, lng:110.2005, metadata:{ demo:true } },
+    { id:'demo-dev-4', name:'虫情监测仪-B2', type:'sensor_pest', locationId:'demo-loc-2', address:'0x04', protocol:'LoRa', streamUrl:'', notes:'演示设备', online:false, lat:20.0427, lng:110.2015, metadata:{ demo:true } },
+    { id:'demo-dev-5', name:'摄像头-C1', type:'camera', locationId:'demo-loc-3', address:'192.168.1.21', protocol:'RTSP', streamUrl:'rtsp://192.168.1.21:554/main', notes:'演示设备', online:true, lat:20.0468, lng:110.1948, metadata:{ demo:true } },
+    { id:'demo-dev-6', name:'灌溉控制器-A3', type:'controller_water', locationId:'demo-loc-1', address:'0x05', protocol:'RS485', streamUrl:'', notes:'演示设备', online:true, lat:20.0445, lng:110.1990, metadata:{ demo:true } },
+    { id:'demo-dev-7', name:'补光灯组-C2', type:'controller_light', locationId:'demo-loc-3', address:'0x06', protocol:'RS485', streamUrl:'', notes:'演示设备', online:true, lat:20.0462, lng:110.1955, metadata:{ demo:true } },
+    { id:'demo-dev-8', name:'风机-C3', type:'controller_fan', locationId:'demo-loc-3', address:'0x07', protocol:'RS485', streamUrl:'', notes:'演示设备', online:true, lat:20.0467, lng:110.1943, metadata:{ demo:true } },
+  ];
+}
+
+function demoAutomations() {
+  return [
+    {
+      id:'demo-auto-1', name:'蔬菜区自动灌溉', desc:'当土壤湿度过低时自动开启灌溉水泵', enabled: true,
+      conditions: [{ sourceDeviceId:'demo-dev-2', param:'soil', operator:'<', value: 25 }],
+      actions: [{ targetDeviceId:'demo-dev-6', action:'on' }],
+      metadata:{ demo:true },
+    },
+    {
+      id:'demo-auto-2', name:'温室高温通风', desc:'温室温度超过35°C时自动开启风机降温', enabled: true,
+      conditions: [{ sourceDeviceId:'demo-dev-1', param:'temp', operator:'>', value: 35 }],
+      actions: [{ targetDeviceId:'demo-dev-8', action:'on' }],
+      metadata:{ demo:true },
+    },
+  ];
 }
 
 // ====================================================
@@ -738,6 +778,46 @@ const app = {
     this.refreshBackendHealth(true);
   },
 
+  toggleDemoMode(enabled) {
+    const nextEnabled = enabled ?? !DataRepository.getRuntimeConfig().demoMode;
+    if (nextEnabled) {
+      const locations = [
+        ...DataRepository.listLocations().filter(item => !item.metadata?.demo),
+        ...demoLocations(),
+      ];
+      const devices = [
+        ...DataRepository.listDevices().filter(item => !item.metadata?.demo),
+        ...demoDevices(),
+      ];
+      const automations = [
+        ...DataRepository.listAutomations().filter(item => !item.metadata?.demo),
+        ...demoAutomations(),
+      ];
+      DataRepository.saveDevices(devices);
+      Store.saveLocations(locations);
+      DataRepository.saveAutomations(automations);
+      DataRepository.saveRuntimeConfig({ demoMode: true });
+      UI.toast('演示模式已开启', 'success');
+    } else {
+      const demoDeviceIds = new Set(DataRepository.listDevices().filter(item => item.metadata?.demo).map(item => item.id));
+      Store.saveLocations(DataRepository.listLocations().filter(item => !item.metadata?.demo));
+      DataRepository.saveDevices(DataRepository.listDevices().filter(item => !item.metadata?.demo));
+      DataRepository.saveAutomations(DataRepository.listAutomations().filter(item => !item.metadata?.demo));
+      const history = HistoryStore.getAll();
+      demoDeviceIds.forEach(id => delete history[id]);
+      Store._set(HistoryStore.KEY, history);
+      DataRepository.saveRuntimeConfig({ demoMode: false });
+      UI.toast('演示模式已关闭', 'success');
+    }
+    this._runtimeConfig = DataRepository.getRuntimeConfig();
+    this.renderAlerts();
+    this.updateSidebarStatus();
+    if (this.currentPage === 'devices') this.renderDevices();
+    if (this.currentPage === 'locations') this.renderLocations();
+    if (this.currentPage === 'automation') this.renderAutomation();
+    if (this.currentPage === 'dashboard') this.initDashboard();
+  },
+
   // ─── ALERTS ───
   getAlerts() {
     const devices = DataRepository.listDevices();
@@ -764,7 +844,9 @@ const app = {
 
   renderAlerts() {
     const alerts = this.getAlerts();
-    document.getElementById('alertCount').textContent = alerts.length || '';
+    const alertCountEl = document.getElementById('alertCount');
+    alertCountEl.textContent = alerts.length || '';
+    alertCountEl.classList.toggle('hidden', alerts.length === 0);
     const html = alerts.length === 0
       ? '<div class="empty-state"><i class="fa-solid fa-circle-check"></i><p>暂无警报，一切正常</p></div>'
       : alerts.map(a => `
@@ -983,7 +1065,13 @@ const app = {
     const devs = DataRepository.listDevices().filter(d => d.type.startsWith('sensor') && (locId==='all' || d.locationId===locId));
     const sel = document.getElementById('rt-device-select');
     sel.innerHTML = devs.map(d => `<option value="${d.id}">${d.name}${d.type==='sensor_soil_api'?' ☁️':''}</option>`).join('');
-    if (!devs.length) { sel.innerHTML = '<option value="">（无传感器）</option>'; this.stopLive(); return; }
+    if (!devs.length) {
+      sel.innerHTML = '<option value="">（无传感器）</option>';
+      document.getElementById('sensor-grid').innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-wave-square"></i><p>暂无可显示的实时传感器</p></div>';
+      document.getElementById('rt-table-body').innerHTML = '';
+      this.stopLive();
+      return;
+    }
     sel.onchange = () => this.startLive(sel.value);
     this.startLive(devs[0].id);
   },
@@ -1081,15 +1169,27 @@ const app = {
   },
 
   // ─── API SENSOR RENDERING ───
-  _updateSensorsAPI(dev) {
+  async _updateSensorsAPI(dev) {
     const addr = dev.apiConfig.deviceAddr;
-    const cached = SensorEngine.getApiData(addr);
+    let cached = SensorEngine.getApiData(addr);
+
+    if (!cached || !SensorEngine.isApiCacheFresh(addr)) {
+      document.getElementById('sensor-grid').innerHTML = `
+        <div class="cloud-loading" style="grid-column:1/-1">
+          <div class="cloud-spinner"></div>
+          <div>正在获取传感器数据...</div>
+        </div>`;
+      try {
+        await CloudAPI.fetchAndCacheRealTime(addr);
+      } catch {}
+      cached = SensorEngine.getApiData(addr);
+    }
 
     if (!cached) {
       document.getElementById('sensor-grid').innerHTML = `
         <div class="cloud-loading" style="grid-column:1/-1">
           <div class="cloud-spinner"></div>
-          <div>正在获取传感器数据...</div>
+          <div>暂时未获取到数据，请稍后重试</div>
         </div>`;
       return;
     }
@@ -1110,6 +1210,12 @@ const app = {
         allRegisters.push({ ...reg, nodeId: node.nodeId });
       });
     });
+
+    if (!allRegisters.length) {
+      document.getElementById('sensor-grid').innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-database"></i><p>当前设备暂无可展示的实时数据</p></div>';
+      document.getElementById('rt-table-body').innerHTML = '';
+      return;
+    }
 
     // Build sensor cards dynamically from API data
     const sensorHtml = allRegisters.map(reg => {
@@ -1621,7 +1727,12 @@ const app = {
             <strong>${modeMeta.label}</strong>
             <span>${health.message}</span>
           </div>
-          <div class="runtime-banner-meta">后端接口预留: ${endpointMap.devices}</div>
+          <div class="runtime-banner-actions">
+            <div class="runtime-banner-meta">后端接口预留: ${endpointMap.devices}</div>
+            <button class="btn-ghost btn-sm" onclick="app.toggleDemoMode(${!DataRepository.getRuntimeConfig().demoMode})">
+              ${DataRepository.getRuntimeConfig().demoMode ? '关闭演示模式' : '开启演示模式'}
+            </button>
+          </div>
         </div>
       `);
     }
