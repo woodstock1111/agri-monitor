@@ -9,7 +9,10 @@
 // ====================================================
 const Store = {
   _get(key, fb) { try { return JSON.parse(localStorage.getItem('agri_' + key)) || fb; } catch { return fb; } },
-  _set(key, val) { localStorage.setItem('agri_' + key, JSON.stringify(val)); },
+  _set(key, val) {
+    localStorage.setItem('agri_' + key, JSON.stringify(val));
+    globalThis.SyncService?.schedulePush?.();
+  },
 
   getLocations()       { return this._get('locations', defaultLocations()); },
   saveLocations(d)     { this._set('locations', d); },
@@ -19,13 +22,83 @@ const Store = {
   saveAutomations(d)   { this._set('automations', d); },
   getAutoLog()         { return this._get('autoLog', []); },
   saveAutoLog(d)       { this._set('autoLog', d); },
+
+  exportData() {
+    return {
+      locations: this.getLocations(),
+      devices: this.getDevices(),
+      automations: this.getAutomations(),
+      autoLog: this.getAutoLog(),
+      history: this._get('history', {}),
+    };
+  },
+
+  importData(snapshot = {}) {
+    localStorage.setItem('agri_locations', JSON.stringify(snapshot.locations || []));
+    localStorage.setItem('agri_devices', JSON.stringify(snapshot.devices || []));
+    localStorage.setItem('agri_automations', JSON.stringify(snapshot.automations || []));
+    localStorage.setItem('agri_autoLog', JSON.stringify(snapshot.autoLog || []));
+    localStorage.setItem('agri_history', JSON.stringify(snapshot.history || {}));
+  },
 };
+
+const SyncService = {
+  _timer: null,
+  _inFlight: null,
+  _bootstrapped: false,
+
+  isEnabled() {
+    const config = RuntimeConfigStore.get();
+    return config.mode !== 'local' && window.location.protocol !== 'file:';
+  },
+
+  async bootstrap() {
+    if (!this.isEnabled()) {
+      this._bootstrapped = true;
+      return;
+    }
+    try {
+      const res = await fetch('/api/v1/app-state', { method: 'GET' });
+      if (res.ok) {
+        const data = await res.json();
+        Store.importData(data);
+      }
+    } catch (error) {
+      console.warn('[SyncService] bootstrap failed:', error.message);
+    } finally {
+      this._bootstrapped = true;
+    }
+  },
+
+  schedulePush(delay = 500) {
+    if (!this.isEnabled() || !this._bootstrapped) return;
+    clearTimeout(this._timer);
+    this._timer = setTimeout(() => { this.pushNow(); }, delay);
+  },
+
+  async pushNow() {
+    if (!this.isEnabled() || this._inFlight) return;
+    const snapshot = Store.exportData();
+    this._inFlight = fetch('/api/v1/app-state', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(snapshot),
+    }).catch(error => {
+      console.warn('[SyncService] push failed:', error.message);
+    }).finally(() => {
+      this._inFlight = null;
+    });
+    await this._inFlight;
+  },
+};
+globalThis.SyncService = SyncService;
 
 const RuntimeConfigStore = {
   KEY: 'runtimeConfig',
   defaults() {
+    const servedOverHttp = window.location.protocol in { 'http:': true, 'https:': true };
     return {
-      mode: 'local',
+      mode: servedOverHttp ? 'remote' : 'local',
       backendBaseUrl: '/api/v1',
       proxyBaseUrl: '/proxy',
       healthEndpoint: '/health',
@@ -33,9 +106,13 @@ const RuntimeConfigStore = {
     };
   },
   get() {
+    const stored = Store._get(this.KEY, {});
+    const isServerHost = !['localhost', '127.0.0.1'].includes(window.location.hostname) && window.location.protocol !== 'file:';
+    const mode = (isServerHost && stored.mode === 'local') ? 'remote' : stored.mode;
     return {
       ...this.defaults(),
-      ...Store._get(this.KEY, {}),
+      ...stored,
+      ...(mode ? { mode } : {}),
     };
   },
   save(patch) {
@@ -281,44 +358,15 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 // SEED DATA
 // ====================================================
 function defaultLocations() {
-  return [
-    { id:'loc-1', name:'一号农田（蔬菜区）', type:'蔬菜地', lat:20.0450, lng:110.1980, area:120, notes:'主要种植叶菜类' },
-    { id:'loc-2', name:'二号农田（水稻田）', type:'水稻田', lat:20.0430, lng:110.2010, area:300, notes:'双季水稻' },
-    { id:'loc-3', name:'实验温室A', type:'温室大棚', lat:20.0465, lng:110.1950, area:20, notes:'智能控温大棚' },
-  ];
+  return [];
 }
 
 function defaultDevices() {
-  return [
-    { id:'dev-1', name:'环境传感器-A1', type:'sensor_env', locationId:'loc-1', address:'0x01', protocol:'LoRa', streamUrl:'', notes:'距地面1.5m', online:true, lat:20.0452, lng:110.1975 },
-    { id:'dev-2', name:'土壤传感器-A2', type:'sensor_soil', locationId:'loc-1', address:'0x02', protocol:'LoRa', streamUrl:'', notes:'埋深20cm', online:true, lat:20.0448, lng:110.1985 },
-    { id:'dev-3', name:'环境传感器-B1', type:'sensor_env', locationId:'loc-2', address:'0x03', protocol:'LoRa', streamUrl:'', notes:'稻田北侧', online:true, lat:20.0433, lng:110.2005 },
-    { id:'dev-4', name:'虫情监测仪-B2', type:'sensor_pest', locationId:'loc-2', address:'0x04', protocol:'LoRa', streamUrl:'', notes:'灯光诱捕', online:false, lat:20.0427, lng:110.2015 },
-    { id:'dev-5', name:'摄像头-C1', type:'camera', locationId:'loc-3', address:'192.168.1.21', protocol:'RTSP', streamUrl:'rtsp://192.168.1.21:554/main', notes:'温室全景', online:true, lat:20.0468, lng:110.1948 },
-    { id:'dev-6', name:'灌溉控制器-A3', type:'controller_water', locationId:'loc-1', address:'0x05', protocol:'RS485', streamUrl:'', notes:'主管道电磁阀', online:true, lat:20.0445, lng:110.1990 },
-    { id:'dev-7', name:'补光灯组-C2', type:'controller_light', locationId:'loc-3', address:'0x06', protocol:'RS485', streamUrl:'', notes:'LED灯组', online:true, lat:20.0462, lng:110.1955 },
-    { id:'dev-8', name:'风机-C3', type:'controller_fan', locationId:'loc-3', address:'0x07', protocol:'RS485', streamUrl:'', notes:'通风排湿', online:true, lat:20.0467, lng:110.1943 },
-  ];
+  return [];
 }
 
 function defaultAutomations() {
-  return [
-    {
-      id:'auto-1', name:'蔬菜区自动灌溉', desc:'当土壤湿度过低时自动开启灌溉水泵', enabled: true,
-      conditions: [{ sourceDeviceId:'dev-2', param:'soil', operator:'<', value: 25 }],
-      actions: [{ targetDeviceId:'dev-6', action:'on' }],
-    },
-    {
-      id:'auto-2', name:'温室高温通风', desc:'温室温度超过35°C时自动开启风机降温', enabled: true,
-      conditions: [{ sourceDeviceId:'dev-1', param:'temp', operator:'>', value: 35 }],
-      actions: [{ targetDeviceId:'dev-8', action:'on' }],
-    },
-    {
-      id:'auto-3', name:'温室夜间补光', desc:'光照不足时自动开启补光灯', enabled: false,
-      conditions: [{ sourceDeviceId:'dev-1', param:'light', operator:'<', value: 3000 }],
-      actions: [{ targetDeviceId:'dev-7', action:'on' }],
-    },
-  ];
+  return [];
 }
 
 // ====================================================
@@ -567,7 +615,8 @@ const app = {
   _runtimeConfig: null,
 
   // ─── BOOT ───
-  init() {
+  async init() {
+    await SyncService.bootstrap();
     ChartHelper.defaults();
     this._runtimeConfig = DataRepository.getRuntimeConfig();
     this._ensureDeviceCoords();
@@ -2053,5 +2102,8 @@ document.addEventListener('DOMContentLoaded', () => {
     getConfig: () => DataRepository.getRuntimeConfig(),
     getEndpoints: () => DataRepository.getEndpointMap(),
   };
-  app.init();
+  app.init().catch(error => {
+    console.error('[AppInit]', error);
+    UI.toast('初始化失败，请刷新重试', 'danger');
+  });
 });

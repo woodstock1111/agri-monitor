@@ -12,13 +12,48 @@ import urllib.request
 import urllib.parse
 import json
 import os
-import sys
 import mimetypes
 from urllib.parse import urljoin
 
 PORT = 3000
 STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_TARGET_BASE = "http://www.0531yun.com"
+DATA_DIR = os.path.join(STATIC_DIR, "server-data")
+APP_STATE_FILE = os.path.join(DATA_DIR, "app-state.json")
+
+
+def default_app_state():
+    return {
+        "locations": [],
+        "devices": [],
+        "automations": [],
+        "autoLog": [],
+        "history": {},
+    }
+
+
+def read_app_state():
+    if not os.path.isfile(APP_STATE_FILE):
+        state = default_app_state()
+        write_app_state(state)
+        return state
+    try:
+        with open(APP_STATE_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        data = default_app_state()
+    merged = default_app_state()
+    merged.update(data if isinstance(data, dict) else {})
+    return merged
+
+
+def write_app_state(data):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    merged = default_app_state()
+    merged.update(data if isinstance(data, dict) else {})
+    with open(APP_STATE_FILE, "w", encoding="utf-8") as fh:
+        json.dump(merged, fh, ensure_ascii=False, indent=2)
+
 
 class ProxyHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
@@ -50,6 +85,18 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
 
+        if parsed.path == "/api/v1/health":
+            self._send_json(200, {
+                "ok": True,
+                "message": "server storage ready",
+                "storage": APP_STATE_FILE,
+            })
+            return
+
+        if parsed.path == "/api/v1/app-state":
+            self._send_json(200, read_app_state())
+            return
+
         # Proxy API requests: /proxy/api/* -> cloud platform
         if parsed.path.startswith('/proxy/'):
             self._proxy_request(parsed)
@@ -57,6 +104,35 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
         # Serve static files
         self._serve_static(parsed.path)
+
+    def do_PUT(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/api/v1/app-state":
+            payload = self._read_json_body()
+            if payload is None:
+                self._send_json(400, {"code": -1, "message": "Invalid JSON body"})
+                return
+            write_app_state(payload)
+            self._send_json(200, {"ok": True})
+            return
+        self.send_error(404)
+
+    def _read_json_body(self):
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            return json.loads(raw.decode("utf-8"))
+        except Exception:
+            return None
+
+    def _send_json(self, status, payload):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self._send_cors_headers()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", len(body))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _proxy_request(self, parsed):
         # Strip /proxy prefix, forward to cloud platform
@@ -131,6 +207,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
+    read_app_state()
     server = http.server.HTTPServer(('0.0.0.0', PORT), ProxyHandler)
     print(f"""
 ╔══════════════════════════════════════════════╗
