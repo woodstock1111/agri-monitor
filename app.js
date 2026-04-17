@@ -97,8 +97,9 @@ const RuntimeConfigStore = {
   KEY: 'runtimeConfig',
   defaults() {
     const servedOverHttp = window.location.protocol in { 'http:': true, 'https:': true };
+    const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
     return {
-      mode: servedOverHttp ? 'remote' : 'local',
+      mode: servedOverHttp && !isLocalHost ? 'remote' : 'local',
       backendBaseUrl: '/api/v1',
       proxyBaseUrl: '/proxy',
       healthEndpoint: '/health',
@@ -780,17 +781,18 @@ const app = {
 
   toggleDemoMode(enabled) {
     const nextEnabled = enabled ?? !DataRepository.getRuntimeConfig().demoMode;
+    const isDemoItem = item => Boolean(item?.metadata?.demo) || String(item?.id || '').startsWith('demo-');
     if (nextEnabled) {
       const locations = [
-        ...DataRepository.listLocations().filter(item => !item.metadata?.demo),
+        ...DataRepository.listLocations().filter(item => !isDemoItem(item)),
         ...demoLocations(),
       ];
       const devices = [
-        ...DataRepository.listDevices().filter(item => !item.metadata?.demo),
+        ...DataRepository.listDevices().filter(item => !isDemoItem(item)),
         ...demoDevices(),
       ];
       const automations = [
-        ...DataRepository.listAutomations().filter(item => !item.metadata?.demo),
+        ...DataRepository.listAutomations().filter(item => !isDemoItem(item)),
         ...demoAutomations(),
       ];
       DataRepository.saveDevices(devices);
@@ -799,14 +801,16 @@ const app = {
       DataRepository.saveRuntimeConfig({ demoMode: true });
       UI.toast('演示模式已开启', 'success');
     } else {
-      const demoDeviceIds = new Set(DataRepository.listDevices().filter(item => item.metadata?.demo).map(item => item.id));
-      Store.saveLocations(DataRepository.listLocations().filter(item => !item.metadata?.demo));
-      DataRepository.saveDevices(DataRepository.listDevices().filter(item => !item.metadata?.demo));
-      DataRepository.saveAutomations(DataRepository.listAutomations().filter(item => !item.metadata?.demo));
+      const demoDeviceIds = new Set(DataRepository.listDevices().filter(isDemoItem).map(item => item.id));
+      Store.saveLocations(DataRepository.listLocations().filter(item => !isDemoItem(item)));
+      DataRepository.saveDevices(DataRepository.listDevices().filter(item => !isDemoItem(item)));
+      DataRepository.saveAutomations(DataRepository.listAutomations().filter(item => !isDemoItem(item)));
       const history = HistoryStore.getAll();
       demoDeviceIds.forEach(id => delete history[id]);
       Store._set(HistoryStore.KEY, history);
       DataRepository.saveRuntimeConfig({ demoMode: false });
+      this.liveReadings = this.liveReadings.filter(item => !String(item.device || '').includes('演示'));
+      this.stopLive();
       UI.toast('演示模式已关闭', 'success');
     }
     this._runtimeConfig = DataRepository.getRuntimeConfig();
@@ -816,6 +820,9 @@ const app = {
     if (this.currentPage === 'locations') this.renderLocations();
     if (this.currentPage === 'automation') this.renderAutomation();
     if (this.currentPage === 'dashboard') this.initDashboard();
+    if (this.currentPage === 'realtime') this.initRealtime();
+    if (this.currentPage === 'history') this.initHistory();
+    if (this.currentPage === 'video') this.renderVideo();
   },
 
   // ─── ALERTS ───
@@ -925,16 +932,54 @@ const app = {
     this.updateSidebarStatus();
   },
 
+  _getMapFocusPoints(filterLocId = 'all') {
+    const locs = DataRepository.listLocations();
+    const devices = DataRepository.listDevices();
+    const targetLocs = (!filterLocId || filterLocId === 'all')
+      ? locs
+      : locs.filter(item => item.id === filterLocId);
+    const points = [];
+
+    targetLocs.forEach(loc => {
+      if (loc.lat && loc.lng) points.push([loc.lat, loc.lng]);
+    });
+
+    const targetDevices = (!filterLocId || filterLocId === 'all')
+      ? devices
+      : devices.filter(item => item.locationId === filterLocId);
+    targetDevices.forEach(dev => {
+      if (dev.lat && dev.lng) points.push([dev.lat, dev.lng]);
+    });
+
+    return points;
+  },
+
+  _fitDashboardMap(filterLocId = 'all') {
+    if (!this.dashMap) return;
+    const points = this._getMapFocusPoints(filterLocId);
+    if (!points.length) {
+      this.dashMap.setView([20.044, 110.199], 13);
+      return;
+    }
+    if (points.length === 1) {
+      this.dashMap.setView(points[0], filterLocId === 'all' ? 14 : 16);
+      return;
+    }
+    const bounds = L.latLngBounds(points);
+    this.dashMap.fitBounds(bounds, {
+      padding: filterLocId === 'all' ? [36, 36] : [48, 48],
+      maxZoom: filterLocId === 'all' ? 15 : 17,
+    });
+  },
+
   addMapMarkers(map, filterLocId) {
     const locs = DataRepository.listLocations();
     const devices = DataRepository.listDevices();
     const filteredLocs = (!filterLocId || filterLocId === 'all') ? locs : locs.filter(l => l.id === filterLocId);
-    const bounds = [];
 
     // Location markers (colored circles)
     filteredLocs.forEach(loc => {
       if (!loc.lat || !loc.lng) return;
-      bounds.push([loc.lat, loc.lng]);
       const devs = devices.filter(d => d.locationId === loc.id);
       const hasOff = devs.some(d => !d.online);
       const bgColor = hasOff ? '#f59e0b' : '#3b82f6';
@@ -960,7 +1005,6 @@ const app = {
     const filteredDevs = (!filterLocId || filterLocId === 'all') ? devices : devices.filter(d => d.locationId === filterLocId);
     filteredDevs.forEach(dev => {
       if (!dev.lat || !dev.lng) return;
-      bounds.push([dev.lat, dev.lng]);
       const fillColor = typeColors[dev.type] || '#94a3b8';
       const marker = L.circleMarker([dev.lat, dev.lng], {
         radius: 7, fillColor, fillOpacity: dev.online ? 0.9 : 0.3,
@@ -976,15 +1020,7 @@ const app = {
         ${dev.notes ? `<div style="font-size:11px;color:#999;margin-top:4px">${dev.notes}</div>` : ''}
       </div>`);
     });
-
-    // Fit map bounds
-    if (bounds.length > 0) {
-      if (filterLocId && filterLocId !== 'all') {
-        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 17 });
-      } else {
-        map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
-      }
-    }
+    this._fitDashboardMap(filterLocId);
   },
 
   _addMapLayerControl() {
@@ -1042,7 +1078,11 @@ const app = {
     this.dashMap.eachLayer(l => { if (l instanceof L.Marker || l instanceof L.CircleMarker) this.dashMap.removeLayer(l); });
     this.addMapMarkers(this.dashMap, locId);
     // Invalidate size after CSS transition
-    setTimeout(() => { if (this.dashMap) this.dashMap.invalidateSize(); }, 350);
+    setTimeout(() => {
+      if (!this.dashMap) return;
+      this.dashMap.invalidateSize();
+      this._fitDashboardMap(locId);
+    }, 350);
   },
 
   addDeviceFromMap() {
