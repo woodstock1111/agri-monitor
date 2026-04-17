@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智慧农业监测平台</title>
+    <meta name="description" content="基于LoRa无线技术的智慧农业监测与控制平台">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-shell">
+
+        <!-- SIDEBAR -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-brand">
+                <img src="logo.jpg" alt="Logo" class="brand-logo">
+                <div class="brand-text">
+                    <span class="brand-name">智慧农业</span>
+                    <span class="brand-sub">监测平台</span>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <div class="nav-group-label">数据展示</div>
+                <a class="nav-link active" data-page="dashboard">
+                    <i class="fa-solid fa-chart-tree-map"></i><span>系统总览</span>
+                </a>
+                <a class="nav-link" data-page="realtime">
+                    <i class="fa-solid fa-wave-square"></i><span>实时数据</span>
+                    <span class="nav-badge live">LIVE</span>
+                </a>
+                <a class="nav-link" data-page="video">
+                    <i class="fa-solid fa-video"></i><span>视频监控</span>
+                </a>
+                <a class="nav-link" data-page="history">
+                    <i class="fa-solid fa-chart-line"></i><span>历史数据</span>
+                </a>
+                <a class="nav-link" data-page="pestdb">
+                    <i class="fa-solid fa-bug"></i><span>病害虫数据库</span>
+                </a>
+
+                <div class="nav-group-label">智能控制</div>
+                <a class="nav-link" data-page="automation">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i><span>自动化流程</span>
+                </a>
+
+                <div class="nav-group-label">系统管理</div>
+                <a class="nav-link" data-page="locations">
+                    <i class="fa-solid fa-map-marked-alt"></i><span>地块管理</span>
+                </a>
+                <a class="nav-link" data-page="devices">
+                    <i class="fa-solid fa-microchip"></i><span>设备管理</span>
+                </a>
+            </nav>
+            <div class="sidebar-status" id="sidebar-status">
+                <!-- Dynamically rendered -->
+            </div>
+        </aside>
+
+        <!-- MAIN -->
+        <div class="main-wrap">
+            <header class="topbar">
+                <div class="topbar-left">
+                    <button class="sidebar-toggle" id="sidebarToggle"><i class="fa-solid fa-bars"></i></button>
+                    <div class="breadcrumb"><span id="page-title">系统总览</span></div>
+                </div>
+                <div class="topbar-right">
+                    <div class="topbar-location"><i class="fa-solid fa-location-dot"></i><span>海口市 · 示范区</span></div>
+                    <div class="topbar-weather"><i class="fa-solid fa-clock"></i><span id="live-time">--:--:--</span></div>
+                    <button class="alert-btn" id="alertToggle">
+                        <i class="fa-solid fa-bell"></i>
+                        <span class="alert-count" id="alertCount">0</span>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Alert Drawer -->
+            <div class="alert-drawer" id="alertDrawer">
+                <div class="alert-drawer-header">
+                    <span>最新警报</span>
+                    <button onclick="document.getElementById('alertDrawer').classList.remove('open')"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="alert-drawer-body" id="alertsList"></div>
+            </div>
+
+            <main class="page-area">
+
+                <!-- Dashboard -->
+                <div class="page active" id="page-dashboard">
+                    <div class="kpi-row" id="kpi-row"></div>
+                    <div class="dash-grid">
+                        <div class="glass-panel span-2">
+                            <div class="panel-header">
+                                <span class="panel-title"><i class="fa-solid fa-map-location-dot"></i> 农田设备分布地图</span>
+                                <div id="map-toolbar" style="display:flex;align-items:center;gap:10px;">
+                                    <select class="select-input" id="map-location-filter" onchange="app.filterMapByLocation(this.value)" style="font-size:12px;padding:5px 28px 5px 10px;width:auto;">
+                                        <option value="all">🗺️ 全部地块</option>
+                                    </select>
+                                    <button class="panel-btn" id="map-add-device-btn" onclick="app.addDeviceFromMap()"><i class="fa-solid fa-plus" style="margin-right:4px"></i>添加设备</button>
+                                    <button class="panel-btn map-close-btn" id="map-close-focus-btn" onclick="app.filterMapByLocation('all')" style="display:none;" title="返回全部地块"><i class="fa-solid fa-xmark"></i></button>
+                                </div>
+                            </div>
+                            <div id="dash-map" class="map-box"></div>
+                        </div>
+                        <div class="glass-panel">
+                            <div class="panel-header">
+                                <span class="panel-title"><i class="fa-solid fa-triangle-exclamation"></i> 实时警报</span>
+                            </div>
+                            <div class="alert-feed" id="dash-alerts"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Realtime -->
+                <div class="page" id="page-realtime">
+                    <div class="page-toolbar">
+                        <div class="toolbar-group"><label>选择地块</label><select class="select-input" id="rt-location-select"></select></div>
+                        <div class="toolbar-group"><label>选择设备</label><select class="select-input" id="rt-device-select"></select></div>
+                        <div class="live-badge"><span class="pulse-dot"></span> 数据实时更新中</div>
+                        <button class="btn-ghost btn-sm" id="live-pause-btn" onclick="app.toggleLivePause()" style="margin-left:auto;"><i class="fa-solid fa-pause"></i> 暂停记录</button>
+                    </div>
+                    <div class="sensor-grid" id="sensor-grid"></div>
+                    <div class="glass-panel" style="margin-top:24px;">
+                        <div class="panel-header"><span class="panel-title"><i class="fa-solid fa-table"></i> 最新数据记录</span></div>
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead><tr><th>时间</th><th>设备</th><th>空气温度 (°C)</th><th>空气湿度 (%)</th><th>土壤湿度 (%)</th><th>光照强度 (lux)</th><th>CO₂ (ppm)</th></tr></thead>
+                                <tbody id="rt-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Video -->
+                <div class="page" id="page-video">
+                    <div class="video-notice glass-panel">
+                        <i class="fa-solid fa-circle-info"></i>
+                        <div><strong>接口预留说明</strong><p>视频流接口已预留，支持 RTSP / HLS / WebRTC 协议接入。请在设备管理中为摄像头设备配置视频流地址，系统将自动渲染。</p></div>
+                    </div>
+                    <div class="video-grid" id="video-grid"></div>
+                </div>
+
+                <!-- History -->
+                <div class="page" id="page-history">
+                    <div class="page-toolbar">
+                        <div class="toolbar-group"><label>地块</label><select class="select-input" id="hist-location-select"></select></div>
+                        <div class="toolbar-group"><label>设备</label><select class="select-input" id="hist-device-select"></select></div>
+                        <div class="toolbar-group"><label>时间范围</label>
+                            <select class="select-input" id="hist-range"><option value="24h">过去24小时</option><option value="7d">过去7天</option><option value="30d">过去30天</option></select>
+                        </div>
+                        <button class="btn-primary" onclick="app.refreshHistoryCharts()"><i class="fa-solid fa-rotate"></i> 查询</button>
+                    </div>
+                    <div class="chart-grid-2">
+                        <div class="glass-panel"><div class="panel-header"><span class="panel-title">温湿度趋势</span></div><div class="chart-wrap"><canvas id="hist-temp-hum"></canvas></div></div>
+                        <div class="glass-panel"><div class="panel-header"><span class="panel-title">土壤墒情趋势</span></div><div class="chart-wrap"><canvas id="hist-soil"></canvas></div></div>
+                        <div class="glass-panel"><div class="panel-header"><span class="panel-title">光照强度趋势</span></div><div class="chart-wrap"><canvas id="hist-light"></canvas></div></div>
+                        <div class="glass-panel"><div class="panel-header"><span class="panel-title">CO₂浓度趋势</span></div><div class="chart-wrap"><canvas id="hist-co2"></canvas></div></div>
+                    </div>
+                </div>
+
+                <!-- Pest DB -->
+                <div class="page" id="page-pestdb">
+                    <div class="page-toolbar">
+                        <div class="toolbar-group"><label>搜索</label><input class="text-input" type="text" id="pest-search" placeholder="搜索病害虫名称..." oninput="app.filterPests(this.value)"></div>
+                        <div class="toolbar-group"><label>类型</label>
+                            <select class="select-input" id="pest-type-filter" onchange="app.filterPests()"><option value="all">全部</option><option value="pest">虫害</option><option value="disease">病害</option></select>
+                        </div>
+                    </div>
+                    <div class="pest-grid" id="pest-grid"></div>
+                </div>
+
+                <!-- AUTOMATION -->
+                <div class="page" id="page-automation">
+                    <div class="page-toolbar">
+                        <button class="btn-primary" onclick="app.openAutomationEditor()">
+                            <i class="fa-solid fa-plus"></i> 新建自动化规则
+                        </button>
+                        <div style="margin-left:auto;font-size:13px;color:var(--text-secondary);">
+                            <i class="fa-solid fa-circle-info"></i> 自动化规则每3秒检查一次触发条件
+                        </div>
+                    </div>
+                    <div class="automation-list" id="automation-list"></div>
+
+                    <div class="glass-panel" style="margin-top:24px;">
+                        <div class="panel-header"><span class="panel-title"><i class="fa-solid fa-clock-rotate-left"></i> 执行日志 (最近20条)</span></div>
+                        <div class="table-wrap">
+                            <table class="data-table">
+                                <thead><tr><th>时间</th><th>规则名称</th><th>触发条件</th><th>执行动作</th><th>结果</th></tr></thead>
+                                <tbody id="auto-log-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Locations -->
+                <div class="page" id="page-locations">
+                    <div class="page-toolbar">
+                        <button class="btn-primary" onclick="app.openModal('location')"><i class="fa-solid fa-plus"></i> 添加地块</button>
+                    </div>
+                    <div class="location-grid" id="location-grid"></div>
+                </div>
+
+                <!-- Devices -->
+                <div class="page" id="page-devices">
+                    <div class="page-toolbar">
+                        <div class="toolbar-group"><label>按地块筛选</label><select class="select-input" id="dev-location-filter" onchange="app.renderDevices()"><option value="all">全部地块</option></select></div>
+                        <button class="btn-cloud" onclick="app.openCloudModal()"><i class="fa-solid fa-wave-square"></i> 连接传感器</button>
+                        <button class="btn-primary" onclick="app.openModal_device_prep(); app.clearDeviceForm(); app.openModal('device')"><i class="fa-solid fa-plus"></i> 添加设备</button>
+                    </div>
+                    <div class="device-table-wrap glass-panel">
+                        <table class="data-table" id="device-table">
+                            <thead><tr><th>设备名称</th><th>类型</th><th>所属地块</th><th>设备ID / 地址</th><th>协议</th><th>状态</th><th>操作</th></tr></thead>
+                            <tbody id="device-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- MODALS -->
+
+    <!-- Location Modal -->
+    <div class="modal-overlay" id="modal-location">
+        <div class="modal-box">
+            <div class="modal-header"><h3 id="modal-location-title">添加新地块</h3><button class="modal-close" onclick="app.closeModal('location')"><i class="fa-solid fa-xmark"></i></button></div>
+            <div class="modal-body">
+                <input type="hidden" id="loc-edit-id">
+                <div class="form-group"><label>地块名称 *</label><input class="text-input" type="text" id="loc-name" placeholder="例如：一号农田（蔬菜区）"></div>
+                <div class="form-group"><label>地块类型</label><select class="select-input" id="loc-type"><option value="蔬菜地">蔬菜地</option><option value="水稻田">水稻田</option><option value="温室大棚">温室大棚</option><option value="果园">果园</option><option value="其他">其他</option></select></div>
+                <div class="form-row">
+                    <div class="form-group"><label>纬度</label><input class="text-input" type="number" id="loc-lat" placeholder="20.0450" step="0.0001" oninput="app.syncLocPicker()"></div>
+                    <div class="form-group"><label>经度</label><input class="text-input" type="number" id="loc-lng" placeholder="110.1990" step="0.0001" oninput="app.syncLocPicker()"></div>
+                </div>
+                <div class="form-group">
+                    <label>📍 在地图上点击选择位置 <span style="font-weight:400;color:var(--text-muted);font-size:11px">（也可直接填写经纬度）</span></label>
+                    <div id="loc-map-picker" class="modal-map-picker"></div>
+                </div>
+                <div class="form-group"><label>面积 (亩)</label><input class="text-input" type="number" id="loc-area" placeholder="50"></div>
+                <div class="form-group"><label>备注</label><textarea class="text-input" id="loc-notes" rows="3" placeholder="地块描述..."></textarea></div>
+            </div>
+            <div class="modal-footer"><button class="btn-ghost" onclick="app.closeModal('location')">取消</button><button class="btn-primary" onclick="app.saveLocation()">保存</button></div>
+        </div>
+    </div>
+
+    <!-- Device Modal -->
+    <div class="modal-overlay" id="modal-device">
+        <div class="modal-box">
+            <div class="modal-header"><h3 id="modal-device-title">添加新设备</h3><button class="modal-close" onclick="app.closeModal('device')"><i class="fa-solid fa-xmark"></i></button></div>
+            <div class="modal-body">
+                <input type="hidden" id="dev-edit-id">
+                <div class="form-group"><label>设备名称 *</label><input class="text-input" type="text" id="dev-name" placeholder="例如：温湿度传感器-A1"></div>
+                <div class="form-row">
+                    <div class="form-group"><label>设备类型</label><select class="select-input" id="dev-type">
+                        <option value="sensor_env">环境传感器 (LoRa)</option><option value="sensor_soil">土壤传感器 (LoRa)</option><option value="sensor_soil_api">🔗 在线传感器</option><option value="sensor_pest">虫情监测仪</option><option value="camera">摄像头</option>
+                        <option value="controller_water">灌溉控制器</option><option value="controller_light">补光灯控制器</option><option value="controller_fan">风机控制器</option>
+                    </select></div>
+                    <div class="form-group"><label>所属地块</label><select class="select-input" id="dev-location" onchange="app.onDevLocChange()"></select></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>设备纬度</label><input class="text-input" type="number" id="dev-lat" placeholder="20.0450" step="0.000001" oninput="app.syncDevPicker()"></div>
+                    <div class="form-group"><label>设备经度</label><input class="text-input" type="number" id="dev-lng" placeholder="110.1990" step="0.000001" oninput="app.syncDevPicker()"></div>
+                </div>
+                <div class="form-group">
+                    <label>📍 在地图上点击设置设备位置 <span style="font-weight:400;color:var(--text-muted);font-size:11px">（可缩放后精确定位）</span></label>
+                    <div id="dev-map-picker" class="modal-map-picker"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>设备ID / Modbus地址</label><input class="text-input" type="text" id="dev-address" placeholder="0x01"></div>
+                    <div class="form-group"><label>通信协议</label><select class="select-input" id="dev-protocol"><option value="LoRa">LoRa (Modbus RTU)</option><option value="RS485">RS485 (Modbus RTU)</option><option value="MQTT">MQTT</option><option value="HTTP">HTTP API</option><option value="RTSP">RTSP (摄像头)</option><option value="CloudAPI">在线识别接入</option></select></div>
+                </div>
+                <div class="form-group" id="stream-url-group" style="display:none"><label>视频流地址</label><input class="text-input" type="text" id="dev-stream-url" placeholder="rtsp://192.168.1.xx:554/stream"></div>
+                <div class="form-group"><label>备注</label><input class="text-input" type="text" id="dev-notes" placeholder="安装位置描述"></div>
+            </div>
+            <div class="modal-footer"><button class="btn-ghost" onclick="app.closeModal('device')">取消</button><button class="btn-primary" onclick="app.saveDevice()">保存</button></div>
+        </div>
+    </div>
+
+    <!-- Cloud Platform Modal -->
+    <div class="modal-overlay" id="modal-cloud">
+        <div class="modal-box modal-wide">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-wave-square" style="color:var(--accent);margin-right:8px"></i>连接传感器</h3>
+                <button class="modal-close" onclick="app.closeModal('cloud')"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <div id="cloud-top-error" class="cloud-error cloud-error-top" style="display:none"></div>
+                <!-- Step 1: Login -->
+                <div id="cloud-step-login">
+                    <div class="form-group">
+                        <label>识别码</label>
+                        <input class="text-input" type="password" id="cloud-access-code" placeholder="请输入设备识别码" autocomplete="off">
+                    </div>
+                    <button class="btn-primary btn-wide" id="cloud-login-btn" onclick="app.cloudLogin()">
+                        <i class="fa-solid fa-right-to-bracket"></i> 识别并获取设备列表
+                    </button>
+                </div>
+
+                <!-- Step 2: Device Selection -->
+                <div id="cloud-step-devices" style="display:none">
+                    <div class="cloud-connected-banner">
+                        <div class="cloud-connected-info">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>已识别到传感器 · <span id="cloud-account-display"></span></span>
+                        </div>
+                        <button class="btn-ghost btn-sm" onclick="app.cloudLogout()"><i class="fa-solid fa-arrow-left"></i> 重新识别</button>
+                    </div>
+                    <div class="cloud-device-toolbar">
+                        <label class="cloud-select-all">
+                            <input type="checkbox" id="cloud-select-all-cb" onchange="app.cloudToggleAll(this.checked)">
+                            <span>全选</span>
+                        </label>
+                        <span id="cloud-device-count" class="cloud-device-count"></span>
+                        <div class="form-group" style="margin:0;flex:1">
+                            <select class="select-input" id="cloud-import-location" style="font-size:12px;padding:5px 28px 5px 10px;width:auto;min-width:140px">
+                                <option value="">-- 导入到地块(可选) --</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="cloud-device-list" id="cloud-device-list"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-ghost" onclick="app.closeModal('cloud')">取消</button>
+                <button class="btn-primary" id="cloud-import-btn" onclick="app.cloudImportSelected()" style="display:none">
+                    <i class="fa-solid fa-download"></i> 导入选中设备 (<span id="cloud-import-count">0</span>)
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Automation Rule Editor Modal -->
+    <div class="modal-overlay" id="modal-automation">
+        <div class="modal-box modal-wide">
+            <div class="modal-header"><h3 id="modal-auto-title">新建自动化规则</h3><button class="modal-close" onclick="app.closeModal('automation')"><i class="fa-solid fa-xmark"></i></button></div>
+            <div class="modal-body">
+                <input type="hidden" id="auto-edit-id">
+                <div class="form-group">
+                    <label>规则名称 *</label>
+                    <input class="text-input" type="text" id="auto-name" placeholder="例如：蔬菜区自动灌溉">
+                </div>
+
+                <div class="rule-section">
+                    <div class="rule-section-label"><i class="fa-solid fa-bolt"></i> 触发条件 (IF)</div>
+                    <div class="condition-list" id="condition-list"></div>
+                    <button class="btn-ghost btn-sm" onclick="app.addCondition()"><i class="fa-solid fa-plus"></i> 添加条件</button>
+                </div>
+
+                <div class="rule-section">
+                    <div class="rule-section-label"><i class="fa-solid fa-play"></i> 执行动作 (THEN)</div>
+                    <div class="action-list" id="action-list"></div>
+                    <button class="btn-ghost btn-sm" onclick="app.addAction()"><i class="fa-solid fa-plus"></i> 添加动作</button>
+                </div>
+
+                <div class="form-group">
+                    <label>规则说明 (可选)</label>
+                    <input class="text-input" type="text" id="auto-desc" placeholder="这条规则的用途说明...">
+                </div>
+            </div>
+            <div class="modal-footer"><button class="btn-ghost" onclick="app.closeModal('automation')">取消</button><button class="btn-primary" onclick="app.saveAutomation()">保存规则</button></div>
+        </div>
+    </div>
+
+    <!-- Pest Detail Modal -->
+    <div class="modal-overlay" id="modal-pest">
+        <div class="modal-box modal-wide">
+            <div class="modal-header"><h3 id="pest-modal-title">-</h3><button class="modal-close" onclick="app.closeModal('pest')"><i class="fa-solid fa-xmark"></i></button></div>
+            <div class="modal-body" id="pest-modal-body"></div>
+        </div>
+    </div>
+
+    <!-- Confirm Modal -->
+    <div class="modal-overlay" id="modal-confirm">
+        <div class="modal-box modal-sm">
+            <div class="modal-header"><h3>确认删除</h3><button class="modal-close" onclick="app.closeModal('confirm')"><i class="fa-solid fa-xmark"></i></button></div>
+            <div class="modal-body"><p id="confirm-msg">确定要删除吗？</p></div>
+            <div class="modal-footer"><button class="btn-ghost" onclick="app.closeModal('confirm')">取消</button><button class="btn-danger" id="confirm-ok-btn">确认删除</button></div>
+        </div>
+    </div>
+
+    <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
