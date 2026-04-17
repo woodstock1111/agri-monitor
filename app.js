@@ -289,7 +289,21 @@ const BackendAdapter = {
       readings: `${backendBaseUrl}/readings`,
       automations: `${backendBaseUrl}/automations`,
       health: `${backendBaseUrl}${this.getConfig().healthEndpoint}`,
+      deviceRealtime: `${backendBaseUrl}/device-realtime`,
+      deviceHistory: `${backendBaseUrl}/device-history`,
     };
+  },
+
+  async getDeviceRealtime(deviceId) {
+    const res = await fetch(`${this.getEndpointMap().deviceRealtime}?deviceId=${encodeURIComponent(deviceId)}`);
+    if (!res.ok) throw new Error(`realtime ${res.status}`);
+    return await res.json();
+  },
+
+  async getDeviceHistory(deviceId) {
+    const res = await fetch(`${this.getEndpointMap().deviceHistory}?deviceId=${encodeURIComponent(deviceId)}`);
+    if (!res.ok) throw new Error(`history ${res.status}`);
+    return await res.json();
   },
 };
 
@@ -1287,16 +1301,19 @@ const app = {
   // ─── API SENSOR RENDERING ───
   async _updateSensorsAPI(dev) {
     const addr = dev.apiConfig.deviceAddr;
-    let cached = SensorEngine.getApiData(addr);
+    let cached = null;
 
-    if (!cached || !SensorEngine.isApiCacheFresh(addr)) {
+    if (!cached) {
       document.getElementById('sensor-grid').innerHTML = `
         <div class="cloud-loading" style="grid-column:1/-1">
           <div class="cloud-spinner"></div>
           <div>正在获取传感器数据...</div>
         </div>`;
       try {
-        await CloudAPI.fetchAndCacheRealTimeWithConfig(dev.apiConfig);
+        const serverData = await BackendAdapter.getDeviceRealtime(dev.id);
+        if (serverData?.ok && serverData?.dataItems) {
+          SensorEngine.setApiData(addr, serverData.dataItems, serverData.timestamp || Date.now());
+        }
       } catch {}
       cached = SensorEngine.getApiData(addr);
     }
@@ -1366,11 +1383,6 @@ const app = {
       allRegisters.forEach(r => { reading[r.registerName] = r.value; });
       this.liveReadings.unshift(reading);
       if (this.liveReadings.length > 20) this.liveReadings.pop();
-      HistoryStore.append(dev.id, {
-        ts: timestamp || Date.now(),
-        values: Object.fromEntries(allRegisters.map(r => [r.registerName, r.value])),
-        source: 'cloud',
-      });
     }
 
     // Render table - dynamic columns for API devices
@@ -1390,6 +1402,7 @@ const app = {
 
   // ─── CLOUD API POLLING ───
   startCloudApiPolling() {
+    if (DataRepository.getRuntimeConfig().mode !== 'local') return;
     if (this._cloudApiPollInterval) clearInterval(this._cloudApiPollInterval);
     this._pollCloudDevices();
     this._cloudApiPollInterval = setInterval(() => this._pollCloudDevices(), 30000);
@@ -1400,10 +1413,12 @@ const app = {
     if (!devices.length) return;
     for (const dev of devices) {
       try {
-        await CloudAPI.fetchAndCacheRealTimeWithConfig(dev.apiConfig);
-        const cached = SensorEngine.getApiData(dev.apiConfig.deviceAddr);
-        if (cached) {
+        const serverData = await BackendAdapter.getDeviceRealtime(dev.id);
+        if (serverData?.ok && serverData?.dataItems) {
+          SensorEngine.setApiData(dev.apiConfig.deviceAddr, serverData.dataItems, serverData.timestamp || Date.now());
           DataRepository.saveDevice({ ...dev, online: true });
+        } else {
+          DataRepository.saveDevice({ ...dev, online: false });
         }
       } catch (err) {
         console.warn(`[Poll] ${dev.name}:`, err.message);
@@ -1440,15 +1455,24 @@ const app = {
     document.getElementById('hist-device-select').onchange = () => this.refreshHistoryCharts();
     this.refreshHistoryCharts();
   },
-  refreshHistoryCharts() {
+  async refreshHistoryCharts() {
     const range = document.getElementById('hist-range')?.value || '24h';
     const pts = range==='24h'?24:range==='7d'?7:30;
     const deviceId = document.getElementById('hist-device-select')?.value;
+    const device = DataRepository.listDevices().find(item => item.id === deviceId);
     const labels = Array.from({length:pts},(_,i)=>{
       if(range==='24h') return `${String(i).padStart(2,'0')}:00`;
       const d=new Date(); d.setDate(d.getDate()-(pts-1-i)); return `${d.getMonth()+1}/${d.getDate()}`;
     });
-    const history = deviceId ? HistoryStore.getDeviceRecords(deviceId) : [];
+    let history = deviceId ? HistoryStore.getDeviceRecords(deviceId) : [];
+    if (device?.type === 'sensor_soil_api') {
+      try {
+        const serverHistory = await BackendAdapter.getDeviceHistory(deviceId);
+        history = serverHistory?.rows || [];
+      } catch (error) {
+        console.warn('[History]', error.message);
+      }
+    }
     const pickSeries = (keys, fallbackBase, fallbackAmp, transform = value => value) => {
       if (!history.length) {
         return Array.from({length:pts},(_,i)=>transform(+(fallbackBase+Math.sin(i*0.4)*fallbackAmp*0.5+(Math.random()-0.5)*fallbackAmp).toFixed(1)));
