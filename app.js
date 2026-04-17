@@ -763,8 +763,19 @@ const app = {
   },
 
   bindAlertDrawer() {
-    document.getElementById('alertToggle').addEventListener('click', () => {
-      document.getElementById('alertDrawer').classList.toggle('open');
+    const toggle = document.getElementById('alertToggle');
+    const drawer = document.getElementById('alertDrawer');
+    toggle.addEventListener('click', event => {
+      event.stopPropagation();
+      drawer.classList.toggle('open');
+    });
+    drawer.addEventListener('click', event => {
+      event.stopPropagation();
+    });
+    document.addEventListener('click', event => {
+      if (!drawer.classList.contains('open')) return;
+      if (toggle.contains(event.target) || drawer.contains(event.target)) return;
+      drawer.classList.remove('open');
     });
   },
 
