@@ -492,6 +492,7 @@ const CloudAPI = {
   _token: null,
   _tokenExpiry: 0,
   _credentials: null,    // { loginName, password, apiUrl }
+  _tokenCache: {},
 
   // Load saved credentials from localStorage
   loadCredentials() {
@@ -537,6 +538,33 @@ const CloudAPI = {
     return json.data;
   },
 
+  _makeCredKey(creds) {
+    return `${creds.loginName}@@${creds.apiUrl || 'http://www.0531yun.com'}`;
+  },
+
+  async authenticateWith(creds) {
+    const safeCreds = {
+      loginName: creds.loginName,
+      password: creds.password,
+      apiUrl: creds.apiUrl || 'http://www.0531yun.com',
+    };
+    const cacheKey = this._makeCredKey(safeCreds);
+    const cached = this._tokenCache[cacheKey];
+    if (cached && Date.now() < cached.expiry - 60000) return cached.token;
+    const previous = this._credentials;
+    try {
+      this._credentials = safeCreds;
+      const auth = await this.authenticate(safeCreds.loginName, safeCreds.password);
+      this._tokenCache[cacheKey] = {
+        token: auth.token,
+        expiry: auth.expiration * 1000,
+      };
+      return auth.token;
+    } finally {
+      this._credentials = previous;
+    }
+  },
+
   // Ensure token is valid, refresh if needed
   async ensureToken() {
     if (!this._credentials) this.loadCredentials();
@@ -551,6 +579,27 @@ const CloudAPI = {
     const qs = new URLSearchParams(params).toString();
     const url = `${this.getProxyBase()}${endpoint}${qs ? '?' + qs : ''}`;
     const res = await fetch(url, { headers: this._buildProxyHeaders({ authorization: this._token }) });
+    const json = await res.json();
+    if (json.code !== 1000) throw new Error(json.message || 'API Error');
+    return json.data;
+  },
+
+  async requestWithCredentials(credentials, endpoint, params = {}) {
+    const creds = {
+      loginName: credentials.loginName,
+      password: credentials.password,
+      apiUrl: credentials.apiUrl || 'http://www.0531yun.com',
+    };
+    if (!creds.loginName || !creds.password) throw new Error('缺少设备识别配置');
+    const token = await this.authenticateWith(creds);
+    const qs = new URLSearchParams(params).toString();
+    const url = `${this.getProxyBase()}${endpoint}${qs ? '?' + qs : ''}`;
+    const res = await fetch(url, {
+      headers: {
+        'authorization': token,
+        'x-target-base': creds.apiUrl,
+      },
+    });
     const json = await res.json();
     if (json.code !== 1000) throw new Error(json.message || 'API Error');
     return json.data;
@@ -589,6 +638,22 @@ const CloudAPI = {
       }
     } catch (err) {
       console.warn(`[CloudAPI] Failed to fetch data for ${deviceAddr}:`, err.message);
+    }
+    return null;
+  },
+
+  async fetchAndCacheRealTimeWithConfig(apiConfig) {
+    try {
+      const data = await this.requestWithCredentials(apiConfig, '/api/data/getRealTimeDataByDeviceAddr', {
+        deviceAddrs: apiConfig.deviceAddr,
+      });
+      const rtData = data && data.length > 0 ? data[0] : null;
+      if (rtData && rtData.dataItem) {
+        SensorEngine.setApiData(apiConfig.deviceAddr, rtData.dataItem, rtData.timeStamp);
+        return rtData;
+      }
+    } catch (err) {
+      console.warn(`[CloudAPI] Failed to fetch data for ${apiConfig.deviceAddr}:`, err.message);
     }
     return null;
   },
@@ -1231,7 +1296,7 @@ const app = {
           <div>正在获取传感器数据...</div>
         </div>`;
       try {
-        await CloudAPI.fetchAndCacheRealTime(addr);
+        await CloudAPI.fetchAndCacheRealTimeWithConfig(dev.apiConfig);
       } catch {}
       cached = SensorEngine.getApiData(addr);
     }
@@ -1333,10 +1398,9 @@ const app = {
   async _pollCloudDevices() {
     const devices = DataRepository.listDevices().filter(d => d.type === 'sensor_soil_api' && d.apiConfig);
     if (!devices.length) return;
-    if (!CloudAPI.isConfigured()) return;
     for (const dev of devices) {
       try {
-        await CloudAPI.fetchAndCacheRealTime(dev.apiConfig.deviceAddr);
+        await CloudAPI.fetchAndCacheRealTimeWithConfig(dev.apiConfig);
         const cached = SensorEngine.getApiData(dev.apiConfig.deviceAddr);
         if (cached) {
           DataRepository.saveDevice({ ...dev, online: true });
