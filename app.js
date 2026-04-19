@@ -2619,11 +2619,12 @@ const app = {
     try {
       const res = await BackendAdapter.getDeviceHistory(deviceId);
       this._cloudHistoryData = (res.rows || []).map(r => {
-        const d = new Date(r.ts || r.timestamp);
+        const d = new Date(r.deviceTimestamp || r.ts || r.timestamp);
         const pad = n => String(n).padStart(2, '0');
+        const fallbackTime = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
         return {
           ts: d.getTime(),
-          time: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()),
+          time: r.recordTimeStr ? String(r.recordTimeStr) : fallbackTime,
           values: r.values || {},
         };
       }).reverse();

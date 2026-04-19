@@ -511,6 +511,7 @@ function normalizePlatformCloudRow(state, dev, row, source = 'cloud-poll') {
         source,
         ts: deviceTimestamp,
         deviceTimestamp,
+        recordTimeStr: row.recordTimeStr ? String(row.recordTimeStr) : null,
         receivedAt: Date.now(),
         values,
         externalValues,
@@ -558,6 +559,7 @@ function appendPlatformReading(state, record) {
     state.history[record.deviceId].push({
         ts: record.deviceTimestamp,
         deviceTimestamp: record.deviceTimestamp,
+        recordTimeStr: record.recordTimeStr || null,
         receivedAt: record.receivedAt,
         values: record.externalValues,
         channelValues: record.values,
@@ -817,6 +819,7 @@ const server = http.createServer(async (req, res) => {
                 .map(item => ({
                     ts: item.deviceTimestamp,
                     deviceTimestamp: item.deviceTimestamp,
+                    recordTimeStr: item.recordTimeStr || null,
                     receivedAt: item.receivedAt,
                     values: item.externalValues || {},
                     channelValues: item.values || {},
