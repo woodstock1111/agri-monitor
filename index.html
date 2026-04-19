@@ -11,7 +11,35 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="app-shell">
+    <section class="login-screen" id="login-screen">
+        <div class="login-visual">
+            <img src="logo.jpg" alt="Smart Agriculture" class="login-logo">
+            <div>
+                <div class="login-kicker">Agri Data Platform</div>
+                <h1>智慧农业监测平台</h1>
+            </div>
+        </div>
+        <form class="login-panel" id="login-form">
+            <div class="login-panel-head">
+                <span>网页登录</span>
+                <strong>Admin Console</strong>
+            </div>
+            <label class="login-field">
+                <span>账号</span>
+                <input class="text-input" id="login-account" type="text" autocomplete="username" value="admin">
+            </label>
+            <label class="login-field">
+                <span>密码</span>
+                <input class="text-input" id="login-password" type="password" autocomplete="current-password" placeholder="请输入密码">
+            </label>
+            <div class="login-error" id="login-error"></div>
+            <button class="btn-primary login-submit" id="login-submit" type="submit">
+                <i class="fa-solid fa-arrow-right-to-bracket"></i> 登录
+            </button>
+        </form>
+    </section>
+
+    <div class="app-shell" id="app-shell" style="display:none">
 
         <!-- SIDEBAR -->
         <aside class="sidebar" id="sidebar">
@@ -25,7 +53,7 @@
             <nav class="sidebar-nav">
                 <div class="nav-group-label">数据展示</div>
                 <a class="nav-link active" data-page="dashboard">
-                    <i class="fa-solid fa-chart-tree-map"></i><span>系统总览</span>
+                    <i class="fa-solid fa-gauge-high"></i><span>系统总览</span>
                 </a>
                 <a class="nav-link" data-page="realtime">
                     <i class="fa-solid fa-wave-square"></i><span>实时数据</span>
@@ -35,8 +63,12 @@
                     <i class="fa-solid fa-video"></i><span>视频监控</span>
                 </a>
                 <a class="nav-link" data-page="history">
-                    <i class="fa-solid fa-chart-line"></i><span>历史数据</span>
+                    <i class="fa-solid fa-chart-line"></i><span>曲线图表</span>
                 </a>
+                <a class="nav-link" data-page="cloudsync">
+                    <i class="fa-solid fa-list-ul"></i><span>历史记录</span>
+                </a>
+
                 <a class="nav-link" data-page="pestdb">
                     <i class="fa-solid fa-bug"></i><span>病害虫数据库</span>
                 </a>
@@ -52,6 +84,9 @@
                 </a>
                 <a class="nav-link" data-page="devices">
                     <i class="fa-solid fa-microchip"></i><span>设备管理</span>
+                </a>
+                <a class="nav-link admin-only" data-page="accounts">
+                    <i class="fa-solid fa-users-gear"></i><span>账号管理</span>
                 </a>
             </nav>
             <div class="sidebar-status" id="sidebar-status">
@@ -69,6 +104,11 @@
                 <div class="topbar-right">
                     <div class="topbar-location"><i class="fa-solid fa-location-dot"></i><span>海口市 · 示范区</span></div>
                     <div class="topbar-weather"><i class="fa-solid fa-clock"></i><span id="live-time">--:--:--</span></div>
+                    <div class="topbar-user">
+                        <i class="fa-solid fa-circle-user"></i>
+                        <div><strong id="current-user-name">--</strong><span id="current-user-role">--</span></div>
+                        <button class="btn-ghost btn-sm" onclick="AuthService.logout()">退出</button>
+                    </div>
                     <button class="alert-btn" id="alertToggle">
                         <i class="fa-solid fa-bell"></i>
                         <span class="alert-count" id="alertCount">0</span>
@@ -118,8 +158,9 @@
                     <div class="page-toolbar">
                         <div class="toolbar-group"><label>选择地块</label><select class="select-input" id="rt-location-select"></select></div>
                         <div class="toolbar-group"><label>选择设备</label><select class="select-input" id="rt-device-select"></select></div>
-                        <div class="live-badge"><span class="pulse-dot"></span> 数据实时更新中</div>
-                        <button class="btn-ghost btn-sm" id="live-pause-btn" onclick="app.toggleLivePause()" style="margin-left:auto;"><i class="fa-solid fa-pause"></i> 暂停记录</button>
+                        <div class="live-badge" id="rt-live-badge"><span class="pulse-dot"></span> &#x6A21;&#x62DF;&#x6570;&#x636E;&#x5B9E;&#x65F6;&#x66F4;&#x65B0;&#x4E2D;</div>
+                        <button class="btn-ghost btn-sm" id="live-pause-btn" onclick="app.toggleLivePause()" style="margin-left:auto;"><i class="fa-solid fa-pause"></i> &#x6682;&#x505C;&#x8BB0;&#x5F55;</button>
+                        <button class="btn-ghost btn-sm" id="rt-refresh-btn" style="display:none;margin-left:auto;" onclick="app.refreshApiDevice()"><i class="fa-solid fa-rotate"></i> &#x5237;&#x65B0;&#x6570;&#x636E;</button>
                     </div>
                     <div class="sensor-grid" id="sensor-grid"></div>
                     <div class="glass-panel" style="margin-top:24px;">
@@ -152,11 +193,79 @@
                         </div>
                         <button class="btn-primary" onclick="app.refreshHistoryCharts()"><i class="fa-solid fa-rotate"></i> 查询</button>
                     </div>
-                    <div class="chart-grid-2">
-                        <div class="glass-panel"><div class="panel-header"><span class="panel-title">温湿度趋势</span></div><div class="chart-wrap"><canvas id="hist-temp-hum"></canvas></div></div>
-                        <div class="glass-panel"><div class="panel-header"><span class="panel-title">土壤墒情趋势</span></div><div class="chart-wrap"><canvas id="hist-soil"></canvas></div></div>
-                        <div class="glass-panel"><div class="panel-header"><span class="panel-title">光照强度趋势</span></div><div class="chart-wrap"><canvas id="hist-light"></canvas></div></div>
-                        <div class="glass-panel"><div class="panel-header"><span class="panel-title">CO₂浓度趋势</span></div><div class="chart-wrap"><canvas id="hist-co2"></canvas></div></div>
+                    <div class="chart-grid-2" id="hist-chart-grid">
+                        <!-- Dynamically populated per device channels -->
+                    </div>
+                </div>
+
+                <!-- Page: Cloud Sync (Renamed to History Records) -->
+                <div class="page" id="page-cloudsync">
+                    <div class="page-toolbar">
+                        <div class="toolbar-group">
+                            <label>目标设备</label>
+                            <select class="select-input" id="cs-device-select" style="width:240px" onchange="app.onCloudDeviceChange()"></select>
+                        </div>
+                        <button class="btn-cloud" onclick="app.syncCloudHistory()" id="sync-cloud-btn">
+                            <i class="fa-solid fa-sync"></i> 补充云端数据 (数据迁移)
+                        </button>
+                    </div>
+
+                    <div class="glass-panel">
+                        <div class="panel-header">
+                            <span class="panel-title"><i class="fa-solid fa-sliders"></i> 历史存量数据筛选</span>
+                            <div class="panel-actions">
+                                <button class="btn-ghost btn-sm" onclick="app.exportCloudHistoryCSV()"><i class="fa-solid fa-file-excel"></i> 导出报表</button>
+                            </div>
+                        </div>
+                        
+                        <!-- Configuration Area -->
+                        <div style="padding:20px; border-bottom:1px solid var(--border); display:flex; align-items:flex-end; gap:20px; flex-wrap:wrap; background:rgba(255,255,255,0.3)">
+                            <div style="display:contents">
+                                <div class="toolbar-group">
+                                    <label>显示范围</label>
+                                    <select class="select-input" id="cloud-hist-range-preset" style="width:140px" onchange="app.onCloudRangePresetChange()">
+                                        <option value="24h" selected>最近 24 小时</option>
+                                        <option value="7d">最近 7 天</option>
+                                        <option value="30d">最近 30 天</option>
+                                        <option value="custom">自定义时间</option>
+                                    </select>
+                                </div>
+                                <div id="cloud-hist-custom-dates" style="display:none; gap:12px; align-items: flex-end;">
+                                    <div class="toolbar-group">
+                                        <label>开始时间</label>
+                                        <input type="datetime-local" class="text-input" id="cloud-hist-start" style="width:200px">
+                                    </div>
+                                    <div class="toolbar-group">
+                                        <label>结束时间</label>
+                                        <input type="datetime-local" class="text-input" id="cloud-hist-end" style="width:200px">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="display:contents">
+                                <div class="toolbar-group" style="flex:1">
+                                    <label>筛选</label>
+                                    <div id="cloud-hist-factors-filter" class="factor-checkbox-group" style="min-height: 42px;">
+                                        <span style="color:var(--text-muted); font-size:12px; padding:10px">正在读取本地历史参数...</span>
+                                    </div>
+                                </div>
+                                <button class="btn-primary" onclick="app.applyCloudFilters()" style="display:none">
+                                    <i class="fa-solid fa-filter"></i> 应用筛选
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="table-wrap" style="max-height: calc(100vh - 420px); overflow-y: auto;">
+                            <table class="data-table">
+                                <thead id="cloud-hist-table-head"></thead>
+                                <tbody id="cloud-hist-table-body">
+                                    <tr><td colspan="100" style="text-align:center;padding:60px;color:var(--text-muted)">
+                                        <i class="fa-solid fa-database" style="font-size:32px; display:block; margin-bottom:12px; opacity:0.5"></i>
+                                        请选择设备以查看其本地存储的历史记录
+                                    </td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
@@ -216,6 +325,19 @@
                         </table>
                     </div>
                 </div>
+
+                <!-- Accounts -->
+                <div class="page" id="page-accounts">
+                    <div class="page-toolbar">
+                        <button class="btn-primary" onclick="app.openAccountModal()"><i class="fa-solid fa-user-plus"></i> 新建账号</button>
+                    </div>
+                    <div class="device-table-wrap glass-panel">
+                        <table class="data-table">
+                            <thead><tr><th>账号</th><th>角色</th><th>租户</th><th>状态</th><th>最近登录</th><th>操作</th></tr></thead>
+                            <tbody id="account-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </main>
         </div>
     </div>
@@ -245,7 +367,6 @@
         </div>
     </div>
 
-    <!-- Device Modal -->
     <div class="modal-overlay" id="modal-device">
         <div class="modal-box">
             <div class="modal-header"><h3 id="modal-device-title">添加新设备</h3><button class="modal-close" onclick="app.closeModal('device')"><i class="fa-solid fa-xmark"></i></button></div>
@@ -377,6 +498,24 @@
             <div class="modal-header"><h3>确认删除</h3><button class="modal-close" onclick="app.closeModal('confirm')"><i class="fa-solid fa-xmark"></i></button></div>
             <div class="modal-body"><p id="confirm-msg">确定要删除吗？</p></div>
             <div class="modal-footer"><button class="btn-ghost" onclick="app.closeModal('confirm')">取消</button><button class="btn-danger" id="confirm-ok-btn">确认删除</button></div>
+        </div>
+    </div>
+
+    <!-- Account Modal -->
+    <div class="modal-overlay" id="modal-account">
+        <div class="modal-box modal-sm">
+            <div class="modal-header"><h3 id="modal-account-title">新建账号</h3><button class="modal-close" onclick="app.closeModal('account')"><i class="fa-solid fa-xmark"></i></button></div>
+            <div class="modal-body">
+                <input type="hidden" id="account-edit-id">
+                <div class="form-group"><label>账号 *</label><input class="text-input" type="text" id="account-account" autocomplete="off" placeholder="例如：manager01"></div>
+                <div class="form-group"><label>姓名</label><input class="text-input" type="text" id="account-name" placeholder="账号显示名称"></div>
+                <div class="form-row">
+                    <div class="form-group"><label>角色</label><select class="select-input" id="account-role"><option value="tenant_admin">客户管理员</option><option value="platform_admin">平台管理员</option></select></div>
+                    <div class="form-group"><label>状态</label><select class="select-input" id="account-status"><option value="active">启用</option><option value="disabled">停用</option></select></div>
+                </div>
+                <div class="form-group"><label>密码</label><input class="text-input" type="password" id="account-password" autocomplete="new-password" placeholder="输入新密码"><span class="field-hint" id="account-password-hint">新账号必须设置初始密码</span></div>
+            </div>
+            <div class="modal-footer"><button class="btn-ghost" onclick="app.closeModal('account')">取消</button><button class="btn-primary" onclick="app.saveAccount()">保存账号</button></div>
         </div>
     </div>
 

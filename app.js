@@ -1,5 +1,5 @@
 /* =====================================================
-   智慧农业监测平台 — Application Logic v3
+   \u667a\u6167\u519c\u4e1a\u76d1\u6d4b\u5e73\u53f0 \u2014 Application Logic v3
    Features: Dynamic status, Automation engine, 
    Cloud Platform API integration, LoRa/RS485 Modbus
    ===================================================== */
@@ -7,6 +7,135 @@
 // ====================================================
 // DATA STORE
 // ====================================================
+const AuthService = {
+  TOKEN_KEY: 'agri_access_token',
+  USER_KEY: 'agri_current_user',
+  currentUser: null,
+
+  authHeaders(extra = {}) {
+    const token = localStorage.getItem(this.TOKEN_KEY);
+    return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+  },
+
+  async login(account, password) {
+    const res = await fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account, password }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) throw new Error(data.msg || '\u767b\u5f55\u5931\u8d25');
+    localStorage.setItem(this.TOKEN_KEY, data.accessToken);
+    localStorage.setItem(this.USER_KEY, JSON.stringify(data.user || {}));
+    this.currentUser = data.user || null;
+    this.applyUserState();
+    return data;
+  },
+
+  async ensureSession() {
+    if (window.location.protocol === 'file:') {
+      this.currentUser = { account: 'local', name: 'Local Admin', role: 'platform_admin' };
+      this.applyUserState();
+      return true;
+    }
+    const token = localStorage.getItem(this.TOKEN_KEY);
+    if (!token) return false;
+    try {
+      const res = await fetch('/api/v1/auth/me', { headers: this.authHeaders() });
+      if (!res.ok) {
+        this.logout(false);
+        return false;
+      }
+      const data = await res.json();
+      this.currentUser = data.user || JSON.parse(localStorage.getItem(this.USER_KEY) || 'null');
+      localStorage.setItem(this.USER_KEY, JSON.stringify(this.currentUser || {}));
+      this.applyUserState();
+      return true;
+    } catch {
+      this.logout(false);
+      return false;
+    }
+  },
+
+  bindLoginForm() {
+    const form = document.getElementById('login-form');
+    if (!form || form.dataset.bound === '1') return;
+    form.dataset.bound = '1';
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      const account = document.getElementById('login-account')?.value.trim();
+      const password = document.getElementById('login-password')?.value || '';
+      const error = document.getElementById('login-error');
+      const btn = document.getElementById('login-submit');
+      if (error) error.textContent = '';
+      if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> \u767b\u5f55\u4e2d'; }
+      try {
+        await this.login(account, password);
+        await app.init();
+      } catch (err) {
+        if (error) error.textContent = err.message || '\u767b\u5f55\u5931\u8d25';
+      } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-arrow-right-to-bracket"></i> \u767b\u5f55'; }
+      }
+    });
+  },
+
+  applyUserState() {
+    const name = this.currentUser?.name || this.currentUser?.account || '--';
+    const role = this.currentUser?.role === 'platform_admin' ? '\u5e73\u53f0\u7ba1\u7406\u5458' : '\u5ba2\u6237\u7ba1\u7406\u5458';
+    const nameEl = document.getElementById('current-user-name');
+    const roleEl = document.getElementById('current-user-role');
+    if (nameEl) nameEl.textContent = name;
+    if (roleEl) roleEl.textContent = role;
+    document.querySelectorAll('.admin-only').forEach(el => {
+      el.style.display = this.canManageUsers() ? '' : 'none';
+    });
+  },
+
+  canManageUsers() {
+    return this.currentUser?.role === 'platform_admin';
+  },
+
+  showLogin() {
+    const shell = document.getElementById('app-shell');
+    const login = document.getElementById('login-screen');
+    if (shell) shell.style.display = 'none';
+    if (login) login.style.display = '';
+  },
+
+  showApp() {
+    const shell = document.getElementById('app-shell');
+    const login = document.getElementById('login-screen');
+    if (shell) shell.style.display = '';
+    if (login) login.style.display = 'none';
+  },
+
+  logout(reload = true) {
+    localStorage.removeItem(this.TOKEN_KEY);
+    localStorage.removeItem(this.USER_KEY);
+    this.currentUser = null;
+    if (reload) window.location.reload();
+    else this.showLogin();
+  },
+
+  async request(path, options = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const headers = this.authHeaders(options.headers || {});
+    try {
+      const res = await fetch('/api/v1' + path, { ...options, headers, signal: controller.signal });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) throw new Error(data.msg || '\u8bf7\u6c42\u5931\u8d25');
+      return data;
+    } catch (error) {
+      if (error.name === 'AbortError') throw new Error('\u8bf7\u6c42\u8d85\u65f6\uff0c\u8bf7\u68c0\u67e5\u540e\u7aef\u662f\u5426\u542f\u52a8');
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+};
+
 const Store = {
   _get(key, fb) { try { return JSON.parse(localStorage.getItem('agri_' + key)) || fb; } catch { return fb; } },
   _set(key, val) {
@@ -48,8 +177,10 @@ const SyncService = {
   _bootstrapped: false,
 
   isEnabled() {
-    const config = RuntimeConfigStore.get();
-    return config.mode !== 'local' && window.location.protocol !== 'file:';
+    // Always sync to backend when page is served over http(s) — the old
+    // "local" mode used frontend-only storage, which doesn't apply anymore
+    // now that the backend is the source of truth for devices and readings.
+    return window.location.protocol !== 'file:';
   },
 
   async bootstrap() {
@@ -58,7 +189,10 @@ const SyncService = {
       return;
     }
     try {
-      const res = await fetch('/api/v1/app-state', { method: 'GET' });
+      const res = await fetch('/api/v1/app-state', {
+        method: 'GET',
+        headers: AuthService.authHeaders(),
+      });
       if (res.ok) {
         const data = await res.json();
         Store.importData(data);
@@ -81,7 +215,7 @@ const SyncService = {
     const snapshot = Store.exportData();
     this._inFlight = fetch('/api/v1/app-state', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: AuthService.authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(snapshot),
     }).catch(error => {
       console.warn('[SyncService] push failed:', error.message);
@@ -89,6 +223,17 @@ const SyncService = {
       this._inFlight = null;
     });
     await this._inFlight;
+  },
+
+  async pushNowForced() {
+    if (window.location.protocol === 'file:') return;
+    const snapshot = Store.exportData();
+    const res = await fetch('/api/v1/app-state', {
+      method: 'PUT',
+      headers: AuthService.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(snapshot),
+    });
+    if (!res.ok) throw new Error('app-state ' + res.status);
   },
 };
 globalThis.SyncService = SyncService;
@@ -202,7 +347,7 @@ const LocalRepository = {
     return {
       id: location.id,
       name: (location.name || '').trim(),
-      type: location.type || '其他',
+      type: location.type || '\u5176\u4ed6',
       lat: Number(location.lat) || 0,
       lng: Number(location.lng) || 0,
       area: Number(location.area) || 0,
@@ -231,7 +376,7 @@ const LocalRepository = {
 };
 
 const BackendAdapter = {
-  _health: { ok: null, checkedAt: 0, message: '未检查' },
+  _health: { ok: null, checkedAt: 0, message: '\u672a\u68c0\u67e5' },
 
   getConfig() {
     return RuntimeConfigStore.get();
@@ -240,13 +385,13 @@ const BackendAdapter = {
   getModeMeta() {
     const { mode, backendBaseUrl, syncPolicy } = this.getConfig();
     const labels = {
-      local: '本地模式',
-      hybrid: '混合模式',
-      remote: '后端模式',
+      local: '\u672c\u5730\u6a21\u5f0f',
+      hybrid: '\u6df7\u5408\u6a21\u5f0f',
+      remote: '\u540e\u7aef\u6a21\u5f0f',
     };
     return {
       mode,
-      label: labels[mode] || '本地模式',
+      label: labels[mode] || '\u672c\u5730\u6a21\u5f0f',
       backendBaseUrl,
       syncPolicy,
     };
@@ -255,23 +400,19 @@ const BackendAdapter = {
   async checkHealth(force = false) {
     const now = Date.now();
     if (!force && now - this._health.checkedAt < 45000) return this._health;
-    const { mode, backendBaseUrl, healthEndpoint } = this.getConfig();
-    if (mode === 'local') {
-      this._health = { ok: true, checkedAt: now, message: '本地运行中' };
-      return this._health;
-    }
+    const { backendBaseUrl, healthEndpoint } = this.getConfig();
     try {
       const res = await fetch(`${backendBaseUrl}${healthEndpoint}`, { method: 'GET' });
       this._health = {
         ok: res.ok,
         checkedAt: now,
-        message: res.ok ? '后端可连接' : `后端响应异常 (${res.status})`,
+        message: res.ok ? '\u540e\u7aef\u53ef\u8fde\u63a5' : `\u540e\u7aef\u54cd\u5e94\u5f02\u5e38 (${res.status})`,
       };
     } catch (error) {
       this._health = {
         ok: false,
         checkedAt: now,
-        message: `后端不可达: ${error.message}`,
+        message: `\u540e\u7aef\u4e0d\u53ef\u8fbe: ${error.message}`,
       };
     }
     return this._health;
@@ -295,13 +436,17 @@ const BackendAdapter = {
   },
 
   async getDeviceRealtime(deviceId) {
-    const res = await fetch(`${this.getEndpointMap().deviceRealtime}?deviceId=${encodeURIComponent(deviceId)}`);
+    const res = await fetch(`${this.getEndpointMap().deviceRealtime}?deviceId=${encodeURIComponent(deviceId)}`, {
+      headers: AuthService.authHeaders(),
+    });
     if (!res.ok) throw new Error(`realtime ${res.status}`);
     return await res.json();
   },
 
   async getDeviceHistory(deviceId) {
-    const res = await fetch(`${this.getEndpointMap().deviceHistory}?deviceId=${encodeURIComponent(deviceId)}`);
+    const res = await fetch(`${this.getEndpointMap().deviceHistory}?deviceId=${encodeURIComponent(deviceId)}`, {
+      headers: AuthService.authHeaders(),
+    });
     if (!res.ok) throw new Error(`history ${res.status}`);
     return await res.json();
   },
@@ -388,35 +533,35 @@ function defaultAutomations() {
 
 function demoLocations() {
   return [
-    { id:'demo-loc-1', name:'一号农田（蔬菜区）', type:'蔬菜地', lat:20.0450, lng:110.1980, area:120, notes:'演示地块', metadata:{ demo:true } },
-    { id:'demo-loc-2', name:'二号农田（水稻田）', type:'水稻田', lat:20.0430, lng:110.2010, area:300, notes:'演示地块', metadata:{ demo:true } },
-    { id:'demo-loc-3', name:'实验温室A', type:'温室大棚', lat:20.0465, lng:110.1950, area:20, notes:'演示地块', metadata:{ demo:true } },
+    { id:'demo-loc-1', name:'\u4e00\u53f7\u519c\u7530\uff08\u852c\u83dc\u533a\uff09', type:'\u852c\u83dc\u5730', lat:20.0450, lng:110.1980, area:120, notes:'\u6f14\u793a\u5730\u5757', metadata:{ demo:true } },
+    { id:'demo-loc-2', name:'\u4e8c\u53f7\u519c\u7530\uff08\u6c34\u7a3b\u7530\uff09', type:'\u6c34\u7a3b\u7530', lat:20.0430, lng:110.2010, area:300, notes:'\u6f14\u793a\u5730\u5757', metadata:{ demo:true } },
+    { id:'demo-loc-3', name:'\u5b9e\u9a8c\u6e29\u5ba4A', type:'\u6e29\u5ba4\u5927\u68da', lat:20.0465, lng:110.1950, area:20, notes:'\u6f14\u793a\u5730\u5757', metadata:{ demo:true } },
   ];
 }
 
 function demoDevices() {
   return [
-    { id:'demo-dev-1', name:'环境传感器-A1', type:'sensor_env', locationId:'demo-loc-1', address:'0x01', protocol:'LoRa', streamUrl:'', notes:'演示设备', online:true, lat:20.0452, lng:110.1975, metadata:{ demo:true } },
-    { id:'demo-dev-2', name:'土壤传感器-A2', type:'sensor_soil', locationId:'demo-loc-1', address:'0x02', protocol:'LoRa', streamUrl:'', notes:'演示设备', online:true, lat:20.0448, lng:110.1985, metadata:{ demo:true } },
-    { id:'demo-dev-3', name:'环境传感器-B1', type:'sensor_env', locationId:'demo-loc-2', address:'0x03', protocol:'LoRa', streamUrl:'', notes:'演示设备', online:true, lat:20.0433, lng:110.2005, metadata:{ demo:true } },
-    { id:'demo-dev-4', name:'虫情监测仪-B2', type:'sensor_pest', locationId:'demo-loc-2', address:'0x04', protocol:'LoRa', streamUrl:'', notes:'演示设备', online:false, lat:20.0427, lng:110.2015, metadata:{ demo:true } },
-    { id:'demo-dev-5', name:'摄像头-C1', type:'camera', locationId:'demo-loc-3', address:'192.168.1.21', protocol:'RTSP', streamUrl:'rtsp://192.168.1.21:554/main', notes:'演示设备', online:true, lat:20.0468, lng:110.1948, metadata:{ demo:true } },
-    { id:'demo-dev-6', name:'灌溉控制器-A3', type:'controller_water', locationId:'demo-loc-1', address:'0x05', protocol:'RS485', streamUrl:'', notes:'演示设备', online:true, lat:20.0445, lng:110.1990, metadata:{ demo:true } },
-    { id:'demo-dev-7', name:'补光灯组-C2', type:'controller_light', locationId:'demo-loc-3', address:'0x06', protocol:'RS485', streamUrl:'', notes:'演示设备', online:true, lat:20.0462, lng:110.1955, metadata:{ demo:true } },
-    { id:'demo-dev-8', name:'风机-C3', type:'controller_fan', locationId:'demo-loc-3', address:'0x07', protocol:'RS485', streamUrl:'', notes:'演示设备', online:true, lat:20.0467, lng:110.1943, metadata:{ demo:true } },
+    { id:'demo-dev-1', name:'\u73af\u5883\u4f20\u611f\u5668-A1', type:'sensor_env', locationId:'demo-loc-1', address:'0x01', protocol:'LoRa', streamUrl:'', notes:'\u6f14\u793a\u8bbe\u5907', online:true, lat:20.0452, lng:110.1975, metadata:{ demo:true } },
+    { id:'demo-dev-2', name:'\u571f\u58e4\u4f20\u611f\u5668-A2', type:'sensor_soil', locationId:'demo-loc-1', address:'0x02', protocol:'LoRa', streamUrl:'', notes:'\u6f14\u793a\u8bbe\u5907', online:true, lat:20.0448, lng:110.1985, metadata:{ demo:true } },
+    { id:'demo-dev-3', name:'\u73af\u5883\u4f20\u611f\u5668-B1', type:'sensor_env', locationId:'demo-loc-2', address:'0x03', protocol:'LoRa', streamUrl:'', notes:'\u6f14\u793a\u8bbe\u5907', online:true, lat:20.0433, lng:110.2005, metadata:{ demo:true } },
+    { id:'demo-dev-4', name:'\u866b\u60c5\u76d1\u6d4b\u4eea-B2', type:'sensor_pest', locationId:'demo-loc-2', address:'0x04', protocol:'LoRa', streamUrl:'', notes:'\u6f14\u793a\u8bbe\u5907', online:false, lat:20.0427, lng:110.2015, metadata:{ demo:true } },
+    { id:'demo-dev-5', name:'\u6444\u50cf\u5934-C1', type:'camera', locationId:'demo-loc-3', address:'192.168.1.21', protocol:'RTSP', streamUrl:'rtsp://192.168.1.21:554/main', notes:'\u6f14\u793a\u8bbe\u5907', online:true, lat:20.0468, lng:110.1948, metadata:{ demo:true } },
+    { id:'demo-dev-6', name:'\u704c\u6e89\u63a7\u5236\u5668-A3', type:'controller_water', locationId:'demo-loc-1', address:'0x05', protocol:'RS485', streamUrl:'', notes:'\u6f14\u793a\u8bbe\u5907', online:true, lat:20.0445, lng:110.1990, metadata:{ demo:true } },
+    { id:'demo-dev-7', name:'\u8865\u5149\u706f\u7ec4-C2', type:'controller_light', locationId:'demo-loc-3', address:'0x06', protocol:'RS485', streamUrl:'', notes:'\u6f14\u793a\u8bbe\u5907', online:true, lat:20.0462, lng:110.1955, metadata:{ demo:true } },
+    { id:'demo-dev-8', name:'\u98ce\u673a-C3', type:'controller_fan', locationId:'demo-loc-3', address:'0x07', protocol:'RS485', streamUrl:'', notes:'\u6f14\u793a\u8bbe\u5907', online:true, lat:20.0467, lng:110.1943, metadata:{ demo:true } },
   ];
 }
 
 function demoAutomations() {
   return [
     {
-      id:'demo-auto-1', name:'蔬菜区自动灌溉', desc:'当土壤湿度过低时自动开启灌溉水泵', enabled: true,
+      id:'demo-auto-1', name:'\u852c\u83dc\u533a\u81ea\u52a8\u704c\u6e89', desc:'\u5f53\u571f\u58e4\u6e7f\u5ea6\u8fc7\u4f4e\u65f6\u81ea\u52a8\u5f00\u542f\u704c\u6e89\u6c34\u6cf5', enabled: true,
       conditions: [{ sourceDeviceId:'demo-dev-2', param:'soil', operator:'<', value: 25 }],
       actions: [{ targetDeviceId:'demo-dev-6', action:'on' }],
       metadata:{ demo:true },
     },
     {
-      id:'demo-auto-2', name:'温室高温通风', desc:'温室温度超过35°C时自动开启风机降温', enabled: true,
+      id:'demo-auto-2', name:'\u6e29\u5ba4\u9ad8\u6e29\u901a\u98ce', desc:'\u6e29\u5ba4\u6e29\u5ea6\u8d85\u8fc735\u00b0C\u65f6\u81ea\u52a8\u5f00\u542f\u98ce\u673a\u964d\u6e29', enabled: true,
       conditions: [{ sourceDeviceId:'demo-dev-1', param:'temp', operator:'>', value: 35 }],
       actions: [{ targetDeviceId:'demo-dev-8', action:'on' }],
       metadata:{ demo:true },
@@ -428,24 +573,24 @@ function demoAutomations() {
 // PEST DB
 // ====================================================
 const PEST_DB = [
-  { id:'p1', type:'pest', name:'稻飞虱', latin:'Nilaparvata lugens', emoji:'🦗', severity:'high', crops:['水稻'], season:'5-10月',
-    symptoms:'叶片出现黄白色条斑，植株下部枯黄，严重时整株倒伏。', prevention:'及时排水晒田，减少氮肥，选用抗性品种。',
-    control:'吡虫啉、噻嗪酮等药剂喷雾，注意对准基部。', threshold:'百丛虫量超过1000头时即需防治。' },
-  { id:'p2', type:'disease', name:'水稻纹枯病', latin:'Rhizoctonia solani', emoji:'🍂', severity:'high', crops:['水稻'], season:'6-9月',
-    symptoms:'叶鞘上出现椭圆形云纹状病斑，高温高湿时向上蔓延。', prevention:'合理密植，降低田间湿度，控制氮肥。',
-    control:'苯醚甲环唑、井冈霉素等喷施茎基部。', threshold:'丛发病率达到20%时开始防治。' },
-  { id:'p3', type:'pest', name:'斜纹夜蛾', latin:'Spodoptera litura', emoji:'🦋', severity:'medium', crops:['蔬菜','水稻','玉米'], season:'7-10月',
-    symptoms:'幼虫取食叶片成穿孔状，老龄幼虫昼伏夜出。', prevention:'安装诱虫灯，推广性信息素诱捕。',
-    control:'氯虫苯甲酰胺等喷雾，傍晚施药效果最佳。', threshold:'百株卵块达到3块或幼虫30头时防治。' },
-  { id:'p4', type:'disease', name:'蔬菜灰霉病', latin:'Botrytis cinerea', emoji:'🌫️', severity:'medium', crops:['蔬菜','番茄'], season:'冬-春季',
-    symptoms:'病部出现水浸状斑点，扩大后产生灰褐色霉层。', prevention:'加强通风透光，降低湿度，清除病残体。',
-    control:'腐霉利、嘧霉胺等轮换使用避免抗性。', threshold:'发病初期即开始施药。' },
-  { id:'p5', type:'pest', name:'蚜虫（菜蚜）', latin:'Myzus persicae', emoji:'🐜', severity:'medium', crops:['蔬菜','叶菜'], season:'全年',
-    symptoms:'群集叶背刺吸汁液，叶片卷曲皱缩，可传播病毒病。', prevention:'黄色粘虫板，保护瓢虫等天敌。',
-    control:'吡虫啉、啶虫脒等喷雾，注意叶背。', threshold:'每株蚜虫100头时开始防治。' },
-  { id:'p6', type:'disease', name:'黄瓜霜霉病', latin:'Pseudoperonospora cubensis', emoji:'🥒', severity:'high', crops:['黄瓜','葫芦科'], season:'春季',
-    symptoms:'叶面黄绿色角斑，背面紫褐色霉层，发展迅速。', prevention:'选用抗病品种，大棚降湿。',
-    control:'烯酰吗啉等喷雾，发病前预防最佳。', threshold:'发现中心病株时立即用药。' },
+  { id:'p1', type:'pest', name:'\u7a3b\u98de\u8671', latin:'Nilaparvata lugens', emoji:'\ud83e\udd97', severity:'high', crops:['\u6c34\u7a3b'], season:'5-10\u6708',
+    symptoms:'\u53f6\u7247\u51fa\u73b0\u9ec4\u767d\u8272\u6761\u6591\uff0c\u690d\u682a\u4e0b\u90e8\u67af\u9ec4\uff0c\u4e25\u91cd\u65f6\u6574\u682a\u5012\u4f0f\u3002', prevention:'\u53ca\u65f6\u6392\u6c34\u6652\u7530\uff0c\u51cf\u5c11\u6c2e\u80a5\uff0c\u9009\u7528\u6297\u6027\u54c1\u79cd\u3002',
+    control:'\u5421\u866b\u5549\u3001\u567b\u55ea\u916e\u7b49\u836f\u5242\u55b7\u96fe\uff0c\u6ce8\u610f\u5bf9\u51c6\u57fa\u90e8\u3002', threshold:'\u767e\u4e1b\u866b\u91cf\u8d85\u8fc71000\u5934\u65f6\u5373\u9700\u9632\u6cbb\u3002' },
+  { id:'p2', type:'disease', name:'\u6c34\u7a3b\u7eb9\u67af\u75c5', latin:'Rhizoctonia solani', emoji:'\ud83c\udf42', severity:'high', crops:['\u6c34\u7a3b'], season:'6-9\u6708',
+    symptoms:'\u53f6\u9798\u4e0a\u51fa\u73b0\u692d\u5706\u5f62\u4e91\u7eb9\u72b6\u75c5\u6591\uff0c\u9ad8\u6e29\u9ad8\u6e7f\u65f6\u5411\u4e0a\u8513\u5ef6\u3002', prevention:'\u5408\u7406\u5bc6\u690d\uff0c\u964d\u4f4e\u7530\u95f4\u6e7f\u5ea6\uff0c\u63a7\u5236\u6c2e\u80a5\u3002',
+    control:'\u82ef\u919a\u7532\u73af\u5511\u3001\u4e95\u5188\u9709\u7d20\u7b49\u55b7\u65bd\u830e\u57fa\u90e8\u3002', threshold:'\u4e1b\u53d1\u75c5\u7387\u8fbe\u523020%\u65f6\u5f00\u59cb\u9632\u6cbb\u3002' },
+  { id:'p3', type:'pest', name:'\u659c\u7eb9\u591c\u86fe', latin:'Spodoptera litura', emoji:'\ud83e\udd8b', severity:'medium', crops:['\u852c\u83dc','\u6c34\u7a3b','\u7389\u7c73'], season:'7-10\u6708',
+    symptoms:'\u5e7c\u866b\u53d6\u98df\u53f6\u7247\u6210\u7a7f\u5b54\u72b6\uff0c\u8001\u9f84\u5e7c\u866b\u663c\u4f0f\u591c\u51fa\u3002', prevention:'\u5b89\u88c5\u8bf1\u866b\u706f\uff0c\u63a8\u5e7f\u6027\u4fe1\u606f\u7d20\u8bf1\u6355\u3002',
+    control:'\u6c2f\u866b\u82ef\u7532\u9170\u80fa\u7b49\u55b7\u96fe\uff0c\u508d\u665a\u65bd\u836f\u6548\u679c\u6700\u4f73\u3002', threshold:'\u767e\u682a\u5375\u5757\u8fbe\u52303\u5757\u6216\u5e7c\u866b30\u5934\u65f6\u9632\u6cbb\u3002' },
+  { id:'p4', type:'disease', name:'\u852c\u83dc\u7070\u9709\u75c5', latin:'Botrytis cinerea', emoji:'\ud83c\udf2b\ufe0f', severity:'medium', crops:['\u852c\u83dc','\u756a\u8304'], season:'\u51ac-\u6625\u5b63',
+    symptoms:'\u75c5\u90e8\u51fa\u73b0\u6c34\u6d78\u72b6\u6591\u70b9\uff0c\u6269\u5927\u540e\u4ea7\u751f\u7070\u8910\u8272\u9709\u5c42\u3002', prevention:'\u52a0\u5f3a\u901a\u98ce\u900f\u5149\uff0c\u964d\u4f4e\u6e7f\u5ea6\uff0c\u6e05\u9664\u75c5\u6b8b\u4f53\u3002',
+    control:'\u8150\u9709\u5229\u3001\u5627\u9709\u80fa\u7b49\u8f6e\u6362\u4f7f\u7528\u907f\u514d\u6297\u6027\u3002', threshold:'\u53d1\u75c5\u521d\u671f\u5373\u5f00\u59cb\u65bd\u836f\u3002' },
+  { id:'p5', type:'pest', name:'\u869c\u866b\uff08\u83dc\u869c\uff09', latin:'Myzus persicae', emoji:'\ud83d\udc1c', severity:'medium', crops:['\u852c\u83dc','\u53f6\u83dc'], season:'\u5168\u5e74',
+    symptoms:'\u7fa4\u96c6\u53f6\u80cc\u523a\u5438\u6c41\u6db2\uff0c\u53f6\u7247\u5377\u66f2\u76b1\u7f29\uff0c\u53ef\u4f20\u64ad\u75c5\u6bd2\u75c5\u3002', prevention:'\u9ec4\u8272\u7c98\u866b\u677f\uff0c\u4fdd\u62a4\u74e2\u866b\u7b49\u5929\u654c\u3002',
+    control:'\u5421\u866b\u5549\u3001\u5576\u866b\u8112\u7b49\u55b7\u96fe\uff0c\u6ce8\u610f\u53f6\u80cc\u3002', threshold:'\u6bcf\u682a\u869c\u866b100\u5934\u65f6\u5f00\u59cb\u9632\u6cbb\u3002' },
+  { id:'p6', type:'disease', name:'\u9ec4\u74dc\u971c\u9709\u75c5', latin:'Pseudoperonospora cubensis', emoji:'\ud83e\udd52', severity:'high', crops:['\u9ec4\u74dc','\u846b\u82a6\u79d1'], season:'\u6625\u5b63',
+    symptoms:'\u53f6\u9762\u9ec4\u7eff\u8272\u89d2\u6591\uff0c\u80cc\u9762\u7d2b\u8910\u8272\u9709\u5c42\uff0c\u53d1\u5c55\u8fc5\u901f\u3002', prevention:'\u9009\u7528\u6297\u75c5\u54c1\u79cd\uff0c\u5927\u68da\u964d\u6e7f\u3002',
+    control:'\u70ef\u9170\u5417\u5549\u7b49\u55b7\u96fe\uff0c\u53d1\u75c5\u524d\u9884\u9632\u6700\u4f73\u3002', threshold:'\u53d1\u73b0\u4e2d\u5fc3\u75c5\u682a\u65f6\u7acb\u5373\u7528\u836f\u3002' },
 ];
 
 // ====================================================
@@ -546,7 +691,7 @@ const CloudAPI = {
     const url = `${this.getProxyBase()}/api/getToken?loginName=${encodeURIComponent(loginName)}&password=${encodeURIComponent(password)}`;
     const res = await fetch(url, { headers: this._buildProxyHeaders() });
     const json = await res.json();
-    if (json.code !== 1000) throw new Error(json.message || '认证失败');
+    if (json.code !== 1000) throw new Error(json.message || '\u8ba4\u8bc1\u5931\u8d25');
     this._token = json.data.token;
     this._tokenExpiry = json.data.expiration * 1000; // Convert to ms
     return json.data;
@@ -582,7 +727,7 @@ const CloudAPI = {
   // Ensure token is valid, refresh if needed
   async ensureToken() {
     if (!this._credentials) this.loadCredentials();
-    if (!this._credentials) throw new Error('未配置识别码');
+    if (!this._credentials) throw new Error('\u672a\u914d\u7f6e\u8bc6\u522b\u7801');
     if (this._token && Date.now() < this._tokenExpiry - 60000) return; // 1min buffer
     await this.authenticate(this._credentials.loginName, this._credentials.password);
   },
@@ -604,7 +749,7 @@ const CloudAPI = {
       password: credentials.password,
       apiUrl: credentials.apiUrl || 'http://www.0531yun.com',
     };
-    if (!creds.loginName || !creds.password) throw new Error('缺少设备识别配置');
+    if (!creds.loginName || !creds.password) throw new Error('\u7f3a\u5c11\u8bbe\u5907\u8bc6\u522b\u914d\u7f6e');
     const token = await this.authenticateWith(creds);
     const qs = new URLSearchParams(params).toString();
     const url = `${this.getProxyBase()}${endpoint}${qs ? '?' + qs : ''}`;
@@ -699,15 +844,15 @@ const ChartHelper = {
 // PARAM LABELS
 // ====================================================
 const PARAM_LABELS = {
-  temp: '空气温度 (°C)', humid: '空气湿度 (%)', soil: '土壤湿度 (%)',
-  light: '光照强度 (lux)', co2: 'CO₂ (ppm)', wind: '风速 (m/s)', pest: '虫害捕获量'
+  temp: '\u7a7a\u6c14\u6e29\u5ea6 (\u00b0C)', humid: '\u7a7a\u6c14\u6e7f\u5ea6 (%)', soil: '\u571f\u58e4\u6e7f\u5ea6 (%)',
+  light: '\u5149\u7167\u5f3a\u5ea6 (lux)', co2: 'CO\u2082 (ppm)', wind: '\u98ce\u901f (m/s)', pest: '\u866b\u5bb3\u6355\u83b7\u91cf'
 };
-const OP_LABELS = { '>': '大于', '<': '小于', '>=': '大于等于', '<=': '小于等于', '==': '等于' };
-const ACTION_LABELS = { on: '开启', off: '关闭' };
+const OP_LABELS = { '>': '\u5927\u4e8e', '<': '\u5c0f\u4e8e', '>=': '\u5927\u4e8e\u7b49\u4e8e', '<=': '\u5c0f\u4e8e\u7b49\u4e8e', '==': '\u7b49\u4e8e' };
+const ACTION_LABELS = { on: '\u5f00\u542f', off: '\u5173\u95ed' };
 const TYPE_LABELS = {
-  sensor_env:'🌡️ 环境传感器', sensor_soil:'🌱 土壤传感器', sensor_soil_api:'🔗 在线传感器',
-  sensor_pest:'🦟 虫情监测仪', camera:'📹 摄像头', controller_water:'💧 灌溉控制器',
-  controller_light:'💡 补光控制器', controller_fan:'🌀 风机控制器'
+  sensor_env:'\ud83c\udf21\ufe0f \u73af\u5883\u4f20\u611f\u5668', sensor_soil:'\ud83c\udf31 \u571f\u58e4\u4f20\u611f\u5668', sensor_soil_api:'\ud83d\udd17 \u5728\u7ebf\u4f20\u611f\u5668',
+  sensor_pest:'\ud83e\udd9f \u866b\u60c5\u76d1\u6d4b\u4eea', camera:'\ud83d\udcf9 \u6444\u50cf\u5934', controller_water:'\ud83d\udca7 \u704c\u6e89\u63a7\u5236\u5668',
+  controller_light:'\ud83d\udca1 \u8865\u5149\u63a7\u5236\u5668', controller_fan:'\ud83c\udf00 \u98ce\u673a\u63a7\u5236\u5668'
 };
 
 // ====================================================
@@ -730,12 +875,26 @@ const app = {
   _cloudDevices: [],       // Devices discovered from cloud
   _cloudSelected: new Set(),
   _cloudRenameMap: {},
-  _cloudApiPollInterval: null,
   _backendHealthInterval: null,
   _runtimeConfig: null,
+  _initialized: false,
+  _accounts: [],
+  _cloudHistoryData: [],
+  _selectedFactors: new Set(),
 
-  // ─── BOOT ───
+  //     BOOT    
   async init() {
+    const authenticated = await AuthService.ensureSession();
+    if (!authenticated) {
+      AuthService.showLogin();
+      return;
+    }
+    AuthService.showApp();
+    if (this._initialized) {
+      this.navigate(this.currentPage || 'dashboard');
+      return;
+    }
+    this._initialized = true;
     await SyncService.bootstrap();
     ChartHelper.defaults();
     this._runtimeConfig = DataRepository.getRuntimeConfig();
@@ -749,7 +908,6 @@ const app = {
     this.navigate('dashboard');
     this.startClock();
     this.startAutoEngine();
-    this.startCloudApiPolling();
     this.startBackendHealthPolling();
   },
 
@@ -772,42 +930,33 @@ const app = {
     if (this.currentPage === 'devices') this.renderDevices();
   },
 
-  // ─── DYNAMIC SIDEBAR STATUS ───
+  //     DYNAMIC SIDEBAR STATUS    
   updateSidebarStatus() {
     const devices = DataRepository.listDevices();
     const total = devices.length;
     const online = devices.filter(d => d.online).length;
     const offline = total - online;
-    const loraDev = devices.filter(d => d.protocol === 'LoRa');
-    const loraOnline = loraDev.filter(d => d.online).length;
-    const loraTotal = loraDev.length;
 
     let sysStatus, sysColor;
-    if (offline === 0) { sysStatus = '系统运行正常'; sysColor = 'green'; }
-    else if (offline <= 2) { sysStatus = `${offline}台设备离线`; sysColor = 'yellow'; }
-    else { sysStatus = `${offline}台设备异常`; sysColor = 'red'; }
-
-    let loraStatus, loraColor;
-    if (loraTotal === 0) { loraStatus = '无LoRa设备'; loraColor = 'yellow'; }
-    else if (loraOnline === loraTotal) { loraStatus = `LoRa 全部在线 (${loraOnline}/${loraTotal})`; loraColor = 'green'; }
-    else { loraStatus = `LoRa ${loraOnline}/${loraTotal} 在线`; loraColor = 'yellow'; }
+    if (offline === 0) { sysStatus = '\u7cfb\u7edf\u8fd0\u884c\u6b63\u5e38'; sysColor = 'green'; }
+    else if (offline <= 2) { sysStatus = `${offline}\u53f0\u8bbe\u5907\u79bb\u7ebf`; sysColor = 'yellow'; }
+    else { sysStatus = `${offline}\u53f0\u8bbe\u5907\u5f02\u5e38`; sysColor = 'red'; }
 
     const modeMeta = BackendAdapter.getModeMeta();
     const health = BackendAdapter.getHealthSnapshot();
     const backendColor = health.ok === null ? 'yellow' : (health.ok ? 'green' : 'red');
     const backendStatus = health.ok === null
-      ? `${modeMeta.label} · 待检查`
-      : `${modeMeta.label} · ${health.message}`;
+      ? `${modeMeta.label} \u00b7 \u5f85\u68c0\u67e5`
+      : `${modeMeta.label} \u00b7 ${health.message}`;
 
     const el = document.getElementById('sidebar-status');
     el.innerHTML = `
       <div class="status-row"><span class="status-dot ${sysColor}"></span><span>${sysStatus}</span></div>
-      <div class="status-row"><span class="status-dot ${loraColor}"></span><span>${loraStatus}</span></div>
       <div class="status-row"><span class="status-dot ${backendColor}"></span><span>${backendStatus}</span></div>
     `;
   },
 
-  // ─── NAV ───
+  //     NAV    
   bindNav() {
     document.querySelectorAll('.nav-link[data-page]').forEach(l => {
       l.addEventListener('click', () => this.navigate(l.dataset.page));
@@ -818,8 +967,9 @@ const app = {
     this.currentPage = page;
     document.querySelectorAll('.nav-link').forEach(l => l.classList.toggle('active', l.dataset.page === page));
     const titles = {
-      dashboard:'系统总览', realtime:'实时数据', video:'视频监控', history:'历史数据',
-      pestdb:'病害虫数据库', automation:'自动化流程', locations:'地块管理', devices:'设备管理'
+      dashboard:'\u7cfb\u7edf\u603b\u89c8', realtime:'\u5b9e\u65f6\u6570\u636e', video:'\u89c6\u9891\u76d1\u63a7', history:'\u5386\u53f2\u6570\u636e',
+      cloudsync:'\u5386\u53f2\u8bb0\u5f55', pestdb:'\u75c5\u5bb3\u866b\u6570\u636e\u5e93', automation:'\u81ea\u52a8\u5316\u6d41\u7a0b', locations:'\u5730\u5757\u7ba1\u7406', devices:'\u8bbe\u5907\u7ba1\u7406',
+      accounts:'\u8d26\u53f7\u7ba1\u7406'
     };
     document.getElementById('page-title').textContent = titles[page] || '';
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -828,9 +978,9 @@ const app = {
     this.stopLive();
     const init = {
       dashboard: () => this.initDashboard(), realtime: () => this.initRealtime(),
-      video: () => this.renderVideo(), history: () => this.initHistory(),
+      video: () => this.renderVideo(), history: () => this.initHistory(), cloudsync: () => this.initCloudSync(),
       pestdb: () => this.renderPests(), automation: () => this.renderAutomation(),
-      locations: () => this.renderLocations(), devices: () => this.renderDevices(),
+      locations: () => this.renderLocations(), devices: () => this.renderDevices(), accounts: () => this.renderAccounts(),
     };
     if (init[page]) init[page]();
   },
@@ -861,11 +1011,11 @@ const app = {
   setRuntimeMode(mode, patch = {}) {
     const allowed = ['local', 'hybrid', 'remote'];
     if (!allowed.includes(mode)) {
-      UI.toast('运行模式无效', 'warning');
+      UI.toast('\u8fd0\u884c\u6a21\u5f0f\u65e0\u6548', 'warning');
       return;
     }
     this._runtimeConfig = DataRepository.saveRuntimeConfig({ mode, ...patch });
-    UI.toast(`已切换到${BackendAdapter.getModeMeta().label}`, 'success');
+    UI.toast(`\u5df2\u5207\u6362\u5230${BackendAdapter.getModeMeta().label}`, 'success');
     this.refreshBackendHealth(true);
   },
 
@@ -889,7 +1039,7 @@ const app = {
       Store.saveLocations(locations);
       DataRepository.saveAutomations(automations);
       DataRepository.saveRuntimeConfig({ demoMode: true });
-      UI.toast('演示模式已开启', 'success');
+      UI.toast('\u6f14\u793a\u6a21\u5f0f\u5df2\u5f00\u542f', 'success');
     } else {
       const demoDeviceIds = new Set(DataRepository.listDevices().filter(isDemoItem).map(item => item.id));
       Store.saveLocations(DataRepository.listLocations().filter(item => !isDemoItem(item)));
@@ -899,9 +1049,9 @@ const app = {
       demoDeviceIds.forEach(id => delete history[id]);
       Store._set(HistoryStore.KEY, history);
       DataRepository.saveRuntimeConfig({ demoMode: false });
-      this.liveReadings = this.liveReadings.filter(item => !String(item.device || '').includes('演示'));
+      this.liveReadings = this.liveReadings.filter(item => !String(item.device || '').includes('\u6f14\u793a'));
       this.stopLive();
-      UI.toast('演示模式已关闭', 'success');
+      UI.toast('\u6f14\u793a\u6a21\u5f0f\u5df2\u5173\u95ed', 'success');
     }
     this._runtimeConfig = DataRepository.getRuntimeConfig();
     this.renderAlerts();
@@ -915,7 +1065,7 @@ const app = {
     if (this.currentPage === 'video') this.renderVideo();
   },
 
-  // ─── ALERTS ───
+  //     ALERTS    
   getAlerts() {
     const devices = DataRepository.listDevices();
     const locs = DataRepository.listLocations();
@@ -923,18 +1073,18 @@ const app = {
     const alerts = [];
     devices.forEach(d => {
       const data = SensorEngine.get(d.id);
-      const loc = locMap[d.locationId] || '未分配';
+      const loc = locMap[d.locationId] || '\u672a\u5206\u914d';
       if (d.online && d.type === 'sensor_env') {
-        if (data.temp > 36) alerts.push({ type:'danger', icon:'fa-temperature-arrow-up', title:`气温过高 (${data.temp.toFixed(1)}°C)`, meta:`${d.name} · ${loc}`, page:'realtime' });
-        if (data.humid < 25) alerts.push({ type:'warning', icon:'fa-droplet-slash', title:`湿度过低 (${data.humid.toFixed(0)}%)`, meta:`${d.name} · ${loc}`, page:'realtime' });
+        if (data.temp > 36) alerts.push({ type:'danger', icon:'fa-temperature-arrow-up', title:`\u6c14\u6e29\u8fc7\u9ad8 (${data.temp.toFixed(1)}\u00b0C)`, meta:`${d.name} \u00b7 ${loc}`, page:'realtime' });
+        if (data.humid < 25) alerts.push({ type:'warning', icon:'fa-droplet-slash', title:`\u6e7f\u5ea6\u8fc7\u4f4e (${data.humid.toFixed(0)}%)`, meta:`${d.name} \u00b7 ${loc}`, page:'realtime' });
       }
       if (d.online && d.type === 'sensor_soil') {
-        if (data.soil < 20) alerts.push({ type:'warning', icon:'fa-droplet', title:`土壤缺水 (${data.soil.toFixed(0)}%) 建议灌溉`, meta:`${d.name} · ${loc}`, page:'realtime' });
+        if (data.soil < 20) alerts.push({ type:'warning', icon:'fa-droplet', title:`\u571f\u58e4\u7f3a\u6c34 (${data.soil.toFixed(0)}%) \u5efa\u8bae\u704c\u6e89`, meta:`${d.name} \u00b7 ${loc}`, page:'realtime' });
       }
       if (d.online && d.type === 'sensor_pest') {
-        if (data.pest > 15) alerts.push({ type:'danger', icon:'fa-bug', title:`虫害预警 捕获: ${data.pest}头`, meta:`${d.name} · ${loc}`, page:'pestdb' });
+        if (data.pest > 15) alerts.push({ type:'danger', icon:'fa-bug', title:`\u866b\u5bb3\u9884\u8b66 \u6355\u83b7: ${data.pest}\u5934`, meta:`${d.name} \u00b7 ${loc}`, page:'pestdb' });
       }
-      if (!d.online) alerts.push({ type:'info', icon:'fa-circle-exclamation', title:'设备离线', meta:`${d.name} · ${loc}` });
+      if (!d.online) alerts.push({ type:'info', icon:'fa-circle-exclamation', title:'\u8bbe\u5907\u79bb\u7ebf', meta:`${d.name} \u00b7 ${loc}` });
     });
     return alerts;
   },
@@ -945,7 +1095,7 @@ const app = {
     alertCountEl.textContent = alerts.length || '';
     alertCountEl.classList.toggle('hidden', alerts.length === 0);
     const html = alerts.length === 0
-      ? '<div class="empty-state"><i class="fa-solid fa-circle-check"></i><p>暂无警报，一切正常</p></div>'
+      ? '<div class="empty-state"><i class="fa-solid fa-circle-check"></i><p>\u6682\u65e0\u8b66\u62a5\uff0c\u4e00\u5207\u6b63\u5e38</p></div>'
       : alerts.map(a => `
           <div class="alert-item ${a.type}">
             <i class="fa-solid ${a.icon}"></i>
@@ -953,7 +1103,7 @@ const app = {
               <div class="alert-item-title">${a.title}</div>
               <div class="alert-item-meta">${a.meta}</div>
             </div>
-            ${a.page ? `<button class="alert-action-btn" onclick="app.navigate('${a.page}')">查看</button>` : ''}
+            ${a.page ? `<button class="alert-action-btn" onclick="app.navigate('${a.page}')">\u67e5\u770b</button>` : ''}
           </div>`).join('');
     ['dash-alerts','alertsList'].forEach(id => {
       const el = document.getElementById(id);
@@ -961,7 +1111,7 @@ const app = {
     });
   },
 
-  // ─── DASHBOARD ───
+  //     DASHBOARD    
   initDashboard() {
     const devices = DataRepository.listDevices();
     const locs = DataRepository.listLocations();
@@ -972,32 +1122,32 @@ const app = {
     const alerts = this.getAlerts();
 
     document.getElementById('kpi-row').innerHTML = `
-      <div class="kpi-card accent" onclick="app.navigate('devices')" style="cursor:pointer" title="点击查看设备管理">
+      <div class="kpi-card accent" onclick="app.navigate('devices')" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u8bbe\u5907\u7ba1\u7406">
         <div class="kpi-icon"><i class="fa-solid fa-microchip"></i></div>
-        <div><div class="kpi-label">在线设备</div><div class="kpi-value">${online}<span class="kpi-unit">/${devices.length}</span></div><div class="kpi-sub">点击管理设备 →</div></div></div>
-      <div class="kpi-card ${alerts.length ? 'danger' : 'success'}" onclick="document.getElementById('alertToggle').click()" style="cursor:pointer" title="点击查看警报详情">
+        <div><div class="kpi-label">\u5728\u7ebf\u8bbe\u5907</div><div class="kpi-value">${online}<span class="kpi-unit">/${devices.length}</span></div><div class="kpi-sub">\u70b9\u51fb\u7ba1\u7406\u8bbe\u5907 \u2192</div></div></div>
+      <div class="kpi-card ${alerts.length ? 'danger' : 'success'}" onclick="document.getElementById('alertToggle').click()" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u8b66\u62a5\u8be6\u60c5">
         <div class="kpi-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
-        <div><div class="kpi-label">当前警报</div><div class="kpi-value">${alerts.length}<span class="kpi-unit">条</span></div><div class="kpi-sub">${alerts.length?'点击查看详情 →':'所有指标正常 ✓'}</div></div></div>
-      <div class="kpi-card warning" onclick="app.navigate('realtime')" style="cursor:pointer" title="点击查看实时数据">
+        <div><div class="kpi-label">\u5f53\u524d\u8b66\u62a5</div><div class="kpi-value">${alerts.length}<span class="kpi-unit">\u6761</span></div><div class="kpi-sub">${alerts.length?'\u70b9\u51fb\u67e5\u770b\u8be6\u60c5 \u2192':'\u6240\u6709\u6307\u6807\u6b63\u5e38 \u2713'}</div></div></div>
+      <div class="kpi-card warning" onclick="app.navigate('realtime')" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u5b9e\u65f6\u6570\u636e">
         <div class="kpi-icon"><i class="fa-solid fa-temperature-half"></i></div>
-        <div><div class="kpi-label">平均气温</div><div class="kpi-value">${avgT.toFixed(1)}<span class="kpi-unit">°C</span></div><div class="kpi-sub">点击查看实时数据 →</div></div></div>
-      <div class="kpi-card success" onclick="app.navigate('locations')" style="cursor:pointer" title="点击管理地块">
+        <div><div class="kpi-label">\u5e73\u5747\u6c14\u6e29</div><div class="kpi-value">${avgT.toFixed(1)}<span class="kpi-unit">\u00b0C</span></div><div class="kpi-sub">\u70b9\u51fb\u67e5\u770b\u5b9e\u65f6\u6570\u636e \u2192</div></div></div>
+      <div class="kpi-card success" onclick="app.navigate('locations')" style="cursor:pointer" title="\u70b9\u51fb\u7ba1\u7406\u5730\u5757">
         <div class="kpi-icon"><i class="fa-solid fa-map"></i></div>
-        <div><div class="kpi-label">监测地块</div><div class="kpi-value">${locs.length}<span class="kpi-unit">块</span></div><div class="kpi-sub">共 ${locs.reduce((a,l)=>a+(+l.area||0),0)} 亩 · 点击管理 →</div></div></div>
+        <div><div class="kpi-label">\u76d1\u6d4b\u5730\u5757</div><div class="kpi-value">${locs.length}<span class="kpi-unit">\u5757</span></div><div class="kpi-sub">\u5171 ${locs.reduce((a,l)=>a+(+l.area||0),0)} \u4ea9 \u00b7 \u70b9\u51fb\u7ba1\u7406 \u2192</div></div></div>
     `;
 
     if (!this.dashMap) {
       this.dashMap = L.map('dash-map', { zoomControl: true, attributionControl: true }).setView([20.044,110.199], 15);
-      // 高德地图瓦片（中国大陆可用，无需API Key）
+      // Amap tile layers — no API key required for these public endpoints
       this._mapLayers = {
         standard: L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
           subdomains: '1234',
-          attribution: '© <a href="https://www.amap.com">高德地图</a>',
+          attribution: '\u00a9 <a href="https://www.amap.com">\u9ad8\u5fb7\u5730\u56fe</a>',
           maxZoom: 18,
         }),
         satellite: L.tileLayer('https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', {
           subdomains: '1234',
-          attribution: '© <a href="https://www.amap.com">高德地图 卫星图</a>',
+          attribution: '\u00a9 <a href="https://www.amap.com">\u9ad8\u5fb7\u5361\u661f\u56fe</a>',
           maxZoom: 18,
         }),
         satelliteLabel: L.tileLayer('https://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}', {
@@ -1007,14 +1157,14 @@ const app = {
       };
       this._mapLayers.standard.addTo(this.dashMap);
       this._currentMapLayer = 'standard';
-      // 图层切换控件
+      // Add layer switch control
       this._addMapLayerControl();
     } else { this.dashMap.eachLayer(l => { if (l instanceof L.Marker || l instanceof L.CircleMarker) this.dashMap.removeLayer(l); }); }
     // Populate map location filter
     const mapFilter = document.getElementById('map-location-filter');
     if (mapFilter) {
       const curVal = this._dashMapFilterLoc || 'all';
-      mapFilter.innerHTML = '<option value="all">🗺️ 全部地块</option>' + locs.map(l => `<option value="${l.id}" ${l.id===curVal?'selected':''}>${l.name}</option>`).join('');
+      mapFilter.innerHTML = '<option value="all">\ud83d\uddfa\ufe0f \u5168\u90e8\u5730\u5757</option>' + locs.map(l => `<option value="${l.id}" ${l.id===curVal?'selected':''}>${l.name}</option>`).join('');
       mapFilter.value = curVal;
     }
     this.addMapMarkers(this.dashMap, this._dashMapFilterLoc);
@@ -1075,15 +1225,15 @@ const app = {
       const bgColor = hasOff ? '#f59e0b' : '#3b82f6';
       const locIcon = L.divIcon({
         className: '',
-        html: `<div style="width:28px;height:28px;border-radius:50%;background:${bgColor};border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:14px;">🏷️</div>`,
+        html: `<div style="width:28px;height:28px;border-radius:50%;background:${bgColor};border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:14px;">\ud83c\udff7\ufe0f</div>`,
         iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -18],
       });
       const popup = `<div style="font-family:Inter;min-width:180px">
         <div style="font-weight:700;font-size:14px;margin-bottom:4px">${loc.name}</div>
-        <span style="color:#666;font-size:12px">${loc.type} · ${loc.area}亩</span>
+        <span style="color:#666;font-size:12px">${loc.type} \u00b7 ${loc.area}\u4ea9</span>
         <hr style="margin:6px 0;border-color:#eee">
-        <div style="font-size:12px;margin-bottom:6px">${devs.length} 台设备 (${devs.filter(d=>d.online).length} 在线)</div>
-        <button onclick="app.filterMapByLocation('${loc.id}')" style="width:100%;padding:5px;background:#1070e0;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">聚焦此地块</button></div>`;
+        <div style="font-size:12px;margin-bottom:6px">${devs.length} \u53f0\u8bbe\u5907 (${devs.filter(d=>d.online).length} \u5728\u7ebf)</div>
+        <button onclick="app.filterMapByLocation('${loc.id}')" style="width:100%;padding:5px;background:#1070e0;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">\u805a\u7126\u6b64\u5730\u5757</button></div>`;
       L.marker([loc.lat, loc.lng], {icon: locIcon}).addTo(map).bindPopup(popup);
     });
 
@@ -1101,12 +1251,12 @@ const app = {
         color: '#fff', weight: 2,
       }).addTo(map);
       const typeName = TYPE_LABELS[dev.type] || dev.type;
-      const locName = locs.find(l => l.id === dev.locationId)?.name || '未分配';
+      const locName = locs.find(l => l.id === dev.locationId)?.name || '\u672a\u5206\u914d';
       marker.bindPopup(`<div style="font-family:Inter;min-width:160px">
         <div style="font-weight:600;font-size:13px">${dev.name}</div>
         <div style="font-size:11px;color:#666;margin:4px 0">${typeName}</div>
-        <div style="font-size:11px;color:#888">📍 ${locName}</div>
-        <div style="font-size:11px;margin-top:4px"><span style="color:${dev.online?'#10b981':'#ef4444'}">● ${dev.online?'在线':'离线'}</span></div>
+        <div style="font-size:11px;color:#888">\ud83d\udccd ${locName}</div>
+        <div style="font-size:11px;margin-top:4px"><span style="color:${dev.online?'#10b981':'#ef4444'}">\u25cf ${dev.online?'\u5728\u7ebf':'\u79bb\u7ebf'}</span></div>
         ${dev.notes ? `<div style="font-size:11px;color:#999;margin-top:4px">${dev.notes}</div>` : ''}
       </div>`);
     });
@@ -1118,8 +1268,8 @@ const app = {
     ctrl.onAdd = () => {
       const div = L.DomUtil.create('div', 'map-layer-ctrl');
       div.innerHTML = `
-        <button id="map-btn-standard" class="map-layer-btn active" onclick="app.switchMapLayer('standard')">标准图</button>
-        <button id="map-btn-satellite" class="map-layer-btn" onclick="app.switchMapLayer('satellite')">卫星图</button>
+        <button id="map-btn-standard" class="map-layer-btn active" onclick="app.switchMapLayer('standard')">\u6807\u51c6\u56fe</button>
+        <button id="map-btn-satellite" class="map-layer-btn" onclick="app.switchMapLayer('satellite')">\u536b\u661f\u56fe</button>
       `;
       L.DomEvent.disableClickPropagation(div);
       return div;
@@ -1157,9 +1307,9 @@ const app = {
     // Update add button text for focused mode
     if (addBtn && isFocused) {
       const loc = DataRepository.listLocations().find(l => l.id === locId);
-      addBtn.innerHTML = `<i class="fa-solid fa-plus" style="margin-right:4px"></i>添加设备到「${loc?.name || ''}」`;
+      addBtn.innerHTML = `<i class="fa-solid fa-plus" style="margin-right:4px"></i>\u6dfb\u52a0\u8bbe\u5907\u5230\u300c${loc?.name || ''}\u300d`;
     } else if (addBtn) {
-      addBtn.innerHTML = '<i class="fa-solid fa-plus" style="margin-right:4px"></i>添加设备';
+      addBtn.innerHTML = '<i class="fa-solid fa-plus" style="margin-right:4px"></i>\u6dfb\u52a0\u8bbe\u5907';
     }
     // Toggle map fullscreen overlay
     const mapPanel = document.getElementById('dash-map')?.closest('.glass-panel');
@@ -1185,7 +1335,7 @@ const app = {
     this.openModal('device');
   },
 
-  // ─── REALTIME ───
+  //     REALTIME    
   initRealtime() {
     this.populateLocationSelect('rt-location-select', () => this.onRtLocChange());
     this.onRtLocChange();
@@ -1194,10 +1344,10 @@ const app = {
     const locId = document.getElementById('rt-location-select').value;
     const devs = DataRepository.listDevices().filter(d => d.type.startsWith('sensor') && (locId==='all' || d.locationId===locId));
     const sel = document.getElementById('rt-device-select');
-    sel.innerHTML = devs.map(d => `<option value="${d.id}">${d.name}${d.type==='sensor_soil_api'?' ☁️':''}</option>`).join('');
+    sel.innerHTML = devs.map(d => `<option value="${d.id}">${d.name}${d.type==='sensor_soil_api'?' \u2601\ufe0f':''}</option>`).join('');
     if (!devs.length) {
-      sel.innerHTML = '<option value="">（无传感器）</option>';
-      document.getElementById('sensor-grid').innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-wave-square"></i><p>暂无可显示的实时传感器</p></div>';
+      sel.innerHTML = '<option value="">\uff08\u65e0\u4f20\u611f\u5668\uff09</option>';
+      document.getElementById('sensor-grid').innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-wave-square"></i><p>\u6682\u65e0\u53ef\u663e\u793a\u7684\u5b9e\u65f6\u4f20\u611f\u5668</p></div>';
       document.getElementById('rt-table-body').innerHTML = '';
       this.stopLive();
       return;
@@ -1209,10 +1359,25 @@ const app = {
     this.stopLive();
     this.liveReadings = [];
     this.livePaused = false;
+    const dev = DataRepository.listDevices().find(d => d.id === id);
     const pauseBtn = document.getElementById('live-pause-btn');
-    if (pauseBtn) { pauseBtn.innerHTML = '<i class="fa-solid fa-pause"></i> 暂停记录'; pauseBtn.classList.remove('paused'); }
-    this.updateSensors(id);
-    this.liveInterval = setInterval(() => { this.updateSensors(id); this.renderAlerts(); this.updateSidebarStatus(); }, 3000);
+    const liveBadge = document.getElementById('rt-live-badge');
+    const refreshBtn = document.getElementById('rt-refresh-btn');
+
+    if (dev?.type === 'sensor_soil_api') {
+      // Cloud device: single fetch, no polling interval
+      if (pauseBtn) pauseBtn.style.display = 'none';
+      if (liveBadge) liveBadge.style.display = 'none';
+      if (refreshBtn) { refreshBtn.style.display = ''; refreshBtn.dataset.deviceId = id; }
+      this._renderApiDeviceRealtime(dev);
+    } else {
+      // Simulated device: 3-second tick for demo
+      if (pauseBtn) { pauseBtn.style.display = ''; pauseBtn.innerHTML = '<i class="fa-solid fa-pause"></i> \u6682\u505c\u8bb0\u5f55'; pauseBtn.classList.remove('paused'); }
+      if (liveBadge) liveBadge.style.display = '';
+      if (refreshBtn) refreshBtn.style.display = 'none';
+      this.updateSensors(id);
+      this.liveInterval = setInterval(() => { this.updateSensors(id); this.renderAlerts(); this.updateSidebarStatus(); }, 3000);
+    }
   },
   stopLive() { if (this.liveInterval) { clearInterval(this.liveInterval); this.liveInterval = null; } },
   toggleLivePause() {
@@ -1220,22 +1385,22 @@ const app = {
     const btn = document.getElementById('live-pause-btn');
     if (btn) {
       btn.innerHTML = this.livePaused
-        ? '<i class="fa-solid fa-play"></i> 恢复记录'
-        : '<i class="fa-solid fa-pause"></i> 暂停记录';
+        ? '<i class="fa-solid fa-play"></i> \u6062\u590d\u8bb0\u5f55'
+        : '<i class="fa-solid fa-pause"></i> \u6682\u505c\u8bb0\u5f55';
       btn.classList.toggle('paused', this.livePaused);
     }
   },
+  refreshApiDevice() {
+    const id = document.getElementById('rt-refresh-btn')?.dataset.deviceId;
+    if (!id) return;
+    const dev = DataRepository.listDevices().find(d => d.id === id);
+    if (dev?.type === 'sensor_soil_api') this._renderApiDeviceRealtime(dev);
+  },
 
-  // ─── UPDATE SENSORS (supports both simulated & API devices) ───
+  // Simulated sensor tick — cloud API devices use _renderApiDeviceRealtime instead
   updateSensors(deviceId) {
     const dev = DataRepository.listDevices().find(d => d.id === deviceId);
-    if (!dev) return;
-
-    // API-connected soil monitor
-    if (dev.type === 'sensor_soil_api' && dev.apiConfig) {
-      this._updateSensorsAPI(dev);
-      return;
-    }
+    if (!dev || dev.type === 'sensor_soil_api') return;
 
     // Standard simulated sensor
     const data = SensorEngine.tick(deviceId);
@@ -1257,39 +1422,39 @@ const app = {
     }
 
     const sensors = dev.type === 'sensor_pest'
-      ? [{ key:'pest', icon:'🦟', name:'今日捕获量', unit:'头', min:0, max:50, warn:10, crit:20, color:'#ef4444' }]
+      ? [{ key:'pest', icon:'\ud83e\udd9f', name:'\u4eca\u65e5\u6355\u83b7\u91cf', unit:'\u5934', min:0, max:50, warn:10, crit:20, color:'#ef4444' }]
       : [
-          { key:'temp',  icon:'🌡️', name:'空气温度', unit:'°C',  min:5,  max:45,   warn:35,   crit:40,   color:'#f59e0b' },
-          { key:'humid', icon:'💧', name:'空气湿度', unit:'%',   min:0,  max:100,  warn:null, crit:null, color:'#3b82f6' },
-          { key:'soil',  icon:'🌱', name:'土壤湿度', unit:'%',   min:0,  max:100,  warn:25,   crit:15,   color:'#10b981', invert:true },
-          { key:'light', icon:'☀️', name:'光照强度', unit:'lux', min:0,  max:80000,warn:null, crit:null, color:'#eab308' },
-          { key:'co2',   icon:'🌫️', name:'CO₂浓度', unit:'ppm', min:350,max:1200, warn:800,  crit:1000, color:'#8b5cf6' },
-          { key:'wind',  icon:'🌬️', name:'风速',    unit:'m/s', min:0,  max:20,   warn:null, crit:null, color:'#64748b' },
+          { key:'temp',  icon:'\ud83c\udf21\ufe0f', name:'\u7a7a\u6c14\u6e29\u5ea6', unit:'\u00b0C',  min:5,  max:45,   warn:35,   crit:40,   color:'#f59e0b' },
+          { key:'humid', icon:'\ud83d\udca7', name:'\u7a7a\u6c14\u6e7f\u5ea6', unit:'%',   min:0,  max:100,  warn:null, crit:null, color:'#3b82f6' },
+          { key:'soil',  icon:'\ud83c\udf31', name:'\u571f\u58e4\u6e7f\u5ea6', unit:'%',   min:0,  max:100,  warn:25,   crit:15,   color:'#10b981', invert:true },
+          { key:'light', icon:'\u2600\ufe0f', name:'\u5149\u7167\u5f3a\u5ea6', unit:'lux', min:0,  max:80000,warn:null, crit:null, color:'#eab308' },
+          { key:'co2',   icon:'\ud83c\udf2b\ufe0f', name:'CO\u2082\u6d53\u5ea6', unit:'ppm', min:350,max:1200, warn:800,  crit:1000, color:'#8b5cf6' },
+          { key:'wind',  icon:'\ud83c\udf2c\ufe0f', name:'\u98ce\u901f',    unit:'m/s', min:0,  max:20,   warn:null, crit:null, color:'#64748b' },
         ];
 
     document.getElementById('sensor-grid').innerHTML = sensors.map(s => {
       const v = data[s.key];
       const pct = Math.min(100, Math.max(0, ((v-s.min)/(s.max-s.min))*100));
-      let cls='', st='正常', sc='var(--success)';
+      let cls='', st='\u6b63\u5e38', sc='var(--success)';
       if (s.invert) {
-        if (s.crit && v <= s.crit) { cls='alert-danger'; st='极度缺水'; sc='var(--danger)'; }
-        else if (s.warn && v <= s.warn) { cls='alert-warning'; st='建议灌溉'; sc='var(--warning)'; }
+        if (s.crit && v <= s.crit) { cls='alert-danger'; st='\u6781\u5ea6\u7f3a\u6c34'; sc='var(--danger)'; }
+        else if (s.warn && v <= s.warn) { cls='alert-warning'; st='\u5efa\u8bae\u704c\u6e89'; sc='var(--warning)'; }
       } else {
-        if (s.crit && v >= s.crit) { cls='alert-danger'; st='严重超标'; sc='var(--danger)'; }
-        else if (s.warn && v >= s.warn) { cls='alert-warning'; st='注意'; sc='var(--warning)'; }
+        if (s.crit && v >= s.crit) { cls='alert-danger'; st='\u4e25\u91cd\u8d85\u6807'; sc='var(--danger)'; }
+        else if (s.warn && v >= s.warn) { cls='alert-warning'; st='\u6ce8\u610f'; sc='var(--warning)'; }
       }
       return `<div class="sensor-card ${cls}">
         <div class="sensor-icon">${s.icon}</div>
         <div class="sensor-name">${s.name}</div>
         <div class="sensor-value">${s.key==='light'?(v/1000).toFixed(1)+'<span class="sensor-unit">klux</span>':v.toFixed(s.key==='pest'?0:1)+'<span class="sensor-unit">'+s.unit+'</span>'}</div>
-        <div class="sensor-status" style="color:${sc}">● ${st}</div>
+        <div class="sensor-status" style="color:${sc}">\u25cf ${st}</div>
         <div class="sensor-bar"><div class="sensor-bar-fill" style="width:${pct}%;background:${s.color}"></div></div>
       </div>`;
     }).join('');
 
     const thead = document.querySelector('#page-realtime .data-table thead tr');
     if (thead) {
-      thead.innerHTML = '<th>时间</th><th>设备</th><th>空气温度 (°C)</th><th>空气湿度 (%)</th><th>土壤湿度 (%)</th><th>光照强度 (lux)</th><th>CO₂ (ppm)</th>';
+      thead.innerHTML = '<th>\u65f6\u95f4</th><th>\u8bbe\u5907</th><th>\u7a7a\u6c14\u6e29\u5ea6 (\u00b0C)</th><th>\u7a7a\u6c14\u6e7f\u5ea6 (%)</th><th>\u571f\u58e4\u6e7f\u5ea6 (%)</th><th>\u5149\u7167\u5f3a\u5ea6 (lux)</th><th>CO\u2082 (ppm)</th>';
     }
 
     document.getElementById('rt-table-body').innerHTML = this.liveReadings.slice(0,10).map(r => `
@@ -1298,227 +1463,279 @@ const app = {
       <td>${r.light?(r.light/1000).toFixed(1)+'k':'-'}</td><td>${r.co2?.toFixed(0)??'-'}</td></tr>`).join('');
   },
 
-  // ─── API SENSOR RENDERING ───
-  async _updateSensorsAPI(dev) {
-    const addr = dev.apiConfig.deviceAddr;
-    let cached = null;
+  // Fetch latest + last 10 readings for a cloud API device and render them
+  async _renderApiDeviceRealtime(dev) {
+    const grid = document.getElementById('sensor-grid');
+    const addr = String(dev.apiConfig?.deviceAddr || '');
+    if (grid) grid.innerHTML = `
+      <div class="cloud-loading" style="grid-column:1/-1">
+        <div class="cloud-spinner"></div>
+        <div>\u6b63\u5728\u83b7\u53d6\u4f20\u611f\u5668\u6570\u636e...</div>
+      </div>`;
+    try {
+      // Fetch latest realtime state and full history in parallel
+      const [rtData, histData] = await Promise.all([
+        BackendAdapter.getDeviceRealtime(dev.id),
+        BackendAdapter.getDeviceHistory(dev.id),
+      ]);
+      // Last 10 readings, newest first
+      const lastReadings = (histData?.rows || []).slice(-10).reverse();
 
-    if (!cached) {
-      document.getElementById('sensor-grid').innerHTML = `
-        <div class="cloud-loading" style="grid-column:1/-1">
-          <div class="cloud-spinner"></div>
-          <div>正在获取传感器数据...</div>
-        </div>`;
-      try {
-        const serverData = await BackendAdapter.getDeviceRealtime(dev.id);
-        if (serverData?.ok && serverData?.dataItems) {
-          SensorEngine.setApiData(addr, serverData.dataItems, serverData.timestamp || Date.now());
-        }
-      } catch {}
-      cached = SensorEngine.getApiData(addr);
+      if (rtData?.ok && rtData?.dataItems?.length) {
+        this._renderApiSensorCards(dev, rtData);
+      } else if (lastReadings.length) {
+        // Fall back to most recent stored reading if no fresh realtime data
+        const latest = lastReadings[0];
+        const timeStr = new Date(latest.ts || latest.deviceTimestamp || 0).toLocaleString('zh-CN');
+        if (grid) grid.innerHTML = `
+          <div style="grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:0 4px">
+            <div class="api-data-timestamp"><i class="fa-solid fa-cloud"></i> \u5728\u7ebf\u4f20\u611f\u5668 \u00b7 \u8bbe\u5907 ${addr}</div>
+            <div class="api-data-timestamp"><i class="fa-solid fa-clock"></i> \u6700\u8fd1\u66f4\u65b0 ${timeStr}</div>
+          </div>
+          ${this._buildSensorCardsFromValues(latest.values || {})}`;
+      } else {
+        if (grid) grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-database"></i><p>\u6682\u65e0\u6570\u636e\uff0c\u8bf7\u7a0d\u5019\u540e\u7aef\u91c7\u96c6\u5668\u8fd0\u884c\u540e\u91cd\u8bd5</p></div>';
+      }
+      this._renderApiReadingsTable(dev, lastReadings);
+    } catch (err) {
+      console.warn('[Realtime API]', err.message);
+      if (grid) grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-circle-exclamation"></i><p>\u52a0\u8f7d\u5931\u8d25: ${err.message}</p></div>`;
     }
+  },
 
-    if (!cached) {
-      document.getElementById('sensor-grid').innerHTML = `
-        <div class="cloud-loading" style="grid-column:1/-1">
-          <div class="cloud-spinner"></div>
-          <div>暂时未获取到数据，请稍后重试</div>
-        </div>`;
-      return;
-    }
-
-    const { dataItems, timestamp } = cached;
-    const timeStr = timestamp ? new Date(timestamp).toLocaleString('zh-CN') : '--';
-
-    // Icon mapping for known factor names
-    const iconMap = { '温度':'🌡️', '湿度':'💧', 'PH':'🧪', '电导率':'⚡', '氮':'🟢', '磷':'🟡', '钾':'🟠',
-      '光照':'☀️', '压力':'📊', '含水率':'💦', '盐分':'🧂' };
-    const colorMap = { '温度':'#f59e0b', '湿度':'#3b82f6', 'PH':'#8b5cf6', '电导率':'#10b981',
-      '氮':'#22c55e', '磷':'#eab308', '钾':'#f97316' };
-
-    // Flatten all register items from all nodes
+  // Render sensor cards from a realtime response (has dataItems with full register info)
+  _renderApiSensorCards(dev, rtData) {
+    const grid = document.getElementById('sensor-grid');
+    if (!grid) return;
+    const addr = String(dev.apiConfig?.deviceAddr || '');
+    const timeStr = rtData.deviceTimestamp ? new Date(rtData.deviceTimestamp).toLocaleString('zh-CN') : '--';
     const allRegisters = [];
-    dataItems.forEach(node => {
-      (node.registerItem || []).forEach(reg => {
-        allRegisters.push({ ...reg, nodeId: node.nodeId });
-      });
+    (rtData.dataItems || []).forEach(node => {
+      (node.registerItem || []).forEach(reg => allRegisters.push({ ...reg }));
     });
-
     if (!allRegisters.length) {
-      document.getElementById('sensor-grid').innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-database"></i><p>当前设备暂无可展示的实时数据</p></div>';
-      document.getElementById('rt-table-body').innerHTML = '';
+      grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-database"></i><p>\u5f53\u524d\u8bbe\u5907\u6682\u65e0\u53ef\u5c55\u793a\u7684\u5b9e\u65f6\u6570\u636e</p></div>';
       return;
     }
-
-    // Build sensor cards dynamically from API data
-    const sensorHtml = allRegisters.map(reg => {
-      const icon = iconMap[reg.registerName] || '📊';
-      const color = colorMap[reg.registerName] || '#64748b';
+    const ICONS = { '\u6e29\u5ea6':'\ud83c\udf21\ufe0f','\u6e7f\u5ea6':'\ud83d\udca7','PH':'\ud83e\uddea','\u7535\u5bfc\u7387':'\u26a1','\u6c2e':'\ud83d\udfe2','\u78f7':'\ud83d\udfe1','\u94be':'\ud83d\udfe0','\u5149\u7167':'\u2600\ufe0f','\u542b\u6c34\u7387':'\ud83d\udca6','\u76d0\u5206':'\ud83e\uddc2' };
+    const COLORS = { '\u6e29\u5ea6':'#f59e0b','\u6e7f\u5ea6':'#3b82f6','PH':'#8b5cf6','\u7535\u5bfc\u7387':'#10b981','\u6c2e':'#22c55e','\u78f7':'#eab308','\u94be':'#f97316' };
+    const cards = allRegisters.map(reg => {
       const v = reg.value ?? 0;
-      const unit = reg.unit || '';
       const alarmCls = reg.alarmLevel > 0 ? (reg.alarmLevel >= 3 ? 'alert-danger' : 'alert-warning') : '';
-      const alarmSt = reg.alarmLevel > 0 ? (reg.alarmLevel >= 3 ? '报警' : '预警') : '正常';
+      const alarmSt = reg.alarmLevel > 0 ? (reg.alarmLevel >= 3 ? '\u62a5\u8b66' : '\u9884\u8b66') : '\u6b63\u5e38';
       const alarmColor = reg.alarmLevel > 0 ? (reg.alarmLevel >= 3 ? 'var(--danger)' : 'var(--warning)') : 'var(--success)';
-
       return `<div class="sensor-card ${alarmCls}">
-        <div class="sensor-icon">${icon}</div>
+        <div class="sensor-icon">${ICONS[reg.registerName] || '\ud83d\udcca'}</div>
         <div class="sensor-name">${reg.registerName}</div>
-        <div class="sensor-value">${typeof v === 'number' ? v.toFixed(1) : v}<span class="sensor-unit">${unit}</span></div>
-        <div class="sensor-status" style="color:${alarmColor}">● ${alarmSt}</div>
-        <div class="sensor-bar"><div class="sensor-bar-fill" style="width:50%;background:${color}"></div></div>
+        <div class="sensor-value">${typeof v === 'number' ? v.toFixed(1) : v}<span class="sensor-unit">${reg.unit || ''}</span></div>
+        <div class="sensor-status" style="color:${alarmColor}">\u25cf ${alarmSt}</div>
+        <div class="sensor-bar"><div class="sensor-bar-fill" style="width:50%;background:${COLORS[reg.registerName] || '#64748b'}"></div></div>
       </div>`;
     }).join('');
-
-    // Add API info header
-    document.getElementById('sensor-grid').innerHTML = `
+    grid.innerHTML = `
       <div style="grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:0 4px">
-        <div class="api-data-timestamp"><i class="fa-solid fa-cloud"></i> 在线传感器数据 · 设备 ${addr}</div>
-        <div class="api-data-timestamp"><i class="fa-solid fa-clock"></i> 更新于 ${timeStr}</div>
-      </div>
-      ${sensorHtml}`;
+        <div class="api-data-timestamp"><i class="fa-solid fa-cloud"></i> \u5728\u7ebf\u4f20\u611f\u5668 \u00b7 \u8bbe\u5907 ${addr}</div>
+        <div class="api-data-timestamp"><i class="fa-solid fa-clock"></i> \u6570\u636e\u65f6\u95f4 ${timeStr}</div>
+      </div>${cards}`;
+  },
 
-    // Update table with API data
-    if (!this.livePaused && allRegisters.length > 0) {
-      const reading = { time: new Date().toLocaleTimeString('zh-CN'), device: dev.name + ' ☁️' };
-      allRegisters.forEach(r => { reading[r.registerName] = r.value; });
-      this.liveReadings.unshift(reading);
-      if (this.liveReadings.length > 20) this.liveReadings.pop();
-    }
+  // Build sensor cards from a flat { name: value } map (used as fallback)
+  _buildSensorCardsFromValues(values) {
+    const ICONS = { '\u6e29\u5ea6':'\ud83c\udf21\ufe0f','\u6e7f\u5ea6':'\ud83d\udca7','PH':'\ud83e\uddea','\u7535\u5bfc\u7387':'\u26a1','\u6c2e':'\ud83d\udfe2','\u78f7':'\ud83d\udfe1','\u94be':'\ud83d\udfe0','\u5149\u7167':'\u2600\ufe0f','\u542b\u6c34\u7387':'\ud83d\udca6' };
+    const COLORS = { '\u6e29\u5ea6':'#f59e0b','\u6e7f\u5ea6':'#3b82f6','PH':'#8b5cf6','\u7535\u5bfc\u7387':'#10b981','\u6c2e':'#22c55e','\u78f7':'#eab308','\u94be':'#f97316' };
+    return Object.entries(values).map(([name, v]) => `
+      <div class="sensor-card">
+        <div class="sensor-icon">${ICONS[name] || '\ud83d\udcca'}</div>
+        <div class="sensor-name">${name}</div>
+        <div class="sensor-value">${typeof v === 'number' ? v.toFixed(1) : v}<span class="sensor-unit"></span></div>
+        <div class="sensor-status" style="color:var(--success)">\u25cf \u6b63\u5e38</div>
+        <div class="sensor-bar"><div class="sensor-bar-fill" style="width:50%;background:${COLORS[name] || '#64748b'}"></div></div>
+      </div>`).join('');
+  },
 
-    // Render table - dynamic columns for API devices
-    const colNames = allRegisters.map(r => r.registerName);
+  // Render the last-N-readings table for a cloud API device
+  _renderApiReadingsTable(dev, readings) {
+    const colSet = new Set();
+    readings.forEach(r => Object.keys(r.values || {}).forEach(k => colSet.add(k)));
+    const cols = Array.from(colSet).sort();
     const thead = document.querySelector('#page-realtime .data-table thead tr');
-    if (thead) {
-      thead.innerHTML = '<th>时间</th><th>设备</th>' + colNames.map(n => `<th>${n} (${allRegisters.find(r=>r.registerName===n)?.unit||''})</th>`).join('');
-    }
+    if (thead) thead.innerHTML = '<th>\u65f6\u95f4</th><th>\u8bbe\u5907</th>' + cols.map(c => `<th>${c}</th>`).join('');
     const tbody = document.getElementById('rt-table-body');
-    if (tbody) {
-      tbody.innerHTML = this.liveReadings.slice(0,10).map(r => {
-        return `<tr><td style="font-family:'JetBrains Mono';font-size:12px">${r.time}</td><td>${r.device}</td>
-        ${colNames.map(n => `<td>${r[n] !== undefined ? (typeof r[n] === 'number' ? r[n].toFixed(1) : r[n]) : '-'}</td>`).join('')}</tr>`;
-      }).join('');
+    if (!tbody) return;
+    if (!readings.length) {
+      tbody.innerHTML = `<tr><td colspan="${2 + cols.length}" style="text-align:center;padding:30px;color:var(--text-muted)">\u6682\u65e0\u5386\u53f2\u8bb0\u5f55</td></tr>`;
+      return;
     }
+    tbody.innerHTML = readings.map(r => {
+      const time = new Date(r.ts || r.deviceTimestamp || 0).toLocaleString('zh-CN');
+      return `<tr><td style="font-family:'JetBrains Mono';font-size:12px">${time}</td><td>${dev.name}</td>${cols.map(c => `<td>${r.values[c] !== undefined ? r.values[c] : '-'}</td>`).join('')}</tr>`;
+    }).join('');
   },
 
-  // ─── CLOUD API POLLING ───
-  startCloudApiPolling() {
-    if (DataRepository.getRuntimeConfig().mode !== 'local') return;
-    if (this._cloudApiPollInterval) clearInterval(this._cloudApiPollInterval);
-    this._pollCloudDevices();
-    this._cloudApiPollInterval = setInterval(() => this._pollCloudDevices(), 30000);
-  },
-
-  async _pollCloudDevices() {
-    const devices = DataRepository.listDevices().filter(d => d.type === 'sensor_soil_api' && d.apiConfig);
-    if (!devices.length) return;
-    for (const dev of devices) {
-      try {
-        const serverData = await BackendAdapter.getDeviceRealtime(dev.id);
-        if (serverData?.ok && serverData?.dataItems) {
-          SensorEngine.setApiData(dev.apiConfig.deviceAddr, serverData.dataItems, serverData.timestamp || Date.now());
-          DataRepository.saveDevice({ ...dev, online: true });
-        } else {
-          DataRepository.saveDevice({ ...dev, online: false });
-        }
-      } catch (err) {
-        console.warn(`[Poll] ${dev.name}:`, err.message);
-        DataRepository.saveDevice({ ...dev, online: false });
-      }
-    }
-    if (this.currentPage === 'devices') this.renderDevices();
-    if (this.currentPage === 'dashboard') this.initDashboard();
-  },
-
-  // ─── VIDEO ───
+  //     VIDEO
   renderVideo() {
     const cams = DataRepository.listDevices().filter(d => d.type==='camera');
     const locMap = Object.fromEntries(DataRepository.listLocations().map(l=>[l.id,l.name]));
     const g = document.getElementById('video-grid');
-    if (!cams.length) { g.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-video-slash"></i><p>暂无摄像头设备</p></div>'; return; }
+    if (!cams.length) { g.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-video-slash"></i><p>\u6682\u65e0\u6444\u50cf\u5934\u8bbe\u5907</p></div>'; return; }
     g.innerHTML = cams.map(c => `
       <div class="video-slot">
         <div class="video-slot-header"><span><i class="fa-solid fa-video" style="color:var(--accent);margin-right:6px"></i>${c.name}</span>
-          <span class="badge ${c.online?'badge-online':'badge-offline'}">${c.online?'在线':'离线'}</span></div>
-        <div class="video-slot-body"><i class="fa-solid fa-${c.online?'circle-play':'video-slash'}"></i><p>${c.online&&c.streamUrl?'接口预留: 视频流待接入':c.online?'未配置流地址':'设备离线'}</p></div>
+          <span class="badge ${c.online?'badge-online':'badge-offline'}">${c.online?'\u5728\u7ebf':'\u79bb\u7ebf'}</span></div>
+        <div class="video-slot-body"><i class="fa-solid fa-${c.online?'circle-play':'video-slash'}"></i><p>${c.online&&c.streamUrl?'\u63a5\u53e3\u9884\u7559: \u89c6\u9891\u6d41\u5f85\u63a5\u5165':c.online?'\u672a\u914d\u7f6e\u6d41\u5730\u5740':'\u8bbe\u5907\u79bb\u7ebf'}</p></div>
         ${c.streamUrl?`<div class="video-src"><i class="fa-solid fa-link" style="margin-right:4px"></i>${c.streamUrl}</div>`:''}
       </div>`).join('');
   },
 
-  // ─── HISTORY ───
+  //     HISTORY    
   initHistory() {
-    this.populateLocationSelect('hist-location-select', () => {
-      const locId = document.getElementById('hist-location-select').value;
-      const devs = DataRepository.listDevices().filter(d => d.type.startsWith('sensor') && (locId==='all'||d.locationId===locId));
-      document.getElementById('hist-device-select').innerHTML = devs.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
-      this.refreshHistoryCharts();
-    });
+    this.populateLocationSelect('hist-location-select', () => this._populateHistDevices());
     document.getElementById('hist-device-select').onchange = () => this.refreshHistoryCharts();
+    this._populateHistDevices();
+  },
+
+  _populateHistDevices() {
+    const locId = document.getElementById('hist-location-select')?.value || 'all';
+    const devs = DataRepository.listDevices().filter(d => d.type.startsWith('sensor') && (locId === 'all' || d.locationId === locId));
+    const sel = document.getElementById('hist-device-select');
+    if (!sel) return;
+    sel.innerHTML = devs.map(d => `<option value="${d.id}">${d.name}</option>`).join('');
     this.refreshHistoryCharts();
   },
   async refreshHistoryCharts() {
     const range = document.getElementById('hist-range')?.value || '24h';
-    const pts = range==='24h'?24:range==='7d'?7:30;
     const deviceId = document.getElementById('hist-device-select')?.value;
     const device = DataRepository.listDevices().find(item => item.id === deviceId);
-    const labels = Array.from({length:pts},(_,i)=>{
-      if(range==='24h') return `${String(i).padStart(2,'0')}:00`;
-      const d=new Date(); d.setDate(d.getDate()-(pts-1-i)); return `${d.getMonth()+1}/${d.getDate()}`;
-    });
-    let history = deviceId ? HistoryStore.getDeviceRecords(deviceId) : [];
+    const grid = document.getElementById('hist-chart-grid');
+    if (!grid) return;
+
+    // Load history rows: { ts, values: { channelName: value } }
+    let rows = [];
     if (device?.type === 'sensor_soil_api') {
       try {
-        const serverHistory = await BackendAdapter.getDeviceHistory(deviceId);
-        history = serverHistory?.rows || [];
-      } catch (error) {
-        console.warn('[History]', error.message);
+        const res = await BackendAdapter.getDeviceHistory(deviceId);
+        rows = res?.rows || [];
+      } catch (err) {
+        console.warn('[History fetch]', err.message);
       }
+    } else {
+      rows = deviceId ? HistoryStore.getDeviceRecords(deviceId) : [];
     }
-    const pickSeries = (keys, fallbackBase, fallbackAmp, transform = value => value) => {
-      if (!history.length) {
-        return Array.from({length:pts},(_,i)=>transform(+(fallbackBase+Math.sin(i*0.4)*fallbackAmp*0.5+(Math.random()-0.5)*fallbackAmp).toFixed(1)));
+    const rangeMs = range === '24h' ? 24 * 3_600_000 : range === '7d' ? 7 * 86_400_000 : 30 * 86_400_000;
+    const cutoff = Date.now() - rangeMs;
+    rows = rows
+      .map(r => ({ ...r, _ts: Number(r.ts || r.deviceTimestamp || r.timestamp || 0) }))
+      .filter(r => r._ts && r._ts >= cutoff)
+      .sort((a, b) => a._ts - b._ts);
+
+    // Collect unique channel names present in history
+    const channelSet = new Set();
+    rows.forEach(r => Object.keys(r.values || {}).forEach(k => channelSet.add(k)));
+    let channels = Array.from(channelSet).sort();
+
+    // Display name map for simulated device channels
+    const PARAM_DISPLAY = {
+      temp: '\u7a7a\u6c14\u6e29\u5ea6 (\u00b0C)', humid: '\u7a7a\u6c14\u6e7f\u5ea6 (%)',
+      soil: '\u571f\u58e4\u6e7f\u5ea6 (%)', light: '\u5149\u7167\u5f3a\u5ea6 (lux)',
+      co2: 'CO\u2082 (ppm)', wind: '\u98ce\u901f (m/s)', pest: '\u866b\u5bb3\u6355\u83b7\u91cf',
+    };
+
+    // Fallback channels when history is empty
+    if (!channels.length) {
+      if (!deviceId || device?.type === 'sensor_soil_api') {
+        const msg = !deviceId
+          ? '\u8bf7\u9009\u62e9\u8bbe\u5907'
+          : '\u6682\u65e0\u5386\u53f2\u8bb0\u5f55\uff0c\u8bf7\u5148\u8865\u5145\u4e91\u7aef\u6570\u636e';
+        grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-database"></i><p>${msg}</p></div>`;
+        return;
       }
-      const bucketSizeMs = range === '24h' ? 3600_000 : 24 * 3600_000;
-      const end = Date.now();
-      const start = end - (pts * bucketSizeMs);
-      const buckets = Array.from({ length: pts }, () => []);
-      history.forEach(item => {
-        const index = Math.floor((item.ts - start) / bucketSizeMs);
-        if (index < 0 || index >= pts) return;
-        const keyList = Array.isArray(keys) ? keys : [keys];
-        const foundKey = keyList.find(key => item.values[key] !== undefined);
-        if (foundKey) buckets[index].push(Number(item.values[foundKey]));
-      });
-      return buckets.map((bucket, index) => {
-        if (bucket.length) {
-          const avg = bucket.reduce((sum, value) => sum + value, 0) / bucket.length;
-          return transform(+avg.toFixed(1));
-        }
-        if (index > 0) return buckets[index - 1].length ? transform(+(buckets[index - 1].reduce((sum, value) => sum + value, 0) / buckets[index - 1].length).toFixed(1)) : transform(fallbackBase);
-        return transform(fallbackBase);
+      // Simulated device defaults
+      channels = device?.type === 'sensor_pest'
+        ? ['pest']
+        : ['temp', 'humid', 'soil', 'light', 'co2', 'wind'];
+    }
+
+    const labels = rows.length
+      ? rows.map(r => new Date(r._ts).toLocaleString('zh-CN', {
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        }))
+      : [];
+
+    // Draw one chart point per real reading. No hourly averaging.
+    const pointData = (key) => {
+      return rows.map(r => {
+        const value = r.values?.[key];
+        if (value === undefined || value === null || value === '') return null;
+        const num = Number(value);
+        return Number.isFinite(num) ? Number(num.toFixed(1)) : null;
       });
     };
-    ChartHelper.line('hist-temp-hum', labels, [
-      { label:'温度(°C)', data:pickSeries(['temp', '温度'], 28, 8), borderColor:'#f59e0b', backgroundColor:'rgba(245,158,11,0.06)', tension:0.4, fill:true },
-      { label:'湿度(%)', data:pickSeries(['humid', '湿度'], 65, 20), borderColor:'#3b82f6', backgroundColor:'rgba(59,130,246,0.06)', tension:0.4, fill:true },
-    ]);
-    ChartHelper.line('hist-soil', labels, [{ label:'土壤湿度(%)', data:pickSeries(['soil', '含水率'], 50, 20), borderColor:'#10b981', backgroundColor:'rgba(16,185,129,0.06)', tension:0.4, fill:true }]);
-    ChartHelper.line('hist-light', labels, [{ label:'光照(klux)', data:pickSeries(['light', '光照'], 30000, 25000, value => Math.max(0, +(value / 1000).toFixed(1))), borderColor:'#eab308', backgroundColor:'rgba(234,179,8,0.06)', tension:0.3, fill:true }]);
-    ChartHelper.line('hist-co2', labels, [{ label:'CO₂(ppm)', data:pickSeries(['co2', 'CO₂浓度'], 480, 80), borderColor:'#8b5cf6', backgroundColor:'rgba(139,92,246,0.06)', tension:0.4, fill:true }]);
+
+    // Generate plausible placeholder series for devices with no history yet
+    const simulatedFallback = (key) => {
+      const pts = range === '24h' ? 24 : range === '7d' ? 7 : 30;
+      const SIMS = {
+        temp: { base: 28, amp: 8 }, humid: { base: 65, amp: 20 },
+        soil: { base: 50, amp: 20 }, light: { base: 25000, amp: 20000 },
+        co2:  { base: 480, amp: 80 }, wind: { base: 3, amp: 2 },
+        pest: { base: 5, amp: 5 },
+      };
+      const { base = 50, amp = 10 } = SIMS[key] || {};
+      return Array.from({ length: pts }, (_, i) =>
+        +(base + Math.sin(i * 0.4) * amp * 0.5 + (Math.random() - 0.5) * amp).toFixed(1)
+      );
+    };
+
+    const PALETTE = ['#f59e0b','#3b82f6','#10b981','#eab308','#8b5cf6','#ef4444','#f97316','#06b6d4','#84cc16','#ec4899'];
+    const hexBg = (hex) => {
+      const r = parseInt(hex.slice(1, 3), 16);
+      const g = parseInt(hex.slice(3, 5), 16);
+      const b = parseInt(hex.slice(5, 7), 16);
+      return `rgba(${r},${g},${b},0.07)`;
+    };
+
+    // Destroy all old chart instances under hist- prefix
+    Object.keys(ChartHelper._i || {}).filter(k => k.startsWith('hist-')).forEach(k => ChartHelper.destroy(k));
+
+    // Rebuild chart grid dynamically — one panel per channel
+    grid.innerHTML = channels.map((ch, i) => `
+      <div class="glass-panel">
+        <div class="panel-header"><span class="panel-title">${PARAM_DISPLAY[ch] || ch}</span></div>
+        <div class="chart-wrap"><canvas id="hist-ch-${i}"></canvas></div>
+      </div>`).join('');
+
+    channels.forEach((ch, i) => {
+      const color = PALETTE[i % PALETTE.length];
+      const data = rows.length ? pointData(ch) : simulatedFallback(ch);
+      const chartLabels = rows.length ? labels : Array.from({ length: data.length }, (_, idx) => String(idx + 1));
+      ChartHelper.line('hist-ch-' + i, chartLabels, [{
+        label: PARAM_DISPLAY[ch] || ch,
+        data,
+        borderColor: color,
+        backgroundColor: hexBg(color),
+        tension: 0.4,
+        fill: true,
+        spanGaps: true,
+      }]);
+    });
   },
 
-  // ─── PEST DB ───
+  //     PEST DB    
   renderPests(search='',type='all') {
     const q = (document.getElementById('pest-search')?.value||search).trim().toLowerCase();
     const t = document.getElementById('pest-type-filter')?.value||type;
     const filtered = PEST_DB.filter(p => (!q||p.name.includes(q)||p.latin.toLowerCase().includes(q)) && (t==='all'||p.type===t));
     document.getElementById('pest-grid').innerHTML = filtered.length===0
-      ? '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-magnifying-glass"></i><p>未找到相关记录</p></div>'
+      ? '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-magnifying-glass"></i><p>\u672a\u627e\u5230\u76f8\u5173\u8bb0\u5f55</p></div>'
       : filtered.map(p=>`
         <div class="pest-card" onclick="app.showPestDetail('${p.id}')">
           <div class="pest-img">${p.emoji}</div>
           <div class="pest-info"><div class="pest-name">${p.name}</div><div class="pest-latin">${p.latin}</div>
-          <div class="pest-tags"><span class="pest-tag">${p.type==='pest'?'虫害':'病害'}</span>
-          <span class="pest-tag ${p.severity==='high'?'danger-tag':''}">${p.severity==='high'?'高风险':'中等'}</span>
+          <div class="pest-tags"><span class="pest-tag">${p.type==='pest'?'\u866b\u5bb3':'\u75c5\u5bb3'}</span>
+          <span class="pest-tag ${p.severity==='high'?'danger-tag':''}">${p.severity==='high'?'\u9ad8\u98ce\u9669':'\u4e2d\u7b49'}</span>
           ${p.crops.map(c=>`<span class="pest-tag">${c}</span>`).join('')}</div></div>
         </div>`).join('');
   },
@@ -1528,16 +1745,16 @@ const app = {
     document.getElementById('pest-modal-title').textContent = `${p.emoji} ${p.name}`;
     document.getElementById('pest-modal-body').innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px">
-        <div class="form-group"><label>学名</label><div style="font-style:italic;color:var(--text-secondary)">${p.latin}</div></div>
-        <div class="form-group"><label>类型</label><div>${p.type==='pest'?'虫害':'病害'}</div></div>
-        <div class="form-group"><label>危害等级</label><div style="color:${p.severity==='high'?'var(--danger)':'var(--warning)'}">● ${p.severity==='high'?'高风险':'中等'}</div></div>
-        <div class="form-group"><label>高发季节</label><div>${p.season}</div></div>
-        <div class="form-group"><label>危害作物</label><div>${p.crops.join('、')}</div></div>
-        <div class="form-group"><label>防治阈值</label><div style="color:var(--warning)">${p.threshold}</div></div>
+        <div class="form-group"><label>\u5b66\u540d</label><div style="font-style:italic;color:var(--text-secondary)">${p.latin}</div></div>
+        <div class="form-group"><label>\u7c7b\u578b</label><div>${p.type==='pest'?'\u866b\u5bb3':'\u75c5\u5bb3'}</div></div>
+        <div class="form-group"><label>\u5371\u5bb3\u7b49\u7ea7</label><div style="color:${p.severity==='high'?'var(--danger)':'var(--warning)'}">\u25cf ${p.severity==='high'?'\u9ad8\u98ce\u9669':'\u4e2d\u7b49'}</div></div>
+        <div class="form-group"><label>\u9ad8\u53d1\u5b63\u8282</label><div>${p.season}</div></div>
+        <div class="form-group"><label>\u5371\u5bb3\u4f5c\u7269</label><div>${p.crops.join('\u3001')}</div></div>
+        <div class="form-group"><label>\u9632\u6cbb\u9608\u503c</label><div style="color:var(--warning)">${p.threshold}</div></div>
       </div>
-      <div class="form-group"><label>为害症状</label><div style="color:var(--text-secondary);line-height:1.7">${p.symptoms}</div></div>
-      <div class="form-group" style="margin-top:8px"><label>农业防治</label><div style="color:var(--text-secondary);line-height:1.7">${p.prevention}</div></div>
-      <div class="form-group" style="margin-top:8px"><label>药剂防治</label><div style="color:var(--text-secondary);line-height:1.7">${p.control}</div></div>`;
+      <div class="form-group"><label>\u4e3a\u5bb3\u75c7\u72b6</label><div style="color:var(--text-secondary);line-height:1.7">${p.symptoms}</div></div>
+      <div class="form-group" style="margin-top:8px"><label>\u519c\u4e1a\u9632\u6cbb</label><div style="color:var(--text-secondary);line-height:1.7">${p.prevention}</div></div>
+      <div class="form-group" style="margin-top:8px"><label>\u836f\u5242\u9632\u6cbb</label><div style="color:var(--text-secondary);line-height:1.7">${p.control}</div></div>`;
     this.openModal('pest');
   },
 
@@ -1579,7 +1796,7 @@ const app = {
           const condDesc = rule.conditions.map(c => {
             const sd = devices.find(d=>d.id===c.sourceDeviceId);
             return `${sd?.name||'?'} ${PARAM_LABELS[c.param]||c.param} ${c.operator} ${c.value}`;
-          }).join(' 且 ');
+          }).join(' \u4e14 ');
           const actDesc = `${ACTION_LABELS[act.action]||act.action} ${target.name}`;
           
           // Avoid duplicate logs within 30 seconds
@@ -1592,11 +1809,11 @@ const app = {
               ruleName: rule.name,
               condition: condDesc,
               action: actDesc,
-              result: '✅ 已执行 (模拟)',
+              result: '\u2705 \u5df2\u6267\u884c (\u6a21\u62df)',
             });
             if (log.length > 50) log.pop();
             DataRepository.saveAutoLog(log);
-            console.log(`[自动化] ${rule.name}: ${condDesc} → ${actDesc} (Modbus ${act.action==='on'?'0xFF00':'0x0000'})`);
+            console.log(`[\u81ea\u52a8\u5316] ${rule.name}: ${condDesc} \u2192 ${actDesc} (Modbus ${act.action==='on'?'0xFF00':'0x0000'})`);
           }
         });
       }
@@ -1615,16 +1832,16 @@ const app = {
     const list = document.getElementById('automation-list');
 
     if (!rules.length) {
-      list.innerHTML = '<div class="empty-state"><i class="fa-solid fa-wand-magic-sparkles"></i><p>暂无自动化规则，点击上方按钮创建</p></div>';
+      list.innerHTML = '<div class="empty-state"><i class="fa-solid fa-wand-magic-sparkles"></i><p>\u6682\u65e0\u81ea\u52a8\u5316\u89c4\u5219\uff0c\u70b9\u51fb\u4e0a\u65b9\u6309\u94ae\u521b\u5efa</p></div>';
     } else {
       list.innerHTML = rules.map(rule => {
         const condBlocks = rule.conditions.map(c => `
-          <div class="flow-block"><div class="flow-block-label if-label">条件</div>
+          <div class="flow-block"><div class="flow-block-label if-label">\u6761\u4ef6</div>
             <div class="flow-block-value">${devMap[c.sourceDeviceId]||'?'}</div>
             <div style="font-size:11px;color:var(--text-muted)">${PARAM_LABELS[c.param]||c.param} ${OP_LABELS[c.operator]||c.operator} ${c.value}</div>
           </div>`).join('<div class="flow-arrow"><i class="fa-solid fa-plus" style="font-size:10px"></i></div>');
         const actBlocks = rule.actions.map(a => `
-          <div class="flow-block"><div class="flow-block-label then-label">动作</div>
+          <div class="flow-block"><div class="flow-block-label then-label">\u52a8\u4f5c</div>
             <div class="flow-block-value">${devMap[a.targetDeviceId]||'?'}</div>
             <div style="font-size:11px;color:var(--text-muted)">${ACTION_LABELS[a.action]||a.action}</div>
           </div>`).join('');
@@ -1633,8 +1850,8 @@ const app = {
             <div class="auto-rule-header">
               <div class="auto-rule-name"><i class="fa-solid fa-bolt" style="color:var(--warning)"></i> ${rule.name}</div>
               <div class="action-row">
-                <button class="btn-icon" title="编辑" onclick="app.editAutomation('${rule.id}')"><i class="fa-solid fa-pen"></i></button>
-                <button class="btn-icon delete" title="删除" onclick="app.confirmDelete('automation','${rule.id}')"><i class="fa-solid fa-trash"></i></button>
+                <button class="btn-icon" title="\u7f16\u8f91" onclick="app.editAutomation('${rule.id}')"><i class="fa-solid fa-pen"></i></button>
+                <button class="btn-icon delete" title="\u5220\u9664" onclick="app.confirmDelete('automation','${rule.id}')"><i class="fa-solid fa-trash"></i></button>
               </div>
             </div>
             ${rule.desc ? `<div class="auto-rule-desc">${rule.desc}</div>` : ''}
@@ -1648,7 +1865,7 @@ const app = {
                 <input type="checkbox" ${rule.enabled?'checked':''} onchange="app.toggleAutomation('${rule.id}', this.checked)">
                 <span class="toggle-slider"></span>
               </label>
-              <span style="font-size:12px;color:var(--text-muted)">${rule.enabled?'规则已启用':'规则已停用'}</span>
+              <span style="font-size:12px;color:var(--text-muted)">${rule.enabled?'\u89c4\u5219\u5df2\u542f\u7528':'\u89c4\u5219\u5df2\u505c\u7528'}</span>
             </div>
           </div>`;
       }).join('');
@@ -1661,7 +1878,7 @@ const app = {
     const tbody = document.getElementById('auto-log-body');
     if (!tbody) return;
     tbody.innerHTML = log.length === 0
-      ? '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-muted)">暂无执行记录</td></tr>'
+      ? '<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-muted)">\u6682\u65e0\u6267\u884c\u8bb0\u5f55</td></tr>'
       : log.slice(0,20).map(l => `
         <tr><td style="font-family:'JetBrains Mono';font-size:12px">${l.time}</td>
         <td>${l.ruleName}</td><td style="font-size:12px">${l.condition}</td>
@@ -1674,14 +1891,14 @@ const app = {
     if (r) { r.enabled = enabled; DataRepository.saveAutomations(rules); this.renderAutomation(); }
   },
 
-  // ─── Automation Editor ───
+  //     Automation Editor    
   openAutomationEditor(editId) {
     this._tempConditions = [];
     this._tempActions = [];
     document.getElementById('auto-edit-id').value = '';
     document.getElementById('auto-name').value = '';
     document.getElementById('auto-desc').value = '';
-    document.getElementById('modal-auto-title').textContent = '新建自动化规则';
+    document.getElementById('modal-auto-title').textContent = '\u65b0\u5efa\u81ea\u52a8\u5316\u89c4\u5219';
 
     if (editId) {
       const rule = DataRepository.listAutomations().find(r=>r.id===editId);
@@ -1689,7 +1906,7 @@ const app = {
         document.getElementById('auto-edit-id').value = rule.id;
         document.getElementById('auto-name').value = rule.name;
         document.getElementById('auto-desc').value = rule.desc || '';
-        document.getElementById('modal-auto-title').textContent = '编辑自动化规则';
+        document.getElementById('modal-auto-title').textContent = '\u7f16\u8f91\u81ea\u52a8\u5316\u89c4\u5219';
         this._tempConditions = JSON.parse(JSON.stringify(rule.conditions));
         this._tempActions = JSON.parse(JSON.stringify(rule.actions));
       }
@@ -1748,11 +1965,11 @@ const app = {
       <div class="action-row-editor">
         <select onchange="app._tempActions[${i}].targetDeviceId=this.value">
           ${ctrls.map(d => `<option value="${d.id}" ${d.id===a.targetDeviceId?'selected':''}>${d.name}</option>`).join('')}
-          ${!ctrls.length?'<option value="">（无控制器设备）</option>':''}
+          ${!ctrls.length?'<option value="">\uff08\u65e0\u63a7\u5236\u5668\u8bbe\u5907\uff09</option>':''}
         </select>
         <select onchange="app._tempActions[${i}].action=this.value">
-          <option value="on" ${a.action==='on'?'selected':''}>开启</option>
-          <option value="off" ${a.action==='off'?'selected':''}>关闭</option>
+          <option value="on" ${a.action==='on'?'selected':''}>\u5f00\u542f</option>
+          <option value="off" ${a.action==='off'?'selected':''}>\u5173\u95ed</option>
         </select>
         <button class="remove-row-btn" onclick="app._tempActions.splice(${i},1);app.renderActionRows()"><i class="fa-solid fa-xmark"></i></button>
       </div>`).join('');
@@ -1760,9 +1977,9 @@ const app = {
 
   saveAutomation() {
     const name = document.getElementById('auto-name').value.trim();
-    if (!name) { UI.toast('请填写规则名称', 'warning'); return; }
-    if (!this._tempConditions.length) { UI.toast('请至少添加一个触发条件', 'warning'); return; }
-    if (!this._tempActions.length) { UI.toast('请至少添加一个执行动作', 'warning'); return; }
+    if (!name) { UI.toast('\u8bf7\u586b\u5199\u89c4\u5219\u540d\u79f0', 'warning'); return; }
+    if (!this._tempConditions.length) { UI.toast('\u8bf7\u81f3\u5c11\u6dfb\u52a0\u4e00\u4e2a\u89e6\u53d1\u6761\u4ef6', 'warning'); return; }
+    if (!this._tempActions.length) { UI.toast('\u8bf7\u81f3\u5c11\u6dfb\u52a0\u4e00\u4e2a\u6267\u884c\u52a8\u4f5c', 'warning'); return; }
 
     const id = document.getElementById('auto-edit-id').value || 'auto-' + uid();
     const rule = {
@@ -1779,27 +1996,27 @@ const app = {
     DataRepository.saveAutomations(rules);
     this.closeModal('automation');
     this.renderAutomation();
-    UI.toast('自动化规则已保存', 'success');
+    UI.toast('\u81ea\u52a8\u5316\u89c4\u5219\u5df2\u4fdd\u5b58', 'success');
   },
 
-  // ─── LOCATIONS ───
+  //     LOCATIONS    
   renderLocations() {
     const locs = DataRepository.listLocations();
     const devices = DataRepository.listDevices();
     const g = document.getElementById('location-grid');
-    if (!locs.length) { g.innerHTML = '<div class="empty-state"><i class="fa-solid fa-map"></i><p>暂无地块</p></div>'; return; }
+    if (!locs.length) { g.innerHTML = '<div class="empty-state"><i class="fa-solid fa-map"></i><p>\u6682\u65e0\u5730\u5757</p></div>'; return; }
     g.innerHTML = locs.map(loc => {
       const devs = devices.filter(d=>d.locationId===loc.id);
-      const ti = { sensor_env:'🌡️', sensor_soil:'🌱', sensor_pest:'🦟', camera:'📹', controller_water:'💧', controller_light:'💡', controller_fan:'🌀' };
+      const ti = { sensor_env:'\ud83c\udf21\ufe0f', sensor_soil:'\ud83c\udf31', sensor_pest:'\ud83e\udd9f', camera:'\ud83d\udcf9', controller_water:'\ud83d\udca7', controller_light:'\ud83d\udca1', controller_fan:'\ud83c\udf00' };
       return `<div class="location-card">
         <div class="location-card-header"><div><div class="location-name">${loc.name}</div><div class="location-type">${loc.type}</div></div>
           <div class="action-row"><button class="btn-icon" onclick="app.editLocation('${loc.id}')"><i class="fa-solid fa-pen"></i></button>
           <button class="btn-icon delete" onclick="app.confirmDelete('location','${loc.id}')"><i class="fa-solid fa-trash"></i></button></div></div>
         <div class="location-stats">
-          <div class="loc-stat"><div class="loc-stat-value" style="color:var(--accent)">${loc.area||'-'}</div><div class="loc-stat-label">亩</div></div>
-          <div class="loc-stat"><div class="loc-stat-value" style="color:var(--success)">${devs.length}</div><div class="loc-stat-label">台设备</div></div>
+          <div class="loc-stat"><div class="loc-stat-value" style="color:var(--accent)">${loc.area||'-'}</div><div class="loc-stat-label">\u4ea9</div></div>
+          <div class="loc-stat"><div class="loc-stat-value" style="color:var(--success)">${devs.length}</div><div class="loc-stat-label">\u53f0\u8bbe\u5907</div></div>
         </div>
-        <div class="location-devices">${devs.map(d=>`<span class="badge badge-sensor">${ti[d.type]||'📡'} ${d.name}</span>`).join('')||'<span style="color:var(--text-muted);font-size:12px">暂无设备</span>'}</div>
+        <div class="location-devices">${devs.map(d=>`<span class="badge badge-sensor">${ti[d.type]||'\ud83d\udce1'} ${d.name}</span>`).join('')||'<span style="color:var(--text-muted);font-size:12px">\u6682\u65e0\u8bbe\u5907</span>'}</div>
         ${loc.notes?`<div style="font-size:12px;color:var(--text-muted);border-top:1px solid var(--border);padding-top:10px">${loc.notes}</div>`:''}
       </div>`;
     }).join('');
@@ -1817,7 +2034,7 @@ const app = {
   saveLocation() {
     const id = document.getElementById('loc-edit-id').value || 'loc-'+uid();
     const name = document.getElementById('loc-name').value.trim();
-    if (!name) { UI.toast('请填写地块名称', 'warning'); return; }
+    if (!name) { UI.toast('\u8bf7\u586b\u5199\u5730\u5757\u540d\u79f0', 'warning'); return; }
     const loc = { id, name, type:document.getElementById('loc-type').value,
       lat:parseFloat(document.getElementById('loc-lat').value)||0,
       lng:parseFloat(document.getElementById('loc-lng').value)||0,
@@ -1826,11 +2043,11 @@ const app = {
     DataRepository.saveLocation(loc);
     this.closeModal('location'); this.clearLocationForm(); this.renderLocations(); this.updateSidebarStatus();
     if (this.currentPage === 'dashboard') this.initDashboard();
-    UI.toast('地块已保存', 'success');
+    UI.toast('\u5730\u5757\u5df2\u4fdd\u5b58', 'success');
   },
   editLocation(id) {
     const loc = DataRepository.listLocations().find(l=>l.id===id); if(!loc) return;
-    document.getElementById('modal-location-title').textContent = '编辑地块';
+    document.getElementById('modal-location-title').textContent = '\u7f16\u8f91\u5730\u5757';
     document.getElementById('loc-edit-id').value = loc.id;
     document.getElementById('loc-name').value = loc.name;
     document.getElementById('loc-type').value = loc.type;
@@ -1841,11 +2058,11 @@ const app = {
     this.openModal('location');
   },
   clearLocationForm() {
-    document.getElementById('modal-location-title').textContent = '添加新地块';
+    document.getElementById('modal-location-title').textContent = '\u6dfb\u52a0\u65b0\u5730\u5757';
     ['loc-edit-id','loc-name','loc-lat','loc-lng','loc-area','loc-notes'].forEach(id=>document.getElementById(id).value='');
   },
 
-  // ─── DEVICES ───
+  //     DEVICES    
   renderDevices() {
     const filt = document.getElementById('dev-location-filter')?.value||'all';
     const locs = DataRepository.listLocations();
@@ -1854,7 +2071,7 @@ const app = {
     const modeMeta = BackendAdapter.getModeMeta();
     const health = BackendAdapter.getHealthSnapshot();
     const filterSel = document.getElementById('dev-location-filter');
-    if(filterSel){ const cur=filterSel.value; filterSel.innerHTML=`<option value="all">全部地块</option>`+locs.map(l=>`<option value="${l.id}" ${l.id===cur?'selected':''}>${l.name}</option>`).join(''); }
+    if(filterSel){ const cur=filterSel.value; filterSel.innerHTML=`<option value="all">\u5168\u90e8\u5730\u5757</option>`+locs.map(l=>`<option value="${l.id}" ${l.id===cur?'selected':''}>${l.name}</option>`).join(''); }
     const endpointMap = DataRepository.getEndpointMap();
     const toolbar = document.querySelector('#page-devices .page-toolbar');
     const existingNotice = document.getElementById('runtime-mode-banner');
@@ -1867,45 +2084,47 @@ const app = {
             <span>${health.message}</span>
           </div>
           <div class="runtime-banner-actions">
-            <div class="runtime-banner-meta">后端接口预留: ${endpointMap.devices}</div>
+            <div class="runtime-banner-meta">\u540e\u7aef\u63a5\u53e3\u9884\u7559: ${endpointMap.devices}</div>
             <button class="btn-ghost btn-sm" onclick="app.toggleDemoMode(${!DataRepository.getRuntimeConfig().demoMode})">
-              ${DataRepository.getRuntimeConfig().demoMode ? '关闭演示模式' : '开启演示模式'}
+              ${DataRepository.getRuntimeConfig().demoMode ? '\u5173\u95ed\u6f14\u793a\u6a21\u5f0f' : '\u5f00\u542f\u6f14\u793a\u6a21\u5f0f'}
             </button>
           </div>
         </div>
       `);
     }
-    const tl = { sensor_env:['🌡️ 环境传感器','badge-sensor'], sensor_soil:['🌱 土壤传感器','badge-sensor'], sensor_soil_api:['🔗 在线传感器','badge-cloud'],
-      sensor_pest:['🦟 虫情监测仪','badge-sensor'], camera:['📹 摄像头','badge-camera'],
-      controller_water:['💧 灌溉控制器','badge-ctrl'], controller_light:['💡 补光控制器','badge-ctrl'], controller_fan:['🌀 风机控制器','badge-ctrl'] };
+    const tl = { sensor_env:['\ud83c\udf21\ufe0f \u73af\u5883\u4f20\u611f\u5668','badge-sensor'], sensor_soil:['\ud83c\udf31 \u571f\u58e4\u4f20\u611f\u5668','badge-sensor'], sensor_soil_api:['\ud83d\udd17 \u5728\u7ebf\u4f20\u611f\u5668','badge-cloud'],
+      sensor_pest:['\ud83e\udd9f \u866b\u60c5\u76d1\u6d4b\u4eea','badge-sensor'], camera:['\ud83d\udcf9 \u6444\u50cf\u5934','badge-camera'],
+      controller_water:['\ud83d\udca7 \u704c\u6e89\u63a7\u5236\u5668','badge-ctrl'], controller_light:['\ud83d\udca1 \u8865\u5149\u63a7\u5236\u5668','badge-ctrl'], controller_fan:['\ud83c\udf00 \u98ce\u673a\u63a7\u5236\u5668','badge-ctrl'] };
     document.getElementById('device-tbody').innerHTML = devices.length===0
-      ? '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted)">暂无设备</td></tr>'
+      ? '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted)">\u6682\u65e0\u8bbe\u5907</td></tr>'
       : devices.map(d=>{
-        const [tLabel,tBadge]=tl[d.type]||['未知','badge-offline'];
+        const [tLabel,tBadge]=tl[d.type]||['\u672a\u77e5','badge-offline'];
         const addrDisplay = d.type === 'sensor_soil_api' && d.apiConfig ? d.apiConfig.deviceAddr : (d.address || '-');
-        const protocolDisplay = d.type === 'sensor_soil_api' ? '在线识别接入' : d.protocol;
+        const protocolDisplay = d.type === 'sensor_soil_api' ? '\u5728\u7ebf\u8bc6\u522b\u63a5\u5165' : d.protocol;
         return `<tr><td><b>${d.name}</b>${d.notes?`<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${d.notes}</div>`:''}</td>
           <td><span class="badge ${tBadge}">${tLabel}</span></td>
-          <td>${locMap[d.locationId]||'<span style="color:var(--text-muted)">未分配</span>'}</td>
+          <td>${locMap[d.locationId]||'<span style="color:var(--text-muted)">\u672a\u5206\u914d</span>'}</td>
           <td><code style="font-family:'JetBrains Mono';font-size:12px;color:var(--accent)">${addrDisplay}</code></td>
           <td><span class="badge ${d.type==='sensor_soil_api'?'badge-cloud':'badge-sensor'}">${protocolDisplay}</span></td>
-          <td><span class="badge ${d.online?'badge-online':'badge-offline'}">● ${d.online?'在线':'离线'}</span></td>
+          <td><span class="badge ${d.online?'badge-online':'badge-offline'}">\u25cf ${d.online?'\u5728\u7ebf':'\u79bb\u7ebf'}</span></td>
           <td><div class="action-row"><button class="btn-icon" onclick="app.editDevice('${d.id}')"><i class="fa-solid fa-pen"></i></button>
           <button class="btn-icon delete" onclick="app.confirmDelete('device','${d.id}')"><i class="fa-solid fa-trash"></i></button></div></td></tr>`;
       }).join('');
   },
   openModal_device_prep() {
     const locs = DataRepository.listLocations();
-    document.getElementById('dev-location').innerHTML = `<option value="">-- 未分配 --</option>`+locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
+    document.getElementById('dev-location').innerHTML = `<option value="">-- \u672a\u5206\u914d --</option>`+locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
   },
   bindDeviceTypeChange() { document.getElementById('dev-type')?.addEventListener('change',function(){ document.getElementById('stream-url-group').style.display=this.value==='camera'?'flex':'none'; }); },
   saveDevice() {
     const id=document.getElementById('dev-edit-id').value||'dev-'+uid();
     const name=document.getElementById('dev-name').value.trim();
-    if(!name){UI.toast('请填写设备名称', 'warning');return;}
+    if(!name){UI.toast('\u8bf7\u586b\u5199\u8bbe\u5907\u540d\u79f0', 'warning');return;}
     const existing = DataRepository.listDevices().find(item => item.id === id);
+    const addressInput = document.getElementById('dev-address');
+    const resolvedAddress = existing?.address || addressInput.value.trim() || id;
     const dev={id,name,type:document.getElementById('dev-type').value,locationId:document.getElementById('dev-location').value,
-      address:document.getElementById('dev-address').value.trim(),protocol:document.getElementById('dev-protocol').value,
+      address:resolvedAddress,protocol:document.getElementById('dev-protocol').value,
       streamUrl:document.getElementById('dev-stream-url').value.trim(),notes:document.getElementById('dev-notes').value.trim(),
       lat:parseFloat(document.getElementById('dev-lat').value)||0,lng:parseFloat(document.getElementById('dev-lng').value)||0,
       online: existing?.online ?? true,
@@ -1914,17 +2133,19 @@ const app = {
     DataRepository.saveDevice(dev);
     this.closeModal('device'); this.clearDeviceForm(); this.renderDevices(); this.updateSidebarStatus();
     if (this.currentPage === 'dashboard') this.initDashboard();
-    UI.toast('设备已保存', 'success');
+    UI.toast('\u8bbe\u5907\u5df2\u4fdd\u5b58', 'success');
   },
   editDevice(id) {
     const dev=DataRepository.listDevices().find(d=>d.id===id);if(!dev)return;
     this.openModal_device_prep();
-    document.getElementById('modal-device-title').textContent='编辑设备';
+    const addressInput = document.getElementById('dev-address');
+    document.getElementById('modal-device-title').textContent='\u7f16\u8f91\u8bbe\u5907';
     document.getElementById('dev-edit-id').value=dev.id;
     document.getElementById('dev-name').value=dev.name;
     document.getElementById('dev-type').value=dev.type;
     document.getElementById('dev-location').value=dev.locationId;
     document.getElementById('dev-address').value=dev.address;
+    if (addressInput) addressInput.readOnly = true;
     document.getElementById('dev-protocol').value=dev.protocol;
     document.getElementById('dev-stream-url').value=dev.streamUrl||'';
     document.getElementById('dev-notes').value=dev.notes||'';
@@ -1934,22 +2155,24 @@ const app = {
     this.openModal('device');
   },
   clearDeviceForm() {
-    document.getElementById('modal-device-title').textContent='添加新设备';
+    const addressInput = document.getElementById('dev-address');
+    document.getElementById('modal-device-title').textContent='\u6dfb\u52a0\u65b0\u8bbe\u5907';
     ['dev-edit-id','dev-name','dev-address','dev-stream-url','dev-notes','dev-lat','dev-lng'].forEach(id=>document.getElementById(id).value='');
+    if (addressInput) addressInput.readOnly = true;
     document.getElementById('stream-url-group').style.display='none';
   },
 
-  // ─── DELETE ───
+  //     DELETE    
   confirmDelete(type,id) {
-    const msg = { location:'确定删除该地块？关联设备将变为"未分配"。', device:'确定删除该设备？', automation:'确定删除该自动化规则？' };
-    document.getElementById('confirm-msg').textContent = msg[type]||'确定删除？';
+    const msg = { location:'\u786e\u5b9a\u5220\u9664\u8be5\u5730\u5757\uff1f\u5173\u8054\u8bbe\u5907\u5c06\u53d8\u4e3a"\u672a\u5206\u914d"\u3002', device:'\u786e\u5b9a\u5220\u9664\u8be5\u8bbe\u5907\uff1f', automation:'\u786e\u5b9a\u5220\u9664\u8be5\u81ea\u52a8\u5316\u89c4\u5219\uff1f' };
+    document.getElementById('confirm-msg').textContent = msg[type]||'\u786e\u5b9a\u5220\u9664\uff1f';
     document.getElementById('confirm-ok-btn').onclick = () => {
       if(type==='location') this.deleteLocation(id);
       else if(type==='device'){ DataRepository.deleteDevice(id); this.renderDevices(); }
       else if(type==='automation'){ DataRepository.deleteAutomation(id); this.renderAutomation(); }
       this.closeModal('confirm'); this.updateSidebarStatus();
       if (this.currentPage === 'dashboard') this.initDashboard();
-      UI.toast('删除成功', 'success');
+      UI.toast('\u5220\u9664\u6210\u529f', 'success');
     };
     this.openModal('confirm');
   },
@@ -1958,7 +2181,7 @@ const app = {
     this.renderLocations();
   },
 
-  // ─── MAP PICKERS ───
+  //     MAP PICKERS    
   _createPickerMap(containerId, lat, lng) {
     const map = L.map(containerId, { zoomControl: true, attributionControl: false }).setView([lat || 20.044, lng || 110.199], lat ? 16 : 14);
     L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
@@ -2074,12 +2297,348 @@ const app = {
     if (changed) DataRepository.saveDevices(devs);
   },
 
-  // ─── HELPERS ───
+  //     HELPERS    
+  sanitize(str) {
+    if (typeof str !== 'string') return str;
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;', '/': '&#x2f;' };
+    return str.replace(/[&<>"'/]/g, s => map[s]);
+  },
+
   populateLocationSelect(selId, onchange) {
     const locs = DataRepository.listLocations();
     const sel = document.getElementById(selId); if(!sel) return;
-    sel.innerHTML = `<option value="all">所有地块</option>`+locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
+    sel.innerHTML = `<option value="all">\u6240\u6709\u5730\u5757</option>`+locs.map(l=>`<option value="${l.id}">${l.name}</option>`).join('');
     if(onchange) sel.onchange = onchange;
+  },
+
+  async renderAccounts() {
+    const body = document.getElementById('account-tbody');
+    if (!body) return;
+    if (!AuthService.canManageUsers()) {
+      body.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:36px;color:var(--text-muted)">\u5f53\u524d\u8d26\u53f7\u6ca1\u6709\u7528\u6237\u7ba1\u7406\u6743\u9650</td></tr>';
+      return;
+    }
+    const renderRows = users => users.map(user => {
+      const role = user.role === 'platform_admin' ? '\u5e73\u53f0\u7ba1\u7406\u5458' : '\u5ba2\u6237\u7ba1\u7406\u5458';
+      const status = user.status === 'disabled' ? '\u5df2\u505c\u7528' : '\u542f\u7528\u4e2d';
+      const statusClass = user.status === 'disabled' ? 'badge-offline' : 'badge-online';
+      return '<tr>' +
+        '<td><b>' + this.sanitize(user.account || '') + '</b><div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + this.sanitize(user.name || '') + '</div></td>' +
+        '<td><span class="badge ' + (user.role === 'platform_admin' ? 'badge-cloud' : 'badge-sensor') + '">' + role + '</span></td>' +
+        '<td>' + this.sanitize(user.tenantId || '-') + '</td>' +
+        '<td><span class="badge ' + statusClass + '">' + status + '</span></td>' +
+        '<td>' + (user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString('zh-CN') : '-') + '</td>' +
+        '<td><div class="action-row"><button class="btn-icon" title="\u7f16\u8f91" onclick="app.openAccountModal(\'' + user.id + '\')"><i class="fa-solid fa-pen"></i></button>' +
+        '<button class="btn-icon delete" title="\u5220\u9664" onclick="app.deleteAccount(\'' + user.id + '\')"><i class="fa-solid fa-trash"></i></button></div></td>' +
+      '</tr>';
+    }).join('');
+    const fallbackUser = AuthService.currentUser || { id: 'user_admin', account: 'admin', name: 'Platform Admin', role: 'platform_admin', status: 'active', tenantId: 'tenant_default' };
+    this._accounts = [fallbackUser];
+    body.innerHTML = renderRows(this._accounts);
+    try {
+      const data = await AuthService.request('/users');
+      this._accounts = data.users || [];
+      body.innerHTML = this._accounts.length === 0
+        ? '<tr><td colspan="6" style="text-align:center;padding:36px;color:var(--text-muted)">\u6682\u65e0\u8d26\u53f7</td></tr>'
+        : renderRows(this._accounts);
+    } catch (err) {
+      UI.toast('\u8d26\u53f7\u5217\u8868\u5237\u65b0\u5931\u8d25: ' + err.message, 'warning');
+    }
+  },
+
+  openAccountModal(userId = '') {
+    if (!AuthService.canManageUsers()) return UI.toast('\u5f53\u524d\u8d26\u53f7\u6ca1\u6709\u7528\u6237\u7ba1\u7406\u6743\u9650', 'warning');
+    const user = this._accounts.find(item => item.id === userId);
+    document.getElementById('account-edit-id').value = user?.id || '';
+    document.getElementById('account-account').value = user?.account || '';
+    document.getElementById('account-account').disabled = Boolean(user);
+    document.getElementById('account-name').value = user?.name || '';
+    document.getElementById('account-role').value = user?.role || 'tenant_admin';
+    document.getElementById('account-status').value = user?.status || 'active';
+    document.getElementById('account-password').value = '';
+    document.getElementById('modal-account-title').textContent = user ? '\u7f16\u8f91\u8d26\u53f7' : '\u65b0\u5efa\u8d26\u53f7';
+    document.getElementById('account-password-hint').textContent = user ? '\u7559\u7a7a\u5219\u4e0d\u4fee\u6539\u5bc6\u7801' : '\u65b0\u8d26\u53f7\u5fc5\u987b\u8bbe\u7f6e\u521d\u59cb\u5bc6\u7801';
+    this.openModal('account');
+  },
+
+  async saveAccount() {
+    const id = document.getElementById('account-edit-id').value;
+    const payload = {
+      account: document.getElementById('account-account').value.trim(),
+      name: document.getElementById('account-name').value.trim(),
+      role: document.getElementById('account-role').value,
+      status: document.getElementById('account-status').value,
+      password: document.getElementById('account-password').value,
+    };
+    if (!payload.account) return UI.toast('\u8bf7\u586b\u5199\u8d26\u53f7', 'warning');
+    if (!id && !payload.password) return UI.toast('\u8bf7\u8bbe\u7f6e\u521d\u59cb\u5bc6\u7801', 'warning');
+    try {
+      await AuthService.request(id ? ('/users/' + encodeURIComponent(id)) : '/users', {
+        method: id ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      this.closeModal('account');
+      await this.renderAccounts();
+      UI.toast('\u8d26\u53f7\u5df2\u4fdd\u5b58', 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  async deleteAccount(userId) {
+    const user = this._accounts.find(item => item.id === userId);
+    if (!user) return;
+    if (!window.confirm('\u786e\u5b9a\u5220\u9664\u8d26\u53f7 ' + user.account + ' \u5417\uff1f')) return;
+    try {
+      await AuthService.request('/users/' + encodeURIComponent(userId), { method: 'DELETE' });
+      await this.renderAccounts();
+      UI.toast('\u8d26\u53f7\u5df2\u5220\u9664', 'success');
+    } catch (err) {
+      UI.toast(err.message, 'danger');
+    }
+  },
+
+  initCloudSync() {
+    this._normalizeCloudHistoryFilterUI();
+    const locs = DataRepository.listLocations();
+    const allDevs = DataRepository.listDevices().filter(d => d.type === 'sensor_soil_api');
+    const sel = document.getElementById('cs-device-select');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">\u8bf7\u9009\u62e9\u8981\u540c\u6b65\u7684\u8bbe\u5907...</option>';
+    const groups = {};
+    allDevs.forEach(d => {
+      const loc = locs.find(l => l.id === d.locationId);
+      const locName = loc ? loc.name : '\u672a\u5206\u914d\u5730\u5757';
+      if (!groups[locName]) groups[locName] = [];
+      groups[locName].push(d);
+    });
+    Object.keys(groups).sort().forEach(locName => {
+      const optGroup = document.createElement('optgroup');
+      optGroup.label = locName;
+      groups[locName].forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.id;
+        opt.textContent = d.name + ' (' + d.address + ')';
+        optGroup.appendChild(opt);
+      });
+      sel.appendChild(optGroup);
+    });
+    this.onCloudRangePresetChange();
+    this.onCloudDeviceChange();
+  },
+
+  _normalizeCloudHistoryFilterUI() {
+    const preset = document.getElementById('cloud-hist-range-preset');
+    if (preset && !preset.dataset.normalized) {
+      const selected = preset.value || '24h';
+      preset.innerHTML = [
+        '<option value="24h">\u6700\u8fd1 24 \u5c0f\u65f6</option>',
+        '<option value="7d">\u6700\u8fd1 7 \u5929</option>',
+        '<option value="30d">\u6700\u8fd1 30 \u5929</option>',
+        '<option value="custom">\u81ea\u5b9a\u4e49\u65f6\u95f4</option>',
+      ].join('');
+      preset.value = ['24h', '7d', '30d', 'custom'].includes(selected) ? selected : '24h';
+      preset.dataset.normalized = '1';
+    }
+
+    const setToolbarLabel = (inputId, text) => {
+      const input = document.getElementById(inputId);
+      const label = input?.closest('.toolbar-group')?.querySelector('label');
+      if (label) label.textContent = text;
+    };
+    setToolbarLabel('cloud-hist-range-preset', '\u663e\u793a\u8303\u56f4');
+    setToolbarLabel('cloud-hist-start', '\u5f00\u59cb\u65f6\u95f4');
+    setToolbarLabel('cloud-hist-end', '\u7ed3\u675f\u65f6\u95f4');
+    setToolbarLabel('cloud-hist-factors-filter', '\u7b5b\u9009');
+    ['cloud-hist-start', 'cloud-hist-end'].forEach(id => {
+      const input = document.getElementById(id);
+      if (input && input.dataset.rangeBound !== '1') {
+        input.dataset.rangeBound = '1';
+        input.addEventListener('change', () => this._renderCloudHistoryTable());
+      }
+    });
+
+    const container = document.getElementById('cloud-hist-factors-filter');
+    const configBar = container?.closest('div[style*="border-bottom"]');
+    const rangeGroup = preset?.closest('.toolbar-group');
+    const customDates = document.getElementById('cloud-hist-custom-dates');
+    const filterGroup = container?.closest('.toolbar-group');
+    const applyButton = document.querySelector('button[onclick="app.applyCloudFilters()"]');
+    if (configBar) {
+      configBar.style.display = 'flex';
+      configBar.style.alignItems = 'flex-end';
+      configBar.style.gap = '16px';
+      configBar.style.flexWrap = 'wrap';
+      if (rangeGroup && rangeGroup.parentElement !== configBar) configBar.appendChild(rangeGroup);
+      if (customDates && customDates.parentElement !== configBar) configBar.appendChild(customDates);
+      if (filterGroup && filterGroup.parentElement !== configBar) configBar.appendChild(filterGroup);
+    }
+    if (rangeGroup) {
+      rangeGroup.style.flex = '0 0 240px';
+      if (preset) preset.style.width = '240px';
+    }
+    if (customDates) customDates.style.alignItems = 'flex-end';
+    if (filterGroup && filterGroup !== rangeGroup) {
+      filterGroup.style.flex = '1';
+      filterGroup.style.minWidth = '260px';
+    }
+    if (applyButton) applyButton.remove();
+    const panelTitle = document.querySelector('#page-cloudsync .panel-title .fa-sliders')?.closest('.panel-title');
+    if (panelTitle) panelTitle.innerHTML = '<i class="fa-solid fa-sliders"></i> \u5386\u53f2\u5b58\u91cf\u6570\u636e\u7b5b\u9009';
+  },
+
+  onCloudRangePresetChange() {
+    const preset = document.getElementById('cloud-hist-range-preset')?.value;
+    const customArea = document.getElementById('cloud-hist-custom-dates');
+    if (!customArea) return;
+    if (preset === 'custom') {
+      customArea.style.display = 'flex';
+      const now = new Date();
+      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const fmt = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      document.getElementById('cloud-hist-start').value = fmt(yesterday);
+      document.getElementById('cloud-hist-end').value = fmt(now);
+    } else {
+      customArea.style.display = 'none';
+    }
+    this._renderCloudHistoryTable();
+  },
+
+  async onCloudDeviceChange() {
+    const deviceId = document.getElementById('cs-device-select')?.value;
+    if (!deviceId) {
+      this._cloudHistoryData = [];
+      this._selectedFactors = new Set();
+      this._updateFactorCheckboxes();
+      this._renderCloudHistoryTable();
+      return;
+    }
+    try {
+      const res = await BackendAdapter.getDeviceHistory(deviceId);
+      this._cloudHistoryData = (res.rows || []).map(r => {
+        const d = new Date(r.ts || r.timestamp);
+        const pad = n => String(n).padStart(2, '0');
+        return {
+          ts: d.getTime(),
+          time: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()),
+          values: r.values || {},
+        };
+      }).reverse();
+      this._selectedFactors = new Set();
+      this._updateFactorCheckboxes();
+      this._renderCloudHistoryTable();
+    } catch (err) {
+      console.warn('[Cloud history load]', err.message);
+    }
+  },
+
+  async syncCloudHistory() {
+    const deviceId = document.getElementById('cs-device-select')?.value;
+    if (!deviceId) { UI.toast('\u8bf7\u5148\u9009\u62e9\u4e00\u4e2a\u8981\u540c\u6b65\u7684\u8bbe\u5907', 'warning'); return; }
+    const preset = document.getElementById('cloud-hist-range-preset')?.value || '24h';
+    const fmt = d => {
+      const pad = n => String(n).padStart(2, '0');
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':00';
+    };
+    let startTime, endTime;
+    if (preset === 'custom') {
+      startTime = document.getElementById('cloud-hist-start').value.replace('T', ' ') + ':00';
+      endTime = document.getElementById('cloud-hist-end').value.replace('T', ' ') + ':00';
+    } else {
+      const now = new Date();
+      const hours = preset === '7d' ? 7 * 24 : preset === '30d' ? 30 * 24 : 24;
+      startTime = fmt(new Date(now.getTime() - hours * 3600000));
+      endTime = fmt(now);
+    }
+    const btn = document.getElementById('sync-cloud-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> \u8865\u5145\u4e2d...'; }
+    try {
+      const res = await fetch('/api/v1/cloud-history-sync?deviceId=' + encodeURIComponent(deviceId) + '&startTime=' + encodeURIComponent(startTime) + '&endTime=' + encodeURIComponent(endTime), { headers: AuthService.authHeaders() });
+      const result = await res.json();
+      if (!result.ok) throw new Error(result.msg || '\u65e0\u6cd5\u8fde\u63a5\u5230\u4e91\u5e73\u53f0\u6216\u65e0\u6570\u636e');
+      await this.onCloudDeviceChange();
+      UI.toast('\u6210\u529f\u8865\u5145 ' + (result.inserted || 0) + ' \u6761\u65b0\u8bb0\u5f55', 'success');
+    } catch (err) {
+      UI.toast('\u8865\u5145\u5931\u8d25: ' + err.message, 'danger');
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-sync"></i> \u8865\u5145\u4e91\u7aef\u6570\u636e'; }
+    }
+  },
+
+  _updateFactorCheckboxes() {
+    const factors = new Set();
+    this._cloudHistoryData.forEach(item => Object.keys(item.values || {}).forEach(f => factors.add(f)));
+    const container = document.getElementById('cloud-hist-factors-filter');
+    if (!container) return;
+    const sorted = Array.from(factors).sort();
+    if (!sorted.length) {
+      container.innerHTML = '<span style="color:var(--text-muted);font-size:12px;padding:10px">\u6682\u65e0\u672c\u5730\u5386\u53f2\u8bb0\u5f55</span>';
+      return;
+    }
+    container.innerHTML = sorted.map(f => '<label><input type="checkbox" class="factor-checkbox" value="' + this.sanitize(f) + '" ' + (this._selectedFactors.has(f) ? 'checked' : '') + ' onchange="app.applyCloudFilters(true)"> ' + this.sanitize(f) + '</label>').join('');
+  },
+
+  applyCloudFilters(silent = false) {
+    const next = new Set();
+    document.querySelectorAll('.factor-checkbox').forEach(cb => { if (cb.checked) next.add(cb.value); });
+    this._selectedFactors = next;
+    this._renderCloudHistoryTable();
+    if (!silent) UI.toast('\u5df2\u5e94\u7528\u7b5b\u9009\u6761\u4ef6', 'success');
+  },
+
+  _getCloudHistoryFactors(data = this._cloudHistoryData || []) {
+    const selected = Array.from(this._selectedFactors || []).sort();
+    if (selected.length) return selected;
+    const factors = new Set();
+    data.forEach(item => Object.keys(item.values || {}).forEach(f => factors.add(f)));
+    return Array.from(factors).sort();
+  },
+
+  _getVisibleCloudHistoryData() {
+    const data = this._cloudHistoryData || [];
+    const preset = document.getElementById('cloud-hist-range-preset')?.value || '24h';
+    let start = 0;
+    let end = Date.now();
+    if (preset === 'custom') {
+      const startValue = document.getElementById('cloud-hist-start')?.value;
+      const endValue = document.getElementById('cloud-hist-end')?.value;
+      start = startValue ? new Date(startValue).getTime() : 0;
+      end = endValue ? new Date(endValue).getTime() : Date.now();
+    } else {
+      const hours = preset === '7d' ? 7 * 24 : preset === '30d' ? 30 * 24 : 24;
+      start = Date.now() - hours * 3600000;
+    }
+    return data.filter(item => Number.isFinite(item.ts) && item.ts >= start && item.ts <= end);
+  },
+
+  _renderCloudHistoryTable() {
+    const head = document.getElementById('cloud-hist-table-head');
+    const body = document.getElementById('cloud-hist-table-body');
+    if (!head || !body) return;
+    const data = this._getVisibleCloudHistoryData();
+    if (!data.length) {
+      head.innerHTML = '';
+      body.innerHTML = '<tr><td colspan="100" style="text-align:center;padding:40px;color:var(--text-muted)">\u65e0\u5386\u53f2\u6570\u636e\u8bb0\u5f55</td></tr>';
+      return;
+    }
+    const factors = this._getCloudHistoryFactors(data);
+    head.innerHTML = '<tr><th>\u4e0a\u62a5\u65f6\u95f4</th>' + factors.map(f => '<th>' + this.sanitize(f) + '</th>').join('') + '</tr>';
+    body.innerHTML = data.map(item => '<tr><td style="font-family:\'JetBrains Mono\';font-size:12px">' + this.sanitize(item.time) + '</td>' + factors.map(f => '<td>' + (item.values[f] !== undefined ? this.sanitize(item.values[f]) : '-') + '</td>').join('') + '</tr>').join('');
+  },
+
+  exportCloudHistoryCSV() {
+    if (!this._cloudHistoryData.length) { UI.toast('\u6682\u65e0\u53ef\u5bfc\u51fa\u7684\u6570\u636e', 'warning'); return; }
+    const data = this._getVisibleCloudHistoryData();
+    if (!data.length) { UI.toast('\u5f53\u524d\u663e\u793a\u8303\u56f4\u5185\u6682\u65e0\u6570\u636e', 'warning'); return; }
+    const factors = this._getCloudHistoryFactors(data);
+    let csv = '\uFEFF\u65f6\u95f4,' + factors.join(',') + '\n';
+    data.forEach(item => { csv += item.time + ',' + factors.map(f => item.values[f] ?? '').join(',') + '\n'; });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = 'cloud-history-' + Date.now() + '.csv';
+    link.click();
   },
 
   // ====================================================
@@ -2123,13 +2682,13 @@ const app = {
     const btn = document.getElementById('cloud-login-btn');
 
     if (!accessCode) {
-      this.showCloudError('请输入识别码');
+      this.showCloudError('\u8bf7\u8f93\u5165\u8bc6\u522b\u7801');
       return;
     }
 
     this.clearCloudError();
     btn.disabled = true;
-    btn.innerHTML = '<div class="cloud-spinner" style="width:18px;height:18px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></div> 正在识别...';
+    btn.innerHTML = '<div class="cloud-spinner" style="width:18px;height:18px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></div> \u6b63\u5728\u8bc6\u522b...';
 
     try {
       // Save credentials and authenticate
@@ -2151,10 +2710,10 @@ const app = {
       this._showCloudDeviceList(accessCode);
 
     } catch (err) {
-      this.showCloudError(`识别失败: ${err.message}`);
+      this.showCloudError(`\u8bc6\u522b\u5931\u8d25: ${err.message}`);
     } finally {
       btn.disabled = false;
-      btn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> 识别并获取设备列表';
+      btn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> \u8bc6\u522b\u5e76\u83b7\u53d6\u8bbe\u5907\u5217\u8868';
     }
   },
 
@@ -2169,27 +2728,27 @@ const app = {
     document.getElementById('cloud-step-login').style.display = 'none';
     document.getElementById('cloud-step-devices').style.display = '';
     document.getElementById('cloud-import-btn').style.display = '';
-    document.getElementById('cloud-account-display').textContent = `识别码 ${accessCode}`;
+    document.getElementById('cloud-account-display').textContent = `\u8bc6\u522b\u7801 ${accessCode}`;
 
     // Populate location dropdown
     const locs = DataRepository.listLocations();
     document.getElementById('cloud-import-location').innerHTML =
-      '<option value="">-- 导入到地块(可选) --</option>' +
+      '<option value="">-- \u5bfc\u5165\u5230\u5730\u5757(\u53ef\u9009) --</option>' +
       locs.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
 
     const existingDevs = DataRepository.listDevices();
     const existingAddrs = new Set(existingDevs.filter(d => d.apiConfig).map(d => String(d.apiConfig.deviceAddr)));
 
     const listEl = document.getElementById('cloud-device-list');
-    document.getElementById('cloud-device-count').textContent = `共发现 ${this._cloudDevices.length} 台设备`;
+    document.getElementById('cloud-device-count').textContent = `\u5171\u53d1\u73b0 ${this._cloudDevices.length} \u53f0\u8bbe\u5907`;
 
     listEl.innerHTML = this._cloudDevices.map(dev => {
       const isAdded = existingAddrs.has(String(dev.deviceAddr));
-      const renameValue = this._cloudRenameMap[String(dev.deviceAddr)] || dev.deviceName || `传感器-${dev.deviceAddr}`;
+      const renameValue = this._cloudRenameMap[String(dev.deviceAddr)] || dev.deviceName || `\u4f20\u611f\u5668-${dev.deviceAddr}`;
       const cached = SensorEngine.getApiData(dev.deviceAddr);
       const statusBadge = cached
-        ? '<span class="badge badge-online">● 在线</span>'
-        : '<span class="badge badge-offline">● 未知</span>';
+        ? '<span class="badge badge-online">\u25cf \u5728\u7ebf</span>'
+        : '<span class="badge badge-offline">\u25cf \u672a\u77e5</span>';
 
       // Get factor names
       const factors = (dev.factors || []).map(f => f.factorName).filter(Boolean);
@@ -2214,16 +2773,16 @@ const app = {
         <div class="cloud-device-info">
           <div class="cloud-device-name">
             ${dev.deviceName || dev.deviceAddr}
-            ${isAdded ? '<span class="cloud-already-badge">已导入</span>' : ''}
+            ${isAdded ? '<span class="cloud-already-badge">\u5df2\u5bfc\u5165</span>' : ''}
           </div>
           <div class="cloud-rename-row">
-            <label>导入名称</label>
+            <label>\u5bfc\u5165\u540d\u79f0</label>
             <input class="text-input cloud-rename-input" type="text" value="${renameValue.replace(/"/g, '&quot;')}" ${isAdded ? 'disabled' : ''}
               onclick="event.stopPropagation()" oninput="app.setCloudDeviceName('${dev.deviceAddr}', this.value)">
           </div>
           <div class="cloud-device-meta">
-            <span>📡 设备地址: ${dev.deviceAddr}</span>
-            <span>📊 ${factors.length} 个传感参数</span>
+            <span>\ud83d\udce1 \u8bbe\u5907\u5730\u5740: ${dev.deviceAddr}</span>
+            <span>\ud83d\udcca ${factors.length} \u4e2a\u4f20\u611f\u53c2\u6570</span>
           </div>
           <div class="cloud-device-factors">${valueTags}</div>
         </div>
@@ -2232,7 +2791,7 @@ const app = {
     }).join('');
 
     if (this._cloudDevices.length === 0) {
-      listEl.innerHTML = '<div class="empty-state"><i class="fa-solid fa-inbox"></i><p>当前识别码下暂无可导入设备</p></div>';
+      listEl.innerHTML = '<div class="empty-state"><i class="fa-solid fa-inbox"></i><p>\u5f53\u524d\u8bc6\u522b\u7801\u4e0b\u6682\u65e0\u53ef\u5bfc\u5165\u8bbe\u5907</p></div>';
       document.getElementById('cloud-import-btn').style.display = 'none';
     }
 
@@ -2291,13 +2850,14 @@ const app = {
     if (btn) btn.style.opacity = this._cloudSelected.size > 0 ? '1' : '0.5';
   },
 
-  cloudImportSelected() {
-    if (this._cloudSelected.size === 0) { this.showCloudError('请至少选择一台设备'); return; }
+  async cloudImportSelected() {
+    if (this._cloudSelected.size === 0) { this.showCloudError('\u8bf7\u81f3\u5c11\u9009\u62e9\u4e00\u53f0\u8bbe\u5907'); return; }
     this.clearCloudError();
     const locationId = document.getElementById('cloud-import-location')?.value || '';
     const devices = DataRepository.listDevices();
     const creds = CloudAPI.loadCredentials();
 
+    const importedIds = [];
     this._cloudSelected.forEach(addr => {
       const cloudDev = this._cloudDevices.find(d => String(d.deviceAddr) === addr);
       if (!cloudDev) return;
@@ -2307,14 +2867,14 @@ const app = {
       const customName = this._cloudRenameMap[String(addr)]?.trim();
 
       const newDev = {
-        id: 'dev-' + uid(),
-        name: customName || cloudDev.deviceName || `传感器-${addr}`,
+        id: String(addr),
+        name: customName || cloudDev.deviceName || `\u4f20\u611f\u5668-${addr}`,
         type: 'sensor_soil_api',
         locationId: locationId,
         address: String(addr),
         protocol: 'CloudAPI',
         streamUrl: '',
-        notes: `在线传感器 | 参数: ${factorNames.join(', ')}`,
+        notes: `\u5728\u7ebf\u4f20\u611f\u5668 | \u53c2\u6570: ${factorNames.join(', ')}`,
         online: true,
         lat: cloudDev.lat || 0,
         lng: cloudDev.lng || 0,
@@ -2326,26 +2886,56 @@ const app = {
           factors: cloudDev.factors || [],
         },
       };
-      devices.push(newDev);
+      const existingIdx = devices.findIndex(d => d.id === newDev.id || String(d.apiConfig?.deviceAddr || '') === String(addr));
+      if (existingIdx >= 0) devices[existingIdx] = newDev;
+      else devices.push(newDev);
+      importedIds.push(newDev.id);
     });
 
     DataRepository.saveDevices(devices);
+    try {
+      await SyncService.pushNowForced();
+    } catch (err) {
+      console.warn('[Import sync]', err.message);
+      UI.toast('\u8bbe\u5907\u5df2\u5bfc\u5165\uff0c\u4f46\u540e\u7aef\u540c\u6b65\u5931\u8d25: ' + err.message, 'warning');
+    }
+    for (const id of importedIds) {
+      try {
+        const dev = devices.find(item => item.id === id);
+        const serverData = await BackendAdapter.getDeviceRealtime(id);
+        if (dev?.apiConfig && serverData?.ok && serverData?.dataItems) {
+          SensorEngine.setApiData(dev.apiConfig.deviceAddr, serverData.dataItems, serverData.timestamp || Date.now());
+        }
+      } catch (err) {
+        console.warn('[Import initial fetch]', id, err.message);
+      }
+    }
     this._ensureDeviceCoords();
     this.closeModal('cloud');
     this.renderDevices();
     this.updateSidebarStatus();
-    this.startCloudApiPolling();
 
-    UI.toast(`成功导入 ${this._cloudSelected.size} 台设备`, 'success');
+    UI.toast(`\u6210\u529f\u5bfc\u5165 ${this._cloudSelected.size} \u53f0\u8bbe\u5907`, 'success');
     this._cloudSelected = new Set();
     this._cloudRenameMap = {};
   },
 };
 
-// ─── INIT ───
+//     INIT    
 document.addEventListener('DOMContentLoaded', () => {
+  AuthService.bindLoginForm();
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
-    overlay.addEventListener('click', e => { if(e.target===overlay) app.closeModal(overlay.id.replace('modal-','')); });
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) {
+        const closeBtn = overlay.querySelector('.modal-close');
+        if (closeBtn) {
+          closeBtn.classList.remove('hint-active');
+          void closeBtn.offsetWidth;
+          closeBtn.classList.add('hint-active');
+          setTimeout(() => closeBtn.classList.remove('hint-active'), 600);
+        }
+      }
+    });
   });
   window.agriRuntime = {
     setMode: (mode, patch) => app.setRuntimeMode(mode, patch),
@@ -2354,6 +2944,6 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   app.init().catch(error => {
     console.error('[AppInit]', error);
-    UI.toast('初始化失败，请刷新重试', 'danger');
+    UI.toast('\u521d\u59cb\u5316\u5931\u8d25\uff0c\u8bf7\u5237\u65b0\u91cd\u8bd5', 'danger');
   });
 });

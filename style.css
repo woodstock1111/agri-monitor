@@ -71,6 +71,183 @@ input, select, textarea { font-family: inherit; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
+/* =========== AUTH =========== */
+.login-screen {
+  min-height: 100vh;
+  width: 100vw;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(360px, 460px);
+  background:
+    linear-gradient(115deg, rgba(13, 25, 48, 0.84), rgba(13, 25, 48, 0.62)),
+    url('logo.jpg') center/320px no-repeat,
+    #0f1f35;
+  color: #fff;
+  overflow: hidden;
+}
+
+.login-visual {
+  padding: clamp(36px, 7vw, 96px);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 44px;
+}
+
+.login-logo {
+  width: 72px;
+  height: 72px;
+  border-radius: 14px;
+  background: #fff;
+  object-fit: contain;
+  padding: 5px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.22);
+}
+
+.login-kicker {
+  color: #7dd3fc;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0;
+  margin-bottom: 14px;
+}
+
+.login-visual h1 {
+  font-size: clamp(34px, 6vw, 72px);
+  line-height: 1.02;
+  letter-spacing: 0;
+  max-width: 760px;
+}
+
+.login-visual p {
+  margin-top: 18px;
+  max-width: 560px;
+  color: rgba(255,255,255,0.74);
+  font-size: 16px;
+}
+
+.login-panel {
+  align-self: center;
+  justify-self: center;
+  width: min(380px, calc(100vw - 36px));
+  background: rgba(255,255,255,0.96);
+  color: var(--text-primary);
+  border: 1px solid rgba(255,255,255,0.65);
+  border-radius: 8px;
+  padding: 30px;
+  box-shadow: 0 28px 80px rgba(0,0,0,0.24);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation: authIn 420ms ease both;
+}
+
+@keyframes authIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.login-panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.login-panel-head span {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.login-panel-head strong {
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.login-error {
+  min-height: 18px;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.login-submit {
+  width: 100%;
+  justify-content: center;
+  min-height: 44px;
+}
+
+.topbar-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+}
+
+.topbar-user > i {
+  color: var(--accent);
+  font-size: 18px;
+}
+
+.topbar-user div {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
+.topbar-user strong {
+  font-size: 13px;
+  max-width: 120px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.topbar-user span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+@media (max-width: 860px) {
+  .login-screen {
+    grid-template-columns: 1fr;
+    align-content: center;
+    padding: 28px 0;
+  }
+
+  .login-visual {
+    padding: 28px;
+    gap: 22px;
+  }
+
+  .login-logo {
+    width: 54px;
+    height: 54px;
+  }
+
+  .login-panel {
+    margin-bottom: 28px;
+  }
+
+  .topbar-user div {
+    display: none;
+  }
+}
+
 /* =========== APP SHELL =========== */
 .app-shell {
   display: flex;
@@ -415,12 +592,17 @@ input, select, textarea { font-family: inherit; }
 }
 
 .text-input, .select-input {
-  background: var(--bg-base); border: 1px solid var(--border);
+  background: #ffffff; border: 1px solid var(--border);
   border-radius: var(--radius-sm); padding: 9px 12px;
   color: var(--text-primary); font-size: 13px;
-  width: 100%; transition: border-color 0.2s; outline: none;
+  width: 100%; transition: border-color 0.2s, background-color 0.2s; outline: none;
 }
-.text-input:focus, .select-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(16,112,224,0.1); }
+.text-input[readonly], .select-input[disabled], .text-input:disabled {
+  background: #f1f5f9 !important;
+  cursor: not-allowed;
+  color: var(--text-muted);
+}
+.text-input:focus:not([readonly]), .select-input:focus:not(:disabled) { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(16,112,224,0.1); }
 textarea.text-input { resize: vertical; min-height: 70px; }
 .select-input { appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 8L1 3h10z' fill='%2394a3b8'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
 
@@ -700,8 +882,19 @@ input:checked + .toggle-slider:before { transform: translateX(22px); }
   padding: 20px 24px; border-bottom: 1px solid var(--border);
 }
 .modal-header h3 { font-size: 16px; font-weight: 600; }
-.modal-close { background: none; border: none; color: var(--text-muted); font-size: 18px; }
+.modal-close { background: none; border: none; color: var(--text-muted); font-size: 18px; transition: all 0.2s; }
 .modal-close:hover { color: var(--text-primary); }
+.modal-close.hint-active {
+  color: var(--danger);
+  transform: scale(1.4);
+  filter: drop-shadow(0 0 8px rgba(239,68,68,0.4));
+  animation: modalHint 0.4s ease;
+}
+@keyframes modalHint {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.6); }
+  100% { transform: scale(1.4); }
+}
 
 .modal-body { padding: 24px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 16px; }
 
@@ -1063,3 +1256,43 @@ input:checked + .toggle-slider:before { transform: translateX(22px); }
   display: flex; align-items: center; gap: 4px;
 }
 .api-data-timestamp i { color: var(--success); }
+
+/* Factor Checkbox Group - Enhanced Card Style */
+.factor-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  background: #f8fafc;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.factor-checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px !important;
+  color: var(--text-primary) !important;
+  cursor: pointer;
+  padding: 8px 16px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  transition: all 0.2s;
+  user-select: none;
+}
+.factor-checkbox-group label:hover {
+  border-color: var(--accent);
+  background: #f0f7ff;
+}
+.factor-checkbox-group label:has(input:checked) {
+  border-color: var(--accent);
+  background: #eff6ff;
+  box-shadow: 0 2px 4px rgba(16,112,224,0.1);
+}
+.factor-checkbox-group input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  margin: 0;
+}

@@ -18,21 +18,41 @@ import threading
 import time
 from urllib.parse import urljoin
 
-PORT = 3000
+PORT = int(os.environ.get("PORT", 80))
 STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_TARGET_BASE = "http://www.0531yun.com"
 DATA_DIR = os.path.join(STATIC_DIR, "server-data")
 APP_STATE_FILE = os.path.join(DATA_DIR, "app-state.json")
 COLLECT_INTERVAL_SECONDS = 30
-MAX_HISTORY_PER_DEVICE = 720
+MAX_HISTORY_PER_DEVICE = 2880  # 24 hours at 30s interval
 STATE_LOCK = threading.Lock()
 TOKEN_CACHE = {}
 
 
 def default_app_state():
     return {
-        "locations": [],
-        "devices": [],
+        "locations": [
+            { "id": "loc-initial", "name": "核心农场", "type": "大棚", "lat": 20.044, "lng": 110.199, "area": 50, "notes": "自动初始化的地块" }
+        ],
+        "devices": [
+            {
+                "id": "online-sensor-1",
+                "name": "在线土壤监测仪",
+                "type": "sensor_soil_api",
+                "locationId": "loc-initial",
+                "address": "h260415rdny",
+                "protocol": "OnlineAPI",
+                "online": True,
+                "lat": 20.0442,
+                "lng": 110.1992,
+                "apiConfig": {
+                    "loginName": "h260415rdny",
+                    "password": "h260415rdny",
+                    "deviceAddr": "h260415rdny",
+                    "apiUrl": "http://www.0531yun.com"
+                }
+            }
+        ],
         "automations": [],
         "autoLog": [],
         "history": {},
