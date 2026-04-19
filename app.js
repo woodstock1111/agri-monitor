@@ -97,6 +97,7 @@ const AuthService = {
   },
 
   showLogin() {
+    document.body.classList.remove('auth-pending');
     const shell = document.getElementById('app-shell');
     const login = document.getElementById('login-screen');
     if (shell) shell.style.display = 'none';
@@ -104,6 +105,7 @@ const AuthService = {
   },
 
   showApp() {
+    document.body.classList.remove('auth-pending');
     const shell = document.getElementById('app-shell');
     const login = document.getElementById('login-screen');
     if (shell) shell.style.display = '';
@@ -3075,6 +3077,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   app.init().catch(error => {
     console.error('[AppInit]', error);
+    document.body.classList.remove('auth-pending');
     UI.toast('\u521d\u59cb\u5316\u5931\u8d25\uff0c\u8bf7\u5237\u65b0\u91cd\u8bd5', 'danger');
   });
 });
