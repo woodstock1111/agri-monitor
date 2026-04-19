@@ -158,7 +158,6 @@ const Store = {
       devices: this.getDevices(),
       automations: this.getAutomations(),
       autoLog: this.getAutoLog(),
-      history: this._get('history', {}),
     };
   },
 
@@ -212,6 +211,7 @@ const SyncService = {
 
   async pushNow() {
     if (!this.isEnabled() || this._inFlight) return;
+    clearTimeout(this._timer);
     const snapshot = Store.exportData();
     this._inFlight = fetch('/api/v1/app-state', {
       method: 'PUT',
@@ -227,6 +227,7 @@ const SyncService = {
 
   async pushNowForced() {
     if (window.location.protocol === 'file:') return;
+    clearTimeout(this._timer);
     const snapshot = Store.exportData();
     const res = await fetch('/api/v1/app-state', {
       method: 'PUT',
@@ -2173,9 +2174,18 @@ const app = {
   confirmDelete(type,id) {
     const msg = { location:'\u786e\u5b9a\u5220\u9664\u8be5\u5730\u5757\uff1f\u5173\u8054\u8bbe\u5907\u5c06\u53d8\u4e3a"\u672a\u5206\u914d"\u3002', device:'\u786e\u5b9a\u5220\u9664\u8be5\u8bbe\u5907\uff1f', automation:'\u786e\u5b9a\u5220\u9664\u8be5\u81ea\u52a8\u5316\u89c4\u5219\uff1f' };
     document.getElementById('confirm-msg').textContent = msg[type]||'\u786e\u5b9a\u5220\u9664\uff1f';
-    document.getElementById('confirm-ok-btn').onclick = () => {
+    document.getElementById('confirm-ok-btn').onclick = async () => {
       if(type==='location') this.deleteLocation(id);
-      else if(type==='device'){ DataRepository.deleteDevice(id); this.renderDevices(); }
+      else if(type==='device'){
+        DataRepository.deleteDevice(id);
+        this.renderDevices();
+        try {
+          await SyncService.pushNowForced();
+        } catch (err) {
+          console.warn('[Delete device sync]', err.message);
+          UI.toast('\u8bbe\u5907\u5df2\u5220\u9664\uff0c\u4f46\u540e\u7aef\u540c\u6b65\u5931\u8d25: ' + err.message, 'warning');
+        }
+      }
       else if(type==='automation'){ DataRepository.deleteAutomation(id); this.renderAutomation(); }
       this.closeModal('confirm'); this.updateSidebarStatus();
       if (this.currentPage === 'dashboard') this.initDashboard();

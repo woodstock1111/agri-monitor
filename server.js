@@ -207,7 +207,7 @@ function mergeOperationalState(current, incoming, user) {
     const tenantId = user.tenantId || DEFAULT_TENANT_ID;
     const own = item => user.role === 'platform_admin' || !item.tenantId || item.tenantId === tenantId;
 
-    ['locations', 'devices', 'automations', 'autoLog', 'channels'].forEach(key => {
+    ['locations', 'automations', 'autoLog', 'channels'].forEach(key => {
         if (!Array.isArray(incoming[key])) return;
         if (user.role === 'platform_admin') {
             next[key] = incoming[key].map(item => ({ ...item, tenantId: item.tenantId || tenantId }));
@@ -217,6 +217,34 @@ function mergeOperationalState(current, incoming, user) {
         const scoped = incoming[key].map(item => ({ ...item, tenantId }));
         next[key] = [...foreign, ...scoped];
     });
+
+    if (Array.isArray(incoming.devices)) {
+        const previousDevices = next.devices || [];
+        const incomingDevices = incoming.devices.map(item => ({ ...item, tenantId: item.tenantId || tenantId }));
+        const incomingIds = new Set(incomingDevices.map(item => item.id).filter(Boolean));
+        const removedIds = previousDevices
+            .filter(item => own(item) && item.id && !incomingIds.has(item.id))
+            .map(item => item.id);
+
+        if (user.role === 'platform_admin') {
+            next.devices = incomingDevices;
+        } else {
+            const foreign = previousDevices.filter(item => !own(item));
+            next.devices = [...foreign, ...incomingDevices.map(item => ({ ...item, tenantId }))];
+        }
+
+        if (removedIds.length) {
+            const removed = new Set(removedIds);
+            next.channels = (next.channels || []).filter(item => !removed.has(item.deviceId));
+            next.sensorReadings = (next.sensorReadings || []).filter(item => !removed.has(item.deviceId));
+            next.rawIngestPayloads = (next.rawIngestPayloads || []).filter(item => !removed.has(item.deviceId));
+            ['history', 'serverRealtime', 'realtimeState'].forEach(key => {
+                const bucket = next[key] || {};
+                removedIds.forEach(id => delete bucket[id]);
+                next[key] = bucket;
+            });
+        }
+    }
 
     return next;
 }
