@@ -59,14 +59,15 @@ ADMIN_PASSWORD
 3. Preserved existing display modes.
 4. Cloud devices are imported only after the user enters account/identification information.
 5. Cloud device local ID now equals cloud `deviceAddr`.
-6. Device ID / Modbus address field is locked in add and edit modals.
-7. Realtime page shows latest stored data and recent real readings.
-8. History records page supports dynamic parameter filters.
-9. History records display range is separate from cloud supplement range.
-10. Cloud supplement data persists to backend storage and skips duplicates.
-11. Charts show one chart per sensor parameter.
-12. Chart page refreshes automatically when the selected device or range changes.
-13. Manual chart query button was removed.
+6. Import writes the first reading from one realtime-status query and does not block on per-node history queries.
+7. Device ID / Modbus address field is locked in add and edit modals.
+8. Realtime page shows latest stored data and recent real readings.
+9. History records page supports dynamic parameter filters.
+10. History records display range is separate from cloud supplement range.
+11. Cloud supplement data persists to backend storage and skips duplicates.
+12. Charts show one chart per sensor parameter.
+13. Chart page refreshes automatically when the selected device or range changes.
+14. Manual chart query button was removed.
 
 ## Important Current Rules
 

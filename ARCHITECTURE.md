@@ -75,7 +75,8 @@ Correct flow:
 2. The app discovers devices under that account.
 3. User selects devices to import.
 4. Imported cloud device IDs must match cloud `deviceAddr`.
-5. On import, the backend fetches one current reading and saves it so the device is not empty.
+5. On import, the backend fetches one current realtime-status reading and saves it so the device is not empty.
+6. Import must not wait on per-node history queries. `historyList` is for background collector accuracy and manual history supplement, not for blocking device import.
 
 For cloud sensors:
 

@@ -330,10 +330,16 @@ async function fetchLatestCloudHistoryRecord(dev, token, realtimeRow = null) {
     const start = new Date(end.getTime() - 36 * 60 * 60 * 1000);
     const grouped = {};
 
-    for (const nodeId of nodeIds) {
+    const historyResults = await Promise.allSettled(nodeIds.map(async nodeId => {
         const url = `${baseUrl}/api/data/historyList?deviceAddr=${encodeURIComponent(c.deviceAddr)}&nodeId=${encodeURIComponent(nodeId)}&startTime=${encodeURIComponent(formatCloudTime(start))}&endTime=${encodeURIComponent(formatCloudTime(end))}&pageSize=10`;
         const res = await requestJson(url, { method: 'GET', headers: { 'authorization': token } });
-        if (res.data?.code !== 1000 || !Array.isArray(res.data.data)) continue;
+        return { nodeId, res };
+    }));
+
+    historyResults.forEach(result => {
+        if (result.status !== 'fulfilled') return;
+        const { nodeId, res } = result.value;
+        if (res.data?.code !== 1000 || !Array.isArray(res.data.data)) return;
         res.data.data.forEach(box => {
             const time = box.recordTimeStr || box.recordTime || box.time;
             if (!time) return;
@@ -354,7 +360,7 @@ async function fetchLatestCloudHistoryRecord(dev, token, realtimeRow = null) {
                 });
             });
         });
-    }
+    });
 
     const latest = Object.values(grouped).sort((a, b) => parseCloudRecordTime(b.recordTimeStr) - parseCloudRecordTime(a.recordTimeStr))[0];
     if (!latest) return row;
@@ -791,11 +797,10 @@ const server = http.createServer(async (req, res) => {
                         const token = await getCloudToken(c.loginName, c.password, c.apiUrl);
                         const realtimeRow = await fetchCloudRealtime(dev, token);
                         if (realtimeRow) {
-                            const row = await fetchLatestCloudHistoryRecord(dev, token, realtimeRow);
                             const current = readState();
-                            const record = normalizePlatformCloudRow(current, dev, row, 'cloud-live-fetch');
+                            const record = normalizePlatformCloudRow(current, dev, realtimeRow, 'cloud-live-fetch');
                             appendPlatformReading(current, record);
-                            updatePlatformRealtime(current, dev, record, row.dataItem || []);
+                            updatePlatformRealtime(current, dev, record, realtimeRow.dataItem || []);
                             rt = current.serverRealtime[deviceId];
                             const dIdx = current.devices.findIndex(x => x.id === deviceId);
                             if (dIdx >= 0) current.devices[dIdx].online = true;

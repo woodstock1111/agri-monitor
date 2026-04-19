@@ -2808,21 +2808,25 @@ const app = {
       const devices = await CloudAPI.getDeviceList();
       this._cloudDevices = devices || [];
 
-      // Also fetch real-time data for each device to get current values
-      for (const dev of this._cloudDevices) {
-        try {
-          await CloudAPI.fetchAndCacheRealTime(dev.deviceAddr);
-        } catch {}
-      }
-
-      // Show device selection step
       this._showCloudDeviceList(accessCode);
+      this._refreshCloudDeviceRealtimePreview(accessCode);
 
     } catch (err) {
       this.showCloudError(`\u8bc6\u522b\u5931\u8d25: ${err.message}`);
     } finally {
       btn.disabled = false;
       btn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> \u8bc6\u522b\u5e76\u83b7\u53d6\u8bbe\u5907\u5217\u8868';
+    }
+  },
+
+  async _refreshCloudDeviceRealtimePreview(accessCode) {
+    const devices = [...(this._cloudDevices || [])];
+    for (let i = 0; i < devices.length; i += 4) {
+      const batch = devices.slice(i, i + 4);
+      await Promise.allSettled(batch.map(dev => CloudAPI.fetchAndCacheRealTime(dev.deviceAddr)));
+      if (document.getElementById('cloud-step-devices')?.style.display !== 'none') {
+        this._showCloudDeviceList(accessCode);
+      }
     }
   },
 
@@ -2962,6 +2966,11 @@ const app = {
   async cloudImportSelected() {
     if (this._cloudSelected.size === 0) { this.showCloudError('\u8bf7\u81f3\u5c11\u9009\u62e9\u4e00\u53f0\u8bbe\u5907'); return; }
     this.clearCloudError();
+    const importBtn = document.getElementById('cloud-import-btn');
+    if (importBtn) {
+      importBtn.disabled = true;
+      importBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> \u6b63\u5728\u5bfc\u5165...';
+    }
     const locationId = document.getElementById('cloud-import-location')?.value || '';
     const devices = DataRepository.listDevices();
     const creds = CloudAPI.loadCredentials();
@@ -3008,25 +3017,28 @@ const app = {
       console.warn('[Import sync]', err.message);
       UI.toast('\u8bbe\u5907\u5df2\u5bfc\u5165\uff0c\u4f46\u540e\u7aef\u540c\u6b65\u5931\u8d25: ' + err.message, 'warning');
     }
-    for (const id of importedIds) {
-      try {
-        const dev = devices.find(item => item.id === id);
-        const serverData = await BackendAdapter.getDeviceRealtime(id);
-        if (dev?.apiConfig && serverData?.ok && serverData?.dataItems) {
-          SensorEngine.setApiData(dev.apiConfig.deviceAddr, serverData.dataItems, serverData.timestamp || Date.now());
-        }
-      } catch (err) {
-        console.warn('[Import initial fetch]', id, err.message);
-      }
-    }
     this._ensureDeviceCoords();
     this.closeModal('cloud');
     this.renderDevices();
     this.updateSidebarStatus();
 
-    UI.toast(`\u6210\u529f\u5bfc\u5165 ${this._cloudSelected.size} \u53f0\u8bbe\u5907`, 'success');
+    UI.toast(`\u6210\u529f\u5bfc\u5165 ${this._cloudSelected.size} \u53f0\u8bbe\u5907\uff0c\u6b63\u5728\u540e\u53f0\u5199\u5165\u9996\u6761\u6570\u636e`, 'success');
+    Promise.allSettled(importedIds.map(async id => {
+      const dev = devices.find(item => item.id === id);
+      const serverData = await BackendAdapter.getDeviceRealtime(id);
+      if (dev?.apiConfig && serverData?.ok && serverData?.dataItems) {
+        SensorEngine.setApiData(dev.apiConfig.deviceAddr, serverData.dataItems, serverData.timestamp || Date.now());
+      }
+    })).then(() => {
+      if (this.currentPage === 'devices') this.renderDevices();
+      if (this.currentPage === 'dashboard') this.initDashboard();
+    }).catch(err => console.warn('[Import initial fetch]', err.message));
     this._cloudSelected = new Set();
     this._cloudRenameMap = {};
+    if (importBtn) {
+      importBtn.disabled = false;
+      importBtn.innerHTML = '<i class="fa-solid fa-download"></i> \u5bfc\u5165\u9009\u4e2d\u8bbe\u5907 (<span id="cloud-import-count">0</span>)';
+    }
   },
 };
 
