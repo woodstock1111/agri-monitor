@@ -1591,6 +1591,13 @@ const app = {
   initHistory() {
     this.populateLocationSelect('hist-location-select', () => this._populateHistDevices());
     document.getElementById('hist-device-select').onchange = () => this.refreshHistoryCharts();
+    const rangeSelect = document.getElementById('hist-range');
+    if (rangeSelect && rangeSelect.dataset.autoBound !== '1') {
+      rangeSelect.dataset.autoBound = '1';
+      rangeSelect.onchange = () => this.refreshHistoryCharts();
+    }
+    const queryBtn = document.querySelector('#page-history button[onclick="app.refreshHistoryCharts()"]');
+    if (queryBtn) queryBtn.remove();
     this._populateHistDevices();
   },
 
@@ -2400,6 +2407,7 @@ const app = {
   },
 
   initCloudSync() {
+    this._ensureCloudSyncRangeUI();
     this._normalizeCloudHistoryFilterUI();
     const locs = DataRepository.listLocations();
     const allDevs = DataRepository.listDevices().filter(d => d.type === 'sensor_soil_api');
@@ -2426,6 +2434,90 @@ const app = {
     });
     this.onCloudRangePresetChange();
     this.onCloudDeviceChange();
+  },
+
+  _ensureCloudSyncRangeUI() {
+    const toolbar = document.querySelector('#page-cloudsync .page-toolbar');
+    const syncBtn = document.getElementById('sync-cloud-btn');
+    if (!toolbar || !syncBtn) return;
+    toolbar.style.alignItems = 'flex-end';
+    toolbar.style.gap = '16px';
+
+    let rangeGroup = document.getElementById('cs-sync-range-group');
+    if (!rangeGroup) {
+      rangeGroup = document.createElement('div');
+      rangeGroup.className = 'toolbar-group';
+      rangeGroup.id = 'cs-sync-range-group';
+      rangeGroup.innerHTML = '' +
+        '<label>\u8865\u5145\u8303\u56f4</label>' +
+        '<select class="select-input" id="cs-sync-range-preset" style="width:240px" onchange="app.onCloudSyncRangePresetChange()">' +
+          '<option value="24h">\u6700\u8fd1 24 \u5c0f\u65f6</option>' +
+          '<option value="7d">\u6700\u8fd1 7 \u5929</option>' +
+          '<option value="30d">\u6700\u8fd1 30 \u5929</option>' +
+          '<option value="custom">\u81ea\u5b9a\u4e49\u65f6\u95f4</option>' +
+        '</select>';
+      toolbar.insertBefore(rangeGroup, syncBtn);
+    }
+
+    let customDates = document.getElementById('cs-sync-custom-dates');
+    if (!customDates) {
+      customDates = document.createElement('div');
+      customDates.id = 'cs-sync-custom-dates';
+      customDates.style.display = 'none';
+      customDates.style.gap = '12px';
+      customDates.style.alignItems = 'flex-end';
+      customDates.style.flexWrap = 'wrap';
+      customDates.innerHTML = '' +
+        '<div class="toolbar-group">' +
+          '<label>\u5f00\u59cb\u65f6\u95f4</label>' +
+          '<input type="datetime-local" class="text-input" id="cs-sync-start" style="width:200px">' +
+        '</div>' +
+        '<div class="toolbar-group">' +
+          '<label>\u7ed3\u675f\u65f6\u95f4</label>' +
+          '<input type="datetime-local" class="text-input" id="cs-sync-end" style="width:200px">' +
+        '</div>';
+      toolbar.insertBefore(customDates, syncBtn);
+    }
+
+    const deviceSelect = document.getElementById('cs-device-select');
+    if (deviceSelect) {
+      deviceSelect.style.width = '320px';
+      deviceSelect.style.minHeight = '46px';
+    }
+    const syncRange = document.getElementById('cs-sync-range-preset');
+    if (syncRange) syncRange.style.minHeight = '46px';
+
+    let actionGroup = document.getElementById('cs-sync-action-group');
+    if (!actionGroup) {
+      actionGroup = document.createElement('div');
+      actionGroup.className = 'toolbar-group';
+      actionGroup.id = 'cs-sync-action-group';
+      actionGroup.innerHTML = '<label>\u64cd\u4f5c</label>';
+      toolbar.insertBefore(actionGroup, syncBtn);
+      actionGroup.appendChild(syncBtn);
+    }
+    syncBtn.style.height = '46px';
+    syncBtn.style.padding = '0 24px';
+
+    this.onCloudSyncRangePresetChange();
+  },
+
+  onCloudSyncRangePresetChange() {
+    const preset = document.getElementById('cs-sync-range-preset')?.value || '24h';
+    const customArea = document.getElementById('cs-sync-custom-dates');
+    if (!customArea) return;
+    if (preset === 'custom') {
+      customArea.style.display = 'flex';
+      const now = new Date();
+      const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const fmt = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      const startInput = document.getElementById('cs-sync-start');
+      const endInput = document.getElementById('cs-sync-end');
+      if (startInput && !startInput.value) startInput.value = fmt(yesterday);
+      if (endInput && !endInput.value) endInput.value = fmt(now);
+    } else {
+      customArea.style.display = 'none';
+    }
   },
 
   _normalizeCloudHistoryFilterUI() {
@@ -2466,6 +2558,7 @@ const app = {
     const filterGroup = container?.closest('.toolbar-group');
     const applyButton = document.querySelector('button[onclick="app.applyCloudFilters()"]');
     if (configBar) {
+      configBar.classList.add('cloud-hist-config-row');
       configBar.style.display = 'flex';
       configBar.style.alignItems = 'flex-end';
       configBar.style.gap = '16px';
@@ -2475,13 +2568,22 @@ const app = {
       if (filterGroup && filterGroup.parentElement !== configBar) configBar.appendChild(filterGroup);
     }
     if (rangeGroup) {
+      rangeGroup.classList.add('cloud-hist-field');
       rangeGroup.style.flex = '0 0 240px';
       if (preset) preset.style.width = '240px';
+      if (preset) preset.style.minHeight = '46px';
     }
     if (customDates) customDates.style.alignItems = 'flex-end';
     if (filterGroup && filterGroup !== rangeGroup) {
+      filterGroup.classList.add('cloud-hist-field');
       filterGroup.style.flex = '1';
       filterGroup.style.minWidth = '260px';
+      if (container) {
+        container.classList.add('cloud-hist-factor-box');
+        container.style.minHeight = '46px';
+        container.style.height = 'auto';
+        container.style.alignItems = 'center';
+      }
     }
     if (applyButton) applyButton.remove();
     const panelTitle = document.querySelector('#page-cloudsync .panel-title .fa-sliders')?.closest('.panel-title');
@@ -2536,15 +2638,21 @@ const app = {
   async syncCloudHistory() {
     const deviceId = document.getElementById('cs-device-select')?.value;
     if (!deviceId) { UI.toast('\u8bf7\u5148\u9009\u62e9\u4e00\u4e2a\u8981\u540c\u6b65\u7684\u8bbe\u5907', 'warning'); return; }
-    const preset = document.getElementById('cloud-hist-range-preset')?.value || '24h';
+    const preset = document.getElementById('cs-sync-range-preset')?.value || '24h';
     const fmt = d => {
       const pad = n => String(n).padStart(2, '0');
       return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':00';
     };
     let startTime, endTime;
     if (preset === 'custom') {
-      startTime = document.getElementById('cloud-hist-start').value.replace('T', ' ') + ':00';
-      endTime = document.getElementById('cloud-hist-end').value.replace('T', ' ') + ':00';
+      const startValue = document.getElementById('cs-sync-start')?.value;
+      const endValue = document.getElementById('cs-sync-end')?.value;
+      if (!startValue || !endValue) {
+        UI.toast('\u8bf7\u5148\u586b\u5199\u8865\u5145\u7684\u81ea\u5b9a\u4e49\u65f6\u95f4\u8303\u56f4', 'warning');
+        return;
+      }
+      startTime = startValue.replace('T', ' ') + ':00';
+      endTime = endValue.replace('T', ' ') + ':00';
     } else {
       const now = new Date();
       const hours = preset === '7d' ? 7 * 24 : preset === '30d' ? 30 * 24 : 24;
@@ -2573,7 +2681,7 @@ const app = {
     if (!container) return;
     const sorted = Array.from(factors).sort();
     if (!sorted.length) {
-      container.innerHTML = '<span style="color:var(--text-muted);font-size:12px;padding:10px">\u6682\u65e0\u672c\u5730\u5386\u53f2\u8bb0\u5f55</span>';
+      container.innerHTML = '<span style="display:block;width:100%;line-height:30px;padding:0 12px;color:var(--text-muted);font-size:12px;text-align:left">\u6682\u65e0\u672c\u5730\u5386\u53f2\u8bb0\u5f55</span>';
       return;
     }
     container.innerHTML = sorted.map(f => '<label><input type="checkbox" class="factor-checkbox" value="' + this.sanitize(f) + '" ' + (this._selectedFactors.has(f) ? 'checked' : '') + ' onchange="app.applyCloudFilters(true)"> ' + this.sanitize(f) + '</label>').join('');
