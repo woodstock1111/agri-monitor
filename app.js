@@ -144,6 +144,13 @@ const Store = {
     localStorage.setItem('agri_' + key, JSON.stringify(val));
     globalThis.SyncService?.schedulePush?.();
   },
+  _serverRealtime: {},
+  _deviceRows: {},
+
+  getDeviceRealtime(id) { return this._serverRealtime[id] || null; },
+  updateDeviceRealtime(id, rt) { this._serverRealtime[id] = rt; },
+  getDeviceHistoryRows(id) { return this._deviceRows[id] || null; },
+  updateDeviceHistoryRows(id, rows) { this._deviceRows[id] = Array.isArray(rows) ? rows : []; },
 
   getLocations()       { return this._get('locations', defaultLocations()); },
   saveLocations(d)     { this._set('locations', d); },
@@ -169,6 +176,27 @@ const Store = {
     localStorage.setItem('agri_automations', JSON.stringify(snapshot.automations || []));
     localStorage.setItem('agri_autoLog', JSON.stringify(snapshot.autoLog || []));
     localStorage.setItem('agri_history', JSON.stringify(snapshot.history || {}));
+    this._serverRealtime = snapshot.serverRealtime || {};
+
+    const byDevice = {};
+    for (const item of (snapshot.sensorReadings || [])) {
+      if (!item || !item.deviceId) continue;
+      if (!byDevice[item.deviceId]) byDevice[item.deviceId] = [];
+      byDevice[item.deviceId].push({
+        ts: item.deviceTimestamp,
+        deviceTimestamp: item.deviceTimestamp,
+        recordTimeStr: item.recordTimeStr || null,
+        receivedAt: item.receivedAt,
+        values: item.externalValues || {},
+        channelValues: item.values || {},
+        readingId: item.id,
+        source: item.source,
+      });
+    }
+    for (const deviceId of Object.keys(byDevice)) {
+      byDevice[deviceId].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    }
+    this._deviceRows = byDevice;
   },
 };
 
@@ -178,7 +206,7 @@ const SyncService = {
   _bootstrapped: false,
 
   isEnabled() {
-    // Always sync to backend when page is served over http(s) â€” the old
+    // Always sync to backend when page is served over http(s) â€?the old
     // "local" mode used frontend-only storage, which doesn't apply anymore
     // now that the backend is the source of truth for devices and readings.
     return window.location.protocol !== 'file:';
@@ -438,8 +466,9 @@ const BackendAdapter = {
     };
   },
 
-  async getDeviceRealtime(deviceId) {
-    const res = await fetch(`${this.getEndpointMap().deviceRealtime}?deviceId=${encodeURIComponent(deviceId)}`, {
+  async getDeviceRealtime(deviceId, options = {}) {
+    const force = options.force === true ? '&force=true' : '';
+    const res = await fetch(`${this.getEndpointMap().deviceRealtime}?deviceId=${encodeURIComponent(deviceId)}${force}`, {
       headers: AuthService.authHeaders(),
     });
     if (!res.ok) throw new Error(`realtime ${res.status}`);
@@ -650,143 +679,42 @@ const SensorEngine = {
 // CLOUD PLATFORM API CLIENT
 // ====================================================
 const CloudAPI = {
-  _proxyBase: '/proxy',  // Local proxy prefix
-  _token: null,
-  _tokenExpiry: 0,
-  _credentials: null,    // { loginName, password, apiUrl }
-  _tokenCache: {},
-
-  // Load saved credentials from localStorage
-  loadCredentials() {
-    try {
-      this._credentials = JSON.parse(localStorage.getItem('agri_cloud_creds'));
-    } catch { this._credentials = null; }
-    return this._credentials;
-  },
-
-  saveCredentials(loginName, password, apiUrl) {
-    this._credentials = { loginName, password, apiUrl: apiUrl || 'http://www.0531yun.com' };
-    localStorage.setItem('agri_cloud_creds', JSON.stringify(this._credentials));
-  },
-
-  clearCredentials() {
-    this._credentials = null;
-    this._token = null;
-    this._tokenExpiry = 0;
-    localStorage.removeItem('agri_cloud_creds');
-  },
-
-  isConfigured() {
-    return !!(this._credentials || this.loadCredentials());
-  },
-
-  _buildProxyHeaders(extra = {}) {
-    const apiUrl = this._credentials?.apiUrl || 'http://www.0531yun.com';
-    return { 'x-target-base': apiUrl, ...extra };
-  },
-
-  getProxyBase() {
-    return DataRepository.getRuntimeConfig().proxyBaseUrl || this._proxyBase;
-  },
-
-  // Authenticate and get token
-  async authenticate(loginName, password) {
-    const url = `${this.getProxyBase()}/api/getToken?loginName=${encodeURIComponent(loginName)}&password=${encodeURIComponent(password)}`;
-    const res = await fetch(url, { headers: this._buildProxyHeaders() });
-    const json = await res.json();
-    if (json.code !== 1000) throw new Error(json.message || '\u8ba4\u8bc1\u5931\u8d25');
-    this._token = json.data.token;
-    this._tokenExpiry = json.data.expiration * 1000; // Convert to ms
-    return json.data;
-  },
-
-  _makeCredKey(creds) {
-    return `${creds.loginName}@@${creds.apiUrl || 'http://www.0531yun.com'}`;
-  },
-
-  async authenticateWith(creds) {
-    const safeCreds = {
-      loginName: creds.loginName,
-      password: creds.password,
-      apiUrl: creds.apiUrl || 'http://www.0531yun.com',
-    };
-    const cacheKey = this._makeCredKey(safeCreds);
-    const cached = this._tokenCache[cacheKey];
-    if (cached && Date.now() < cached.expiry - 60000) return cached.token;
-    const previous = this._credentials;
-    try {
-      this._credentials = safeCreds;
-      const auth = await this.authenticate(safeCreds.loginName, safeCreds.password);
-      this._tokenCache[cacheKey] = {
-        token: auth.token,
-        expiry: auth.expiration * 1000,
-      };
-      return auth.token;
-    } finally {
-      this._credentials = previous;
-    }
-  },
-
-  // Ensure token is valid, refresh if needed
-  async ensureToken() {
-    if (!this._credentials) this.loadCredentials();
-    if (!this._credentials) throw new Error('\u672a\u914d\u7f6e\u8bc6\u522b\u7801');
-    if (this._token && Date.now() < this._tokenExpiry - 60000) return; // 1min buffer
-    await this.authenticate(this._credentials.loginName, this._credentials.password);
-  },
-
-  // Generic API request with auth
   async request(endpoint, params = {}) {
-    await this.ensureToken();
-    const qs = new URLSearchParams(params).toString();
-    const url = `${this.getProxyBase()}${endpoint}${qs ? '?' + qs : ''}`;
-    const res = await fetch(url, { headers: this._buildProxyHeaders({ authorization: this._token }) });
-    const json = await res.json();
-    if (json.code !== 1000) throw new Error(json.message || 'API Error');
-    return json.data;
-  },
-
-  async requestWithCredentials(credentials, endpoint, params = {}) {
-    const creds = {
-      loginName: credentials.loginName,
-      password: credentials.password,
-      apiUrl: credentials.apiUrl || 'http://www.0531yun.com',
-    };
-    if (!creds.loginName || !creds.password) throw new Error('\u7f3a\u5c11\u8bbe\u5907\u8bc6\u522b\u914d\u7f6e');
-    const token = await this.authenticateWith(creds);
-    const qs = new URLSearchParams(params).toString();
-    const url = `${this.getProxyBase()}${endpoint}${qs ? '?' + qs : ''}`;
-    const res = await fetch(url, {
-      headers: {
-        'authorization': token,
-        'x-target-base': creds.apiUrl,
-      },
-    });
-    const json = await res.json();
-    if (json.code !== 1000) throw new Error(json.message || 'API Error');
-    return json.data;
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== '')
+    ).toString();
+    const path = endpoint.startsWith('/api/v1/') ? endpoint : `/api/v1${endpoint}`;
+    const url = `${path}${qs ? '?' + qs : ''}`;
+    const res = await fetch(url, { headers: AuthService.authHeaders() });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.ok === false) throw new Error(json.msg || json.message || 'API Error');
+    return json;
   },
 
   // Get all devices under the account
-  async getDeviceList() {
-    return await this.request('/api/device/getDeviceList');
+  async getDeviceList(accessCode, apiUrl = 'http://www.0531yun.com') {
+    const data = await this.request('/cloud-devices', { accessCode, apiUrl });
+    return data.devices || [];
   },
 
   // Get real-time data for a device
   async getRealTimeData(deviceAddr) {
-    const data = await this.request('/api/data/getRealTimeDataByDeviceAddr', { deviceAddrs: deviceAddr });
-    return data && data.length > 0 ? data[0] : null;
+    return await this.request('/device-realtime', { deviceId: String(deviceAddr) });
   },
 
   // Get device info (with factors/thresholds)
   async getDeviceInfo(deviceAddr) {
-    return await this.request('/api/device/getDevice', { deviceAddr });
+    const devices = DataRepository.listDevices();
+    return devices.find(item => String(item.id) === String(deviceAddr) || String(item.apiConfig?.deviceAddr || '') === String(deviceAddr)) || null;
   },
 
   // Get historical data
   async getHistoryData(deviceAddr, startTime, endTime, nodeId = -1) {
-    return await this.request('/api/data/historyList', {
-      deviceAddr, nodeId, startTime, endTime
+    return await this.request('/device-history', {
+      deviceId: String(deviceAddr),
+      startTime,
+      endTime,
+      nodeId
     });
   },
 
@@ -794,28 +722,12 @@ const CloudAPI = {
   async fetchAndCacheRealTime(deviceAddr) {
     try {
       const rtData = await this.getRealTimeData(deviceAddr);
-      if (rtData && rtData.dataItem) {
-        SensorEngine.setApiData(deviceAddr, rtData.dataItem, rtData.timeStamp);
+      if (rtData && rtData.dataItems) {
+        SensorEngine.setApiData(deviceAddr, rtData.dataItems, rtData.deviceTimestamp || rtData.timestamp || Date.now());
         return rtData;
       }
     } catch (err) {
       console.warn(`[CloudAPI] Failed to fetch data for ${deviceAddr}:`, err.message);
-    }
-    return null;
-  },
-
-  async fetchAndCacheRealTimeWithConfig(apiConfig) {
-    try {
-      const data = await this.requestWithCredentials(apiConfig, '/api/data/getRealTimeDataByDeviceAddr', {
-        deviceAddrs: apiConfig.deviceAddr,
-      });
-      const rtData = data && data.length > 0 ? data[0] : null;
-      if (rtData && rtData.dataItem) {
-        SensorEngine.setApiData(apiConfig.deviceAddr, rtData.dataItem, rtData.timeStamp);
-        return rtData;
-      }
-    } catch (err) {
-      console.warn(`[CloudAPI] Failed to fetch data for ${apiConfig.deviceAddr}:`, err.message);
     }
     return null;
   },
@@ -884,6 +796,8 @@ const app = {
   _accounts: [],
   _cloudHistoryData: [],
   _selectedFactors: new Set(),
+  _historyLoading: false,
+  _historyRefreshQueued: false,
 
   //     BOOT    
   async init() {
@@ -1141,7 +1055,7 @@ const app = {
 
     if (!this.dashMap) {
       this.dashMap = L.map('dash-map', { zoomControl: true, attributionControl: true }).setView([20.044,110.199], 15);
-      // Amap tile layers â€” no API key required for these public endpoints
+      // Amap tile layers â€?no API key required for these public endpoints
       this._mapLayers = {
         standard: L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
           subdomains: '1234',
@@ -1397,10 +1311,10 @@ const app = {
     const id = document.getElementById('rt-refresh-btn')?.dataset.deviceId;
     if (!id) return;
     const dev = DataRepository.listDevices().find(d => d.id === id);
-    if (dev?.type === 'sensor_soil_api') this._renderApiDeviceRealtime(dev);
+    if (dev?.type === 'sensor_soil_api') this._renderApiDeviceRealtime(dev, { force: true });
   },
 
-  // Simulated sensor tick â€” cloud API devices use _renderApiDeviceRealtime instead
+  // Simulated sensor tick â€?cloud API devices use _renderApiDeviceRealtime instead
   updateSensors(deviceId) {
     const dev = DataRepository.listDevices().find(d => d.id === deviceId);
     if (!dev || dev.type === 'sensor_soil_api') return;
@@ -1467,27 +1381,39 @@ const app = {
   },
 
   // Fetch latest + last 10 readings for a cloud API device and render them
-  async _renderApiDeviceRealtime(dev) {
+  async _renderApiDeviceRealtime(dev, options = {}) {
     const grid = document.getElementById('sensor-grid');
     const addr = String(dev.apiConfig?.deviceAddr || '');
-    if (grid) grid.innerHTML = `
-      <div class="cloud-loading" style="grid-column:1/-1">
-        <div class="cloud-spinner"></div>
-        <div>\u6b63\u5728\u83b7\u53d6\u4f20\u611f\u5668\u6570\u636e...</div>
-      </div>`;
+    const force = options.force === true;
+
+    if (force) {
+      if (grid) grid.innerHTML = `
+        <div class="cloud-loading" style="grid-column:1/-1">
+          <div class="cloud-spinner"></div>
+          <div>\u6b63\u5728\u83b7\u53d6\u4f20\u611f\u5668\u6570\u636e...</div>
+        </div>`;
+    }
     try {
-      // Fetch latest realtime state and full history in parallel
-      const [rtData, histData] = await Promise.all([
-        BackendAdapter.getDeviceRealtime(dev.id),
-        BackendAdapter.getDeviceHistory(dev.id),
-      ]);
-      // Last 10 readings, newest first
-      const lastReadings = (histData?.rows || []).slice(-10).reverse();
+      let rtData;
+      let rows;
+
+      if (force) {
+        // Sequential: wait for force fetch to save to DB before reading history
+        rtData = await BackendAdapter.getDeviceRealtime(dev.id, { force: true });
+        const freshHist = await BackendAdapter.getDeviceHistory(dev.id);
+        rows = freshHist?.rows || [];
+        if (rtData) Store.updateDeviceRealtime(dev.id, rtData);
+        Store.updateDeviceHistoryRows(dev.id, rows);
+      } else {
+        rtData = Store.getDeviceRealtime(dev.id) || { ok: false };
+        rows = Store.getDeviceHistoryRows(dev.id) || [];
+      }
+
+      const lastReadings = rows.slice(-10).reverse();
 
       if (rtData?.ok && rtData?.dataItems?.length) {
         this._renderApiSensorCards(dev, rtData);
       } else if (lastReadings.length) {
-        // Fall back to most recent stored reading if no fresh realtime data
         const latest = lastReadings[0];
         const timeStr = new Date(latest.ts || latest.deviceTimestamp || 0).toLocaleString('zh-CN');
         if (grid) grid.innerHTML = `
@@ -1613,6 +1539,12 @@ const app = {
     this.refreshHistoryCharts();
   },
   async refreshHistoryCharts() {
+    if (this._historyLoading) {
+      this._historyRefreshQueued = true;
+      return;
+    }
+    this._historyLoading = true;
+    try {
     const range = document.getElementById('hist-range')?.value || '24h';
     const deviceId = document.getElementById('hist-device-select')?.value;
     const device = DataRepository.listDevices().find(item => item.id === deviceId);
@@ -1622,12 +1554,7 @@ const app = {
     // Load history rows: { ts, values: { channelName: value } }
     let rows = [];
     if (device?.type === 'sensor_soil_api') {
-      try {
-        const res = await BackendAdapter.getDeviceHistory(deviceId);
-        rows = res?.rows || [];
-      } catch (err) {
-        console.warn('[History fetch]', err.message);
-      }
+      rows = Store.getDeviceHistoryRows(deviceId) || [];
     } else {
       rows = deviceId ? HistoryStore.getDeviceRecords(deviceId) : [];
     }
@@ -1710,7 +1637,7 @@ const app = {
     // Destroy all old chart instances under hist- prefix
     Object.keys(ChartHelper._i || {}).filter(k => k.startsWith('hist-')).forEach(k => ChartHelper.destroy(k));
 
-    // Rebuild chart grid dynamically â€” one panel per channel
+    // Rebuild chart grid dynamically â€?one panel per channel
     grid.innerHTML = channels.map((ch, i) => `
       <div class="glass-panel">
         <div class="panel-header"><span class="panel-title">${PARAM_DISPLAY[ch] || ch}</span></div>
@@ -1731,6 +1658,13 @@ const app = {
         spanGaps: true,
       }]);
     });
+    } finally {
+      this._historyLoading = false;
+      if (this._historyRefreshQueued) {
+        this._historyRefreshQueued = false;
+        setTimeout(() => this.refreshHistoryCharts(), 0);
+      }
+    }
   },
 
   //     PEST DB    
@@ -2628,24 +2562,20 @@ const app = {
       this._renderCloudHistoryTable();
       return;
     }
-    try {
-      const res = await BackendAdapter.getDeviceHistory(deviceId);
-      this._cloudHistoryData = (res.rows || []).map(r => {
-        const d = new Date(r.deviceTimestamp || r.ts || r.timestamp);
-        const pad = n => String(n).padStart(2, '0');
-        const fallbackTime = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
-        return {
-          ts: d.getTime(),
-          time: r.recordTimeStr ? String(r.recordTimeStr) : fallbackTime,
-          values: r.values || {},
-        };
-      }).reverse();
-      this._selectedFactors = new Set();
-      this._updateFactorCheckboxes();
-      this._renderCloudHistoryTable();
-    } catch (err) {
-      console.warn('[Cloud history load]', err.message);
-    }
+    const rows = Store.getDeviceHistoryRows(deviceId) || [];
+    this._cloudHistoryData = rows.map(r => {
+      const d = new Date(r.deviceTimestamp || r.ts || r.timestamp);
+      const pad = n => String(n).padStart(2, '0');
+      const fallbackTime = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+      return {
+        ts: d.getTime(),
+        time: r.recordTimeStr ? String(r.recordTimeStr) : fallbackTime,
+        values: r.values || {},
+      };
+    }).reverse();
+    this._selectedFactors = new Set();
+    this._updateFactorCheckboxes();
+    this._renderCloudHistoryTable();
   },
 
   async syncCloudHistory() {
@@ -2678,6 +2608,10 @@ const app = {
       const res = await fetch('/api/v1/cloud-history-sync?deviceId=' + encodeURIComponent(deviceId) + '&startTime=' + encodeURIComponent(startTime) + '&endTime=' + encodeURIComponent(endTime), { headers: AuthService.authHeaders() });
       const result = await res.json();
       if (!result.ok) throw new Error(result.msg || '\u65e0\u6cd5\u8fde\u63a5\u5230\u4e91\u5e73\u53f0\u6216\u65e0\u6570\u636e');
+      try {
+        const fresh = await BackendAdapter.getDeviceHistory(deviceId);
+        Store.updateDeviceHistoryRows(deviceId, fresh?.rows || []);
+      } catch (_) {}
       await this.onCloudDeviceChange();
       UI.toast('\u6210\u529f\u8865\u5145 ' + (result.inserted || 0) + ' \u6761\u65b0\u8bb0\u5f55', 'success');
     } catch (err) {
@@ -2771,11 +2705,6 @@ const app = {
     document.getElementById('cloud-step-devices').style.display = 'none';
     document.getElementById('cloud-import-btn').style.display = 'none';
     this.clearCloudError();
-    // Pre-fill saved credentials
-    const creds = CloudAPI.loadCredentials();
-    if (creds) {
-      document.getElementById('cloud-access-code').value = creds.loginName || '';
-    }
     this._cloudSelected = new Set();
     this._cloudRenameMap = {};
     this.openModal('cloud');
@@ -2797,8 +2726,6 @@ const app = {
 
   async cloudLogin() {
     const accessCode = document.getElementById('cloud-access-code').value.trim();
-    const username = accessCode;
-    const password = accessCode;
     const apiUrl = 'http://www.0531yun.com';
     const btn = document.getElementById('cloud-login-btn');
 
@@ -2812,12 +2739,7 @@ const app = {
     btn.innerHTML = '<div class="cloud-spinner" style="width:18px;height:18px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px"></div> \u6b63\u5728\u8bc6\u522b...';
 
     try {
-      // Save credentials and authenticate
-      CloudAPI.saveCredentials(username, password, apiUrl);
-      await CloudAPI.authenticate(username, password);
-
-      // Fetch device list
-      const devices = await CloudAPI.getDeviceList();
+      const devices = await CloudAPI.getDeviceList(accessCode, apiUrl);
       this._cloudDevices = devices || [];
 
       this._showCloudDeviceList(accessCode);
@@ -2985,7 +2907,6 @@ const app = {
     }
     const locationId = document.getElementById('cloud-import-location')?.value || '';
     const devices = DataRepository.listDevices();
-    const creds = CloudAPI.loadCredentials();
 
     const importedIds = [];
     this._cloudSelected.forEach(addr => {
@@ -3010,9 +2931,9 @@ const app = {
         lng: cloudDev.lng || 0,
         apiConfig: {
           deviceAddr: String(addr),
-          loginName: creds?.loginName || '',
-          password: creds?.password || '',
-          apiUrl: creds?.apiUrl || 'http://www.0531yun.com',
+          loginName: cloudDev.apiConfig?.loginName || '',
+          password: cloudDev.apiConfig?.password || '',
+          apiUrl: cloudDev.apiConfig?.apiUrl || 'http://www.0531yun.com',
           factors: cloudDev.factors || [],
         },
       };

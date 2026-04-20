@@ -14,6 +14,14 @@ const TOKEN_TTL_SECONDS = 8 * 60 * 60;
 const MAX_SENSOR_READINGS = 100000;
 const MAX_RAW_PAYLOADS = 10000;
 const CLOUD_POLL_INTERVAL_MS = Number(process.env.CLOUD_POLL_INTERVAL_MS || 5 * 60 * 1000);
+const WRITE_DEBOUNCE_MS = 1000;
+
+let cachedState = null;
+let writeTimeout = null;
+let isDirty = false;
+let isShuttingDown = false;
+let isSyncInProgress = false;
+let signatureSet = new Set();
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -158,25 +166,79 @@ function normalizeState(raw = {}) {
 }
 
 function readState() {
+    if (cachedState) return cachedState;
     try {
         const raw = fs.existsSync(STATE_FILE)
             ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
             : emptyState();
         const { state, changed } = normalizeState(raw);
+        cachedState = state;
+        signatureSet = new Set((cachedState.sensorReadings || []).map(item => item.signature).filter(Boolean));
         if (changed) writeState(state);
-        return state;
+        return cachedState;
     } catch (error) {
         console.error('[State] read failed:', error.message);
         const { state } = normalizeState(emptyState());
-        return state;
+        cachedState = state;
+        signatureSet = new Set((cachedState.sensorReadings || []).map(item => item.signature).filter(Boolean));
+        return cachedState;
+    }
+}
+
+async function flushToDisk() {
+    writeTimeout = null;
+    if (!isDirty || !cachedState) return;
+    isDirty = false;
+    try {
+        await fs.promises.writeFile(STATE_FILE, JSON.stringify(cachedState), 'utf8');
+        console.log('[Storage] State flushed to disk.');
+    } catch (error) {
+        console.error('[Storage] flush failed:', error.message);
+        isDirty = true;
+    } finally {
+        if (isDirty && !writeTimeout && !isShuttingDown) {
+            writeTimeout = setTimeout(() => {
+                void flushToDisk();
+            }, WRITE_DEBOUNCE_MS);
+        }
     }
 }
 
 function writeState(data) {
-    const tmp = `${STATE_FILE}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf8');
-    fs.renameSync(tmp, STATE_FILE);
+    cachedState = data;
+    isDirty = true;
+    if (writeTimeout) return;
+    writeTimeout = setTimeout(() => {
+        void flushToDisk();
+    }, WRITE_DEBOUNCE_MS);
 }
+
+function flushSyncBeforeExit(signal) {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    if (writeTimeout) {
+        clearTimeout(writeTimeout);
+        writeTimeout = null;
+    }
+    if (!isDirty || !cachedState) return;
+    try {
+        fs.writeFileSync(STATE_FILE, JSON.stringify(cachedState), 'utf8');
+        isDirty = false;
+        console.log(`[Storage] Final synchronous flush before ${signal}.`);
+    } catch (error) {
+        console.error('[Storage] final flush failed:', error.message);
+    }
+}
+
+process.on('SIGINT', () => {
+    flushSyncBeforeExit('SIGINT');
+    process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+    flushSyncBeforeExit('SIGTERM');
+    process.exit(0);
+});
 
 function publicUser(user) {
     if (!user) return null;
@@ -340,6 +402,16 @@ function parseCloudRecordTime(value) {
     if (typeof value === 'number') return value;
     const parsed = new Date(String(value).trim().replace(' ', 'T')).getTime();
     return Number.isFinite(parsed) ? parsed : Date.now();
+}
+
+function parseQueryTime(value, fallback) {
+    if (value === undefined || value === null || value === '') return fallback;
+    const text = String(value).trim();
+    if (!text) return fallback;
+    const asNumber = Number(text);
+    if (Number.isFinite(asNumber)) return asNumber;
+    const parsed = new Date(text.replace(' ', 'T')).getTime();
+    return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 async function fetchCloudRealtime(dev, token) {
@@ -572,7 +644,11 @@ function extractExternalValues(row) {
 function cloudRowChanged(state, dev, row) {
     const deviceTimestamp = Number(row.timeStamp) || Date.now();
     const latest = state.realtimeState?.[dev.id];
-    if (!latest || latest.deviceTimestamp !== deviceTimestamp) return true;
+    if (!latest) return true;
+    // Cloud history API can lag behind realtime API ¡ª skip records strictly older than
+    // what we already have, otherwise a lagging history poll downgrades serverRealtime.
+    if (deviceTimestamp < latest.deviceTimestamp) return false;
+    if (deviceTimestamp !== latest.deviceTimestamp) return true;
     const nextValues = extractExternalValues(row);
     return JSON.stringify(latest.externalValues || {}) !== JSON.stringify(nextValues);
 }
@@ -584,10 +660,12 @@ function readingSignature(record) {
 
 function appendPlatformReading(state, record) {
     const signature = readingSignature(record);
-    if (state.sensorReadings.some(item => item.signature === signature)) return false;
+    if (signatureSet.has(signature)) return false;
     state.sensorReadings.push({ ...record, signature });
+    signatureSet.add(signature);
     if (state.sensorReadings.length > MAX_SENSOR_READINGS) {
         state.sensorReadings = state.sensorReadings.slice(-MAX_SENSOR_READINGS);
+        signatureSet = new Set((state.sensorReadings || []).map(item => item.signature).filter(Boolean));
     }
     if (!state.history[record.deviceId]) state.history[record.deviceId] = [];
     state.history[record.deviceId].push({
@@ -811,142 +889,224 @@ const server = http.createServer(async (req, res) => {
             return sendJson(200, operationalSnapshot(auth.state, auth.user));
         }
 
+        if (pathname === '/api/v1/cloud-devices') {
+            const auth = requireAuth();
+            if (!auth) return;
+            const accessCode = String(query.accessCode || '').trim();
+            const apiUrl = String(query.apiUrl || DEFAULT_TARGET_BASE).trim() || DEFAULT_TARGET_BASE;
+            if (!accessCode) return sendJson(400, { ok: false, msg: 'accessCode is required' });
+            try {
+                const token = await getCloudToken(accessCode, accessCode, apiUrl);
+                const listUrl = `${apiUrl.replace(/\/+$/, '')}/api/device/getDeviceList`;
+                const response = await requestJson(listUrl, {
+                    method: 'GET',
+                    headers: { authorization: token },
+                });
+                if (response.data?.code !== 1000 || !Array.isArray(response.data.data)) {
+                    return sendJson(502, { ok: false, msg: response.data?.message || 'Failed to fetch cloud devices' });
+                }
+                const devices = response.data.data.map(item => ({
+                    ...item,
+                    apiConfig: {
+                        deviceAddr: String(item.deviceAddr || ''),
+                        loginName: accessCode,
+                        password: accessCode,
+                        apiUrl,
+                        factors: item.factors || [],
+                    },
+                }));
+                return sendJson(200, { ok: true, devices });
+            } catch (error) {
+                return sendJson(502, { ok: false, msg: error.message || 'Cloud request failed' });
+            }
+        }
+
         if (pathname === '/api/v1/device-realtime') {
             const auth = requireAuth();
             if (!auth) return;
-            const deviceId = query.deviceId;
-            let rt = auth.state.serverRealtime?.[deviceId];
+            const deviceId = String(query.deviceId || '').trim();
+            if (!deviceId) return sendJson(400, { ok: false, msg: 'deviceId is required' });
 
-            if ((!rt || !rt.ok) && deviceId) {
-                const dev = (auth.state.devices || []).find(d => d.id === deviceId);
-                if (dev && dev.type === 'sensor_soil_api' && dev.apiConfig) {
-                    try {
-                        const c = dev.apiConfig;
-                        const token = await getCloudToken(c.loginName, c.password, c.apiUrl);
-                        const realtimeRow = await fetchCloudRealtime(dev, token);
-                        if (realtimeRow) {
-                            const current = readState();
-                            const record = normalizePlatformCloudRow(current, dev, realtimeRow, 'cloud-live-fetch');
-                            appendPlatformReading(current, record);
-                            updatePlatformRealtime(current, dev, record, realtimeRow.dataItem || []);
-                            rt = current.serverRealtime[deviceId];
-                            const dIdx = current.devices.findIndex(x => x.id === deviceId);
-                            if (dIdx >= 0) current.devices[dIdx].online = true;
-                            writeState(current);
-                        }
-                    } catch (e) {
-                        console.error('[LiveFetch Error]', e.message);
+            const scopedDevices = auth.user.role === 'platform_admin'
+                ? (auth.state.devices || [])
+                : (auth.state.devices || []).filter(item => !item.tenantId || item.tenantId === auth.user.tenantId);
+            const dev = scopedDevices.find(d => d.id === deviceId);
+            if (!dev) return sendJson(404, { ok: false, msg: 'Device not found' });
+
+            let rt = auth.state.serverRealtime?.[deviceId];
+            const force = String(query.force || '').toLowerCase() === 'true';
+            if (force && dev.type === 'sensor_soil_api' && dev.apiConfig) {
+                try {
+                    const c = dev.apiConfig;
+                    const token = await getCloudToken(c.loginName, c.password, c.apiUrl);
+                    const realtimeRow = await fetchCloudRealtime(dev, token);
+                    if (realtimeRow) {
+                        const current = readState();
+                        const record = normalizePlatformCloudRow(current, dev, realtimeRow, 'cloud-live-fetch');
+                        appendPlatformReading(current, record);
+                        updatePlatformRealtime(current, dev, record, realtimeRow.dataItem || []);
+                        rt = current.serverRealtime?.[deviceId] || rt;
+                        const dIdx = current.devices.findIndex(x => x.id === deviceId);
+                        if (dIdx >= 0) current.devices[dIdx].online = true;
+                        writeState(current);
                     }
+                } catch (e) {
+                    console.error('[LiveFetch Error]', e.message);
                 }
             }
 
-            return sendJson(200, rt || { ok: false });
+            return sendJson(200, rt || { ok: false, msg: 'No realtime data yet' });
         }
 
         if (pathname === '/api/v1/device-history') {
             const auth = requireAuth();
             if (!auth) return;
-            const rows = (auth.state.sensorReadings || [])
-                .filter(item => item.deviceId === query.deviceId)
-                .sort((a, b) => a.deviceTimestamp - b.deviceTimestamp)
-                .map(item => ({
-                    ts: item.deviceTimestamp,
-                    deviceTimestamp: item.deviceTimestamp,
+            const deviceId = String(query.deviceId || '').trim();
+            if (!deviceId) return sendJson(400, { ok: false, msg: 'deviceId is required' });
+            const scopedDevices = auth.user.role === 'platform_admin'
+                ? (auth.state.devices || [])
+                : (auth.state.devices || []).filter(item => !item.tenantId || item.tenantId === auth.user.tenantId);
+            const dev = scopedDevices.find(d => d.id === deviceId);
+            if (!dev) return sendJson(404, { ok: false, msg: 'Device not found' });
+            const startTime = parseQueryTime(query.startTime, Number.NEGATIVE_INFINITY);
+            const endTime = parseQueryTime(query.endTime, Number.POSITIVE_INFINITY);
+            const requestedLimit = Number(query.limit);
+            const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
+                ? Math.min(Math.floor(requestedLimit), 5000)
+                : 500;
+            const order = String(query.order || 'asc').toLowerCase() === 'desc' ? 'desc' : 'asc';
+            const readings = auth.state.sensorReadings || [];
+            let rows = [];
+
+            // Scan from newest to oldest and stop when enough rows are collected.
+            for (let i = readings.length - 1; i >= 0; i -= 1) {
+                const item = readings[i];
+                if (!item || item.deviceId !== deviceId) continue;
+                const ts = Number(item.deviceTimestamp);
+                if (!Number.isFinite(ts) || ts < startTime || ts > endTime) continue;
+                rows.push({
+                    ts,
+                    deviceTimestamp: ts,
                     recordTimeStr: item.recordTimeStr || null,
                     receivedAt: item.receivedAt,
                     values: item.externalValues || {},
                     channelValues: item.values || {},
                     readingId: item.id,
                     source: item.source,
-                }));
-            return sendJson(200, { deviceId: query.deviceId, rows });
+                });
+                if (rows.length >= limit) break;
+            }
+            if (order === 'asc') rows = rows.reverse();
+            return sendJson(200, { deviceId, rows });
         }
 
         if (pathname === '/api/v1/readings') {
             const auth = requireAuth();
             if (!auth) return;
-            const deviceId = query.deviceId;
+            const deviceId = String(query.deviceId || '').trim();
             const limit = Math.min(Number(query.limit) || 500, 5000);
-            const rows = (auth.state.sensorReadings || [])
-                .filter(item => !deviceId || item.deviceId === deviceId)
-                .sort((a, b) => b.deviceTimestamp - a.deviceTimestamp)
-                .slice(0, limit);
+            const order = String(query.order || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
+            const readings = auth.state.sensorReadings || [];
+            let rows = [];
+            for (let i = readings.length - 1; i >= 0; i -= 1) {
+                const item = readings[i];
+                if (!item) continue;
+                if (deviceId && item.deviceId !== deviceId) continue;
+                rows.push(item);
+                if (rows.length >= limit) break;
+            }
+            if (order === 'asc') rows = rows.reverse();
             return sendJson(200, { ok: true, rows });
         }
 
         if (pathname === '/api/v1/cloud-history-sync') {
             const auth = requireAuth();
             if (!auth) return;
+            if (isSyncInProgress) return sendJson(429, { ok: false, msg: 'Sync already in progress' });
             const { deviceId, startTime, endTime } = query;
             const state = readState();
             const dev = (state.devices || []).find(d => d.id === deviceId);
             if (!dev) return sendJson(404, { ok: false, msg: 'Device not found' });
-            const token = await getCloudToken(dev.apiConfig.loginName, dev.apiConfig.password, dev.apiConfig.apiUrl);
-            const rtRes = await requestJson(`${dev.apiConfig.apiUrl}/api/data/getRealTimeDataByDeviceAddr?deviceAddrs=${dev.apiConfig.deviceAddr}`, { method: 'GET', headers: { 'authorization': token } });
-            let nodeIds = [1];
-            if (rtRes.data?.code === 1000 && rtRes.data.data?.[0]?.dataItem) nodeIds = rtRes.data.data[0].dataItem.map(i => i.nodeId);
+            isSyncInProgress = true;
+            try {
+                const token = await getCloudToken(dev.apiConfig.loginName, dev.apiConfig.password, dev.apiConfig.apiUrl);
+                const rtRes = await requestJson(`${dev.apiConfig.apiUrl}/api/data/getRealTimeDataByDeviceAddr?deviceAddrs=${dev.apiConfig.deviceAddr}`, { method: 'GET', headers: { 'authorization': token } });
+                let nodeIds = [1];
+                if (rtRes.data?.code === 1000 && rtRes.data.data?.[0]?.dataItem) nodeIds = rtRes.data.data[0].dataItem.map(i => i.nodeId);
 
-            const grouped = {};
-            for (const nid of nodeIds) {
-                const hRes = await requestJson(`${dev.apiConfig.apiUrl}/api/data/historyList?deviceAddr=${dev.apiConfig.deviceAddr}&nodeId=${nid}&startTime=${startTime.replace('T', ' ')}&endTime=${endTime.replace('T', ' ')}&pageSize=1000`, { method: 'GET', headers: { 'authorization': token } });
-                if (hRes.data?.code === 1000 && Array.isArray(hRes.data.data)) {
-                    hRes.data.data.forEach(box => {
-                        if (!box.recordTimeStr) return;
-                        if (!grouped[box.recordTimeStr]) grouped[box.recordTimeStr] = { time: box.recordTimeStr, values: {}, dataItemsByNode: {} };
-                        grouped[box.recordTimeStr].dataItemsByNode[nid] = grouped[box.recordTimeStr].dataItemsByNode[nid] || { nodeId: nid, registerItem: [] };
-                        (box.data || []).forEach(v => {
-                            if (!v.registerName) return;
-                            const numeric = v.value !== undefined ? Number(v.value) : Number(v.data);
-                            grouped[box.recordTimeStr].values[v.registerName] = roundReadingValue(numeric);
-                            grouped[box.recordTimeStr].dataItemsByNode[nid].registerItem.push({
-                                registerId: v.registerId,
-                                registerName: v.registerName,
-                                data: v.data !== undefined ? String(v.data) : String(numeric),
-                                value: numeric,
-                                alarmLevel: v.alarmLevel || 0,
-                                alarmColor: v.alarmColor || '',
-                                alarmInfo: v.alarmInfo || '',
-                                unit: v.unit || '',
+                const grouped = {};
+                const historyResults = await Promise.allSettled(nodeIds.map(async nid => {
+                    const hRes = await requestJson(`${dev.apiConfig.apiUrl}/api/data/historyList?deviceAddr=${dev.apiConfig.deviceAddr}&nodeId=${nid}&startTime=${startTime.replace('T', ' ')}&endTime=${endTime.replace('T', ' ')}&pageSize=1000`, { method: 'GET', headers: { 'authorization': token } });
+                    return { nid, hRes };
+                }));
+
+                historyResults.forEach(result => {
+                    if (result.status !== 'fulfilled') return;
+                    const { nid, hRes } = result.value;
+                    if (hRes.data?.code === 1000 && Array.isArray(hRes.data.data)) {
+                        hRes.data.data.forEach(box => {
+                            if (!box.recordTimeStr) return;
+                            if (!grouped[box.recordTimeStr]) grouped[box.recordTimeStr] = { time: box.recordTimeStr, values: {}, dataItemsByNode: {} };
+                            grouped[box.recordTimeStr].dataItemsByNode[nid] = grouped[box.recordTimeStr].dataItemsByNode[nid] || { nodeId: nid, registerItem: [] };
+                            (box.data || []).forEach(v => {
+                                if (!v.registerName) return;
+                                const numeric = v.value !== undefined ? Number(v.value) : Number(v.data);
+                                grouped[box.recordTimeStr].values[v.registerName] = roundReadingValue(numeric);
+                                grouped[box.recordTimeStr].dataItemsByNode[nid].registerItem.push({
+                                    registerId: v.registerId,
+                                    registerName: v.registerName,
+                                    data: v.data !== undefined ? String(v.data) : String(numeric),
+                                    value: numeric,
+                                    alarmLevel: v.alarmLevel || 0,
+                                    alarmColor: v.alarmColor || '',
+                                    alarmInfo: v.alarmInfo || '',
+                                    unit: v.unit || '',
+                                });
                             });
                         });
-                    });
-                }
-            }
-            let inserted = 0;
-            const list = Object.values(grouped).sort((a, b) => b.time.localeCompare(a.time));
-            list.forEach(item => {
-                const row = {
-                    systemCode: rtRes.data?.data?.[0]?.systemCode,
-                    deviceAddr: Number(dev.apiConfig.deviceAddr),
-                    deviceName: dev.name,
-                    lat: dev.lat,
-                    lng: dev.lng,
-                    dataItem: Object.values(item.dataItemsByNode),
-                    timeStamp: parseCloudRecordTime(item.time),
-                    recordTimeStr: item.time,
-                };
-                const record = normalizePlatformCloudRow(state, dev, row, 'cloud-history-sync');
-                if (appendPlatformReading(state, record)) inserted += 1;
-            });
-            if (list.length) {
-                const latest = list[0];
-                const latestRow = {
-                    systemCode: rtRes.data?.data?.[0]?.systemCode,
-                    deviceAddr: Number(dev.apiConfig.deviceAddr),
-                    deviceName: dev.name,
-                    lat: dev.lat,
-                    lng: dev.lng,
-                    dataItem: Object.values(latest.dataItemsByNode),
-                    timeStamp: parseCloudRecordTime(latest.time),
-                    recordTimeStr: latest.time,
-                };
-                const latestRecord = normalizePlatformCloudRow(state, dev, latestRow, 'cloud-history-sync');
-                updatePlatformRealtime(state, dev, latestRecord, latestRow.dataItem || []);
-            }
-            writeState(state);
-            return sendJson(200, { ok: true, list: list.map(item => ({ time: item.time, values: item.values })), inserted });
-        }
+                    }
+                });
 
+                let inserted = 0;
+                const list = Object.values(grouped).sort((a, b) => b.time.localeCompare(a.time));
+                list.forEach(item => {
+                    const row = {
+                        systemCode: rtRes.data?.data?.[0]?.systemCode,
+                        deviceAddr: Number(dev.apiConfig.deviceAddr),
+                        deviceName: dev.name,
+                        lat: dev.lat,
+                        lng: dev.lng,
+                        dataItem: Object.values(item.dataItemsByNode),
+                        timeStamp: parseCloudRecordTime(item.time),
+                        recordTimeStr: item.time,
+                    };
+                    const record = normalizePlatformCloudRow(state, dev, row, 'cloud-history-sync');
+                    if (appendPlatformReading(state, record)) inserted += 1;
+                });
+                if (list.length) {
+                    const latest = list[0];
+                    const latestRow = {
+                        systemCode: rtRes.data?.data?.[0]?.systemCode,
+                        deviceAddr: Number(dev.apiConfig.deviceAddr),
+                        deviceName: dev.name,
+                        lat: dev.lat,
+                        lng: dev.lng,
+                        dataItem: Object.values(latest.dataItemsByNode),
+                        timeStamp: parseCloudRecordTime(latest.time),
+                        recordTimeStr: latest.time,
+                    };
+                    const latestRecord = normalizePlatformCloudRow(state, dev, latestRow, 'cloud-history-sync');
+                    const currentRtTs = Number(state.serverRealtime?.[dev.id]?.deviceTimestamp);
+                    if (!Number.isFinite(currentRtTs) || latestRecord.deviceTimestamp >= currentRtTs) {
+                        updatePlatformRealtime(state, dev, latestRecord, latestRow.dataItem || []);
+                    }
+                }
+                writeState(state);
+                return sendJson(200, { ok: true, list: list.map(item => ({ time: item.time, values: item.values })), inserted });
+            } finally {
+                isSyncInProgress = false;
+            }
+        }
         if (pathname.startsWith('/proxy')) {
             const targetBase = (req.headers['x-target-base'] || DEFAULT_TARGET_BASE).replace(/\/+$/, '');
             const targetUrl = targetBase + pathname.replace('/proxy', '') + myUrl.search;
@@ -989,3 +1149,6 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`[SERVER] RUNNING ON ${PORT}`);
     console.log(`[AUTH] Default admin: admin / ${DEFAULT_ADMIN_PASSWORD}`);
 });
+
+
+
