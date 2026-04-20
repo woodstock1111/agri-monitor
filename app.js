@@ -884,14 +884,23 @@ const app = {
     this.currentPage = page;
     document.querySelectorAll('.nav-link').forEach(l => l.classList.toggle('active', l.dataset.page === page));
     const titles = {
-      dashboard:'\u7cfb\u7edf\u603b\u89c8', realtime:'\u5b9e\u65f6\u6570\u636e', video:'\u89c6\u9891\u76d1\u63a7', history:'\u5386\u53f2\u6570\u636e',
+      dashboard:'\u7cfb\u7edf\u603b\u89c8', realtime:'\u5b9e\u65f6\u6570\u636e', video:'\u89c6\u9891\u76d1\u63a7', history:'\u66f2\u7ebf\u56fe\u8868',
       cloudsync:'\u5386\u53f2\u8bb0\u5f55', pestdb:'\u75c5\u5bb3\u866b\u6570\u636e\u5e93', automation:'\u81ea\u52a8\u5316\u6d41\u7a0b', locations:'\u5730\u5757\u7ba1\u7406', devices:'\u8bbe\u5907\u7ba1\u7406',
       accounts:'\u8d26\u53f7\u7ba1\u7406'
     };
     document.getElementById('page-title').textContent = titles[page] || '';
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => {
+      p.style.willChange = '';
+      p.classList.remove('active');
+    });
     const el = document.getElementById('page-'+page);
-    if (el) el.classList.add('active');
+    if (el) {
+      el.style.willChange = 'transform, opacity';
+      const clearWillChange = () => { el.style.willChange = ''; };
+      el.addEventListener('transitionend', clearWillChange, { once: true });
+      setTimeout(clearWillChange, 400);
+      el.classList.add('active');
+    }
     this.stopLive();
     const init = {
       dashboard: () => this.initDashboard(), realtime: () => this.initRealtime(),
