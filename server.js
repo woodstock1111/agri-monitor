@@ -218,7 +218,7 @@ function writeState(data) {
 }
 
 function readPhotoRecords() {
-    // 若文件不存在返回初始结构
+    // Return the initial photo records structure when the file does not exist.
     if (!fs.existsSync(PHOTO_RECORDS_FILE)) {
         return { crops: [], records: [], config: {
             qweatherKey: 'f5832afbc18d40069dfe1e07da03663a',
@@ -230,6 +230,17 @@ function readPhotoRecords() {
 function writePhotoRecords(data) {
     fs.writeFileSync(PHOTO_RECORDS_FILE, JSON.stringify(data));
 }
+
+function deletePhotoRecordFile(record) {
+    if (!record?.imagePath) return;
+    try {
+        const imgPath = path.join(__dirname, record.imagePath);
+        if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
+    } catch (error) {
+        console.warn('[Photos] image delete failed:', error.message);
+    }
+}
+
 function flushSyncBeforeExit(signal) {
     if (isShuttingDown) return;
     isShuttingDown = true;
@@ -662,7 +673,7 @@ function cloudRowChanged(state, dev, row) {
     const deviceTimestamp = Number(row.timeStamp) || Date.now();
     const latest = state.realtimeState?.[dev.id];
     if (!latest) return true;
-    // Cloud history API can lag behind realtime API — skip records strictly older than
+    // Cloud history API can lag behind realtime API, so skip records strictly older than
     // what we already have, otherwise a lagging history poll downgrades serverRealtime.
     if (deviceTimestamp < latest.deviceTimestamp) return false;
     if (deviceTimestamp !== latest.deviceTimestamp) return true;
@@ -1138,6 +1149,7 @@ const server = http.createServer(async (req, res) => {
                     id: safeId('crop'),
                     name: String(body.name).trim(),
                     variety: String(body.variety || '').trim(),
+                    locationId: String(body.locationId || '').trim(),
                     locationDesc: String(body.locationDesc || '').trim(),
                     createdAt: new Date().toISOString()
                 };
@@ -1145,11 +1157,22 @@ const server = http.createServer(async (req, res) => {
                 writePhotoRecords(pr);
                 return sendJson(201, { ok: true, crop });
             }
+            if (req.method === 'DELETE') {
+                const body = await readBody(req).catch(() => ({}));
+                const cropId = String(query.id || body.id || '').trim();
+                if (!cropId) return sendJson(400, { ok: false, msg: 'id required' });
+                const removedRecords = (pr.records || []).filter(record => record.cropId === cropId);
+                removedRecords.forEach(deletePhotoRecordFile);
+                pr.crops = (pr.crops || []).filter(crop => crop.id !== cropId);
+                pr.records = (pr.records || []).filter(record => record.cropId !== cropId);
+                writePhotoRecords(pr);
+                return sendJson(200, { ok: true });
+            }
         }
 
         if (pathname === '/api/v1/photos/records' && req.method === 'POST') {
             const auth = requireAuth(); if (!auth) return;
-            const body = await readBody(req, 15 * 1024 * 1024); // 15MB 上限
+            const body = await readBody(req, 15 * 1024 * 1024); // 15MB limit
             if (!body.cropId || !body.imageBase64) {
                 return sendJson(400, { ok: false, msg: 'cropId and imageBase64 required' });
             }
@@ -1158,7 +1181,7 @@ const server = http.createServer(async (req, res) => {
                 return sendJson(404, { ok: false, msg: 'crop not found' });
             }
 
-            // 解码并存储图片
+            // Decode and store the uploaded image.
             const imgBuffer = Buffer.from(
                 body.imageBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64'
             );
@@ -1184,7 +1207,7 @@ const server = http.createServer(async (req, res) => {
             };
             pr.records.push(record);
             writePhotoRecords(pr);
-            const { imageBase64: _, ...recordWithoutImg } = record; // 不回传 base64
+            const { imageBase64: _, ...recordWithoutImg } = record; // Do not echo base64 back to the client.
             return sendJson(201, { ok: true, record: recordWithoutImg });
         }
 
@@ -1195,6 +1218,19 @@ const server = http.createServer(async (req, res) => {
             if (query.cropId) records = records.filter(r => r.cropId === query.cropId);
             records = [...records].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
             return sendJson(200, { ok: true, records });
+        }
+
+        if (pathname === '/api/v1/photos/records' && req.method === 'DELETE') {
+            const auth = requireAuth(); if (!auth) return;
+            const body = await readBody(req).catch(() => ({}));
+            const recordId = String(query.id || body.id || '').trim();
+            if (!recordId) return sendJson(400, { ok: false, msg: 'id required' });
+            const pr = readPhotoRecords();
+            const record = (pr.records || []).find(item => item.id === recordId);
+            if (record) deletePhotoRecordFile(record);
+            pr.records = (pr.records || []).filter(item => item.id !== recordId);
+            writePhotoRecords(pr);
+            return sendJson(200, { ok: true });
         }
 
         if (pathname.startsWith('/api/v1/photos/records/') && pathname.endsWith('/image')) {
@@ -1211,6 +1247,35 @@ const server = http.createServer(async (req, res) => {
                 'Cache-Control': 'max-age=86400'
             });
             return fs.createReadStream(imgPath).pipe(res);
+        }
+
+        if (pathname === '/api/v1/photos/sensor-range' && req.method === 'GET') {
+            const auth = requireAuth(); if (!auth) return;
+            const { deviceId, startTime, endTime } = query;
+            if (!deviceId || !startTime || !endTime) {
+                return sendJson(400, { ok: false, msg: 'deviceId, startTime and endTime required' });
+            }
+            const state = readState();
+            const startTs = parseQueryTime(startTime, Number.NaN);
+            const endTs = parseQueryTime(endTime, Number.NaN);
+            if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) {
+                return sendJson(400, { ok: false, msg: 'Invalid time range' });
+            }
+            const channels = (state.channels || []).filter(c => c.deviceId === deviceId);
+            const units = {};
+            channels.forEach(c => { units[c.displayName] = c.unit; });
+            const readings = (state.sensorReadings || [])
+                .filter(r => r && r.deviceId === deviceId)
+                .map(r => ({ ...r, _ts: Number(r.ts || r.deviceTimestamp) }))
+                .filter(r => Number.isFinite(r._ts) && r._ts >= startTs && r._ts <= endTs)
+                .sort((a, b) => a._ts - b._ts)
+                .map(r => ({
+                    ts: r._ts,
+                    snapshotTimeStr: r.recordTimeStr || new Date(r._ts).toISOString(),
+                    values: r.externalValues || {},
+                    units,
+                }));
+            return sendJson(200, { ok: true, deviceId, startTime, endTime, readings });
         }
 
         if (pathname === '/api/v1/photos/sensor-snapshot' && req.method === 'GET') {
@@ -1241,7 +1306,7 @@ const server = http.createServer(async (req, res) => {
             const pr = readPhotoRecords();
 
             if (req.method === 'GET') {
-                // 脱敏返回，前端只需知道是否已配置
+                // Return masked config values to the frontend.
                 return sendJson(200, { ok: true, config: {
                     qweatherKey: pr.config.qweatherKey ? '***' : '',
                     visionApiKey: pr.config.visionApiKey ? '***' : '',
@@ -1267,7 +1332,7 @@ const server = http.createServer(async (req, res) => {
             const pr = readPhotoRecords();
             if (!pr.config.qweatherKey) return sendJson(503, { ok: false, error: 'weather_api_not_configured' });
             try {
-                // 和风天气 location 参数顺序：经度,纬度
+                // QWeather expects location as longitude,latitude.
                 const url = `https://devapi.qweather.com/v7/weather/now?location=${lng},${lat}&key=${pr.config.qweatherKey}&lang=zh`;
                 const result = await requestJson(url, { method: 'GET' });
                 if (result.data.code !== '200') return sendJson(502, { ok: false, error: 'weather_api_error', code: result.data.code });
@@ -1278,6 +1343,7 @@ const server = http.createServer(async (req, res) => {
                     humidity: Number(now.humidity),
                     condition: now.text,
                     windSpeed: Number(now.windSpeed),
+                    precip: Number(now.precip),
                     source: 'qweather'
                 }});
             } catch(e) {
@@ -1326,7 +1392,3 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`[SERVER] RUNNING ON ${PORT}`);
     console.log(`[AUTH] Default admin: admin / ${DEFAULT_ADMIN_PASSWORD}`);
 });
-
-
-
-

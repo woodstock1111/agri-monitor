@@ -206,7 +206,7 @@ const SyncService = {
   _bootstrapped: false,
 
   isEnabled() {
-    // Always sync to backend when page is served over http(s) â€?the old
+    // Always sync to backend when page is served over http(s)  - the old
     // "local" mode used frontend-only storage, which doesn't apply anymore
     // now that the backend is the source of truth for devices and readings.
     return window.location.protocol !== 'file:';
@@ -798,6 +798,13 @@ const app = {
   _selectedFactors: new Set(),
   _historyLoading: false,
   _historyRefreshQueued: false,
+  _selectedCropId: null,
+  _selectedCropName: '',
+  _photoCompressedBase64: null,
+  _currentWeather: null,
+  _crops: [],
+  _photoRecordCache: {},
+  _photoImageUrls: {},
 
   //     BOOT    
   async init() {
@@ -885,7 +892,7 @@ const app = {
     document.querySelectorAll('.nav-link').forEach(l => l.classList.toggle('active', l.dataset.page === page));
     const titles = {
       dashboard:'\u7cfb\u7edf\u603b\u89c8', realtime:'\u5b9e\u65f6\u6570\u636e', video:'\u89c6\u9891\u76d1\u63a7', history:'\u66f2\u7ebf\u56fe\u8868',
-      cloudsync:'\u5386\u53f2\u8bb0\u5f55', pestdb:'\u75c5\u5bb3\u866b\u6570\u636e\u5e93', automation:'\u81ea\u52a8\u5316\u6d41\u7a0b', locations:'\u5730\u5757\u7ba1\u7406', devices:'\u8bbe\u5907\u7ba1\u7406',
+      cloudsync:'\u5386\u53f2\u8bb0\u5f55', pestdb:'\u75c5\u5bb3\u866b\u6570\u636e\u5e93', photos:'\u56fe\u50cf\u8bb0\u5f55', automation:'\u81ea\u52a8\u5316\u6d41\u7a0b', locations:'\u5730\u5757\u7ba1\u7406', devices:'\u8bbe\u5907\u7ba1\u7406',
       accounts:'\u8d26\u53f7\u7ba1\u7406'
     };
     document.getElementById('page-title').textContent = titles[page] || '';
@@ -905,7 +912,7 @@ const app = {
     const init = {
       dashboard: () => this.initDashboard(), realtime: () => this.initRealtime(),
       video: () => this.renderVideo(), history: () => this.initHistory(), cloudsync: () => this.initCloudSync(),
-      pestdb: () => this.renderPests(), automation: () => this.renderAutomation(),
+      pestdb: () => this.renderPests(), photos: () => this.renderPhotos(), automation: () => this.renderAutomation(),
       locations: () => this.renderLocations(), devices: () => this.renderDevices(), accounts: () => this.renderAccounts(),
     };
     if (init[page]) init[page]();
@@ -1064,7 +1071,7 @@ const app = {
 
     if (!this.dashMap) {
       this.dashMap = L.map('dash-map', { zoomControl: true, attributionControl: true }).setView([20.044,110.199], 15);
-      // Amap tile layers â€?no API key required for these public endpoints
+      // Amap tile layers  - no API key required for these public endpoints
       this._mapLayers = {
         standard: L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
           subdomains: '1234',
@@ -1323,7 +1330,7 @@ const app = {
     if (dev?.type === 'sensor_soil_api') this._renderApiDeviceRealtime(dev, { force: true });
   },
 
-  // Simulated sensor tick â€?cloud API devices use _renderApiDeviceRealtime instead
+  // Simulated sensor tick  - cloud API devices use _renderApiDeviceRealtime instead
   updateSensors(deviceId) {
     const dev = DataRepository.listDevices().find(d => d.id === deviceId);
     if (!dev || dev.type === 'sensor_soil_api') return;
@@ -1646,7 +1653,7 @@ const app = {
     // Destroy all old chart instances under hist- prefix
     Object.keys(ChartHelper._i || {}).filter(k => k.startsWith('hist-')).forEach(k => ChartHelper.destroy(k));
 
-    // Rebuild chart grid dynamically â€?one panel per channel
+    // Rebuild chart grid dynamically  - one panel per channel
     grid.innerHTML = channels.map((ch, i) => `
       <div class="glass-panel">
         <div class="panel-header"><span class="panel-title">${PARAM_DISPLAY[ch] || ch}</span></div>
@@ -1975,12 +1982,18 @@ const app = {
     }).join('');
   },
   openModal(t) {
-    document.getElementById('modal-'+t).classList.add('open');
+    const el = document.getElementById(t) || document.getElementById('modal-'+t);
+    if (!el) return;
+    el.style.display = '';
+    el.classList.add('open');
     if (t === 'location') setTimeout(() => this.initLocMapPicker(), 200);
     if (t === 'device') setTimeout(() => this.initDevMapPicker(), 200);
   },
   closeModal(t) {
-    document.getElementById('modal-'+t).classList.remove('open');
+    const el = document.getElementById(t) || document.getElementById('modal-'+t);
+    if (!el) return;
+    el.classList.remove('open');
+    if (document.getElementById(t)) el.style.display = 'none';
     if (t === 'location') this._destroyPickerMap('loc');
     if (t === 'device') this._destroyPickerMap('dev');
   },
@@ -2705,6 +2718,503 @@ const app = {
     link.click();
   },
 
+  //     PHOTO RECORDS
+  async renderPhotos() {
+    this._selectedCropId = null;
+    this._selectedCropName = '';
+    this._photoCompressedBase64 = null;
+    this._currentWeather = null;
+    document.getElementById('records-header').style.display = 'none';
+    document.getElementById('records-empty').style.display = 'flex';
+    document.getElementById('records-grid').innerHTML = '';
+    await this._loadCrops();
+  },
+
+  async _photoRequest(path, options = {}) {
+    const res = await fetch('/api/v1/photos' + path, {
+      ...options,
+      headers: AuthService.authHeaders(options.headers || {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) throw new Error(data.msg || data.error || '\u8bf7\u6c42\u5931\u8d25');
+    return data;
+  },
+
+  async _loadCrops() {
+    try {
+      const data = await this._photoRequest('/crops');
+      this._crops = data.crops || [];
+      this._renderCropList(this._crops);
+    } catch (e) {
+      UI.toast('\u52a0\u8f7d\u519c\u4f5c\u7269\u5931\u8d25', 'danger');
+    }
+  },
+
+  _renderCropList(crops) {
+    const list = document.getElementById('crops-list');
+    if (!list) return;
+    if (!crops.length) {
+      list.innerHTML = '<div class="crops-empty"><i class="fa-solid fa-seedling"></i><p>\u6682\u65e0\u519c\u4f5c\u7269</p></div>';
+      return;
+    }
+    const locMap = Object.fromEntries(DataRepository.listLocations().map(item => [item.id, item.name]));
+    list.innerHTML = crops.map(c => `
+      <div class="crop-item ${c.id === this._selectedCropId ? 'active' : ''}" data-crop-id="${this.sanitize(c.id)}" data-crop-name="${this.sanitize(c.name || '')}" onclick="app.selectCrop(this.dataset.cropId, this.dataset.cropName)">
+        <i class="fa-solid fa-leaf"></i>
+        <div class="crop-item-info">
+          <div class="crop-item-name">${this.sanitize(c.name || '')}</div>
+          ${c.variety ? `<div class="crop-item-sub">${this.sanitize(c.variety)}</div>` : ''}
+          ${c.locationId || c.locationDesc ? `<div class="crop-item-sub">${this.sanitize(locMap[c.locationId] || c.locationDesc || '')}</div>` : ''}
+        </div>
+        <button class="btn-icon crop-delete-btn" title="\u5220\u9664\u519c\u4f5c\u7269" onclick="event.stopPropagation(); app.deleteCrop('${this.sanitize(c.id)}')"><i class="fa-solid fa-trash"></i></button>
+      </div>
+    `).join('');
+  },
+
+  async selectCrop(cropId, cropName) {
+    this._selectedCropId = cropId;
+    this._selectedCropName = cropName || '';
+    document.querySelectorAll('.crop-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.cropId === cropId);
+    });
+    document.getElementById('records-header').style.display = 'flex';
+    document.getElementById('records-crop-title').textContent = cropName || '';
+    document.getElementById('records-empty').style.display = 'none';
+    await this._loadRecords(cropId);
+  },
+
+  async _loadRecords(cropId) {
+    const grid = document.getElementById('records-grid');
+    if (!grid) return;
+    grid.innerHTML = '<div class="loading-state"><i class="fa-solid fa-spinner fa-spin"></i></div>';
+    try {
+      const data = await this._photoRequest('/records?cropId=' + encodeURIComponent(cropId));
+      this._renderRecordGrid(data.records || []);
+    } catch (e) {
+      grid.innerHTML = '<div class="empty-state"><p>\u52a0\u8f7d\u5931\u8d25</p></div>';
+    }
+  },
+
+  async deleteCrop(cropId) {
+    if (!cropId) return;
+    if (!window.confirm('\u786e\u5b9a\u5220\u9664\u8be5\u519c\u4f5c\u7269\u53ca\u5176\u5168\u90e8\u56fe\u50cf\u8bb0\u5f55\u5417\uff1f')) return;
+    try {
+      await this._photoRequest('/crops?id=' + encodeURIComponent(cropId), { method: 'DELETE' });
+      if (this._selectedCropId === cropId) {
+        this._selectedCropId = null;
+        this._selectedCropName = '';
+        this._photoRecordCache = {};
+        document.getElementById('records-header').style.display = 'none';
+        document.getElementById('records-empty').style.display = 'flex';
+        document.getElementById('records-grid').innerHTML = '';
+      }
+      await this._loadCrops();
+      UI.toast('\u519c\u4f5c\u7269\u5df2\u5220\u9664', 'success');
+    } catch (e) {
+      UI.toast('\u5220\u9664\u5931\u8d25\uff1a' + e.message, 'danger');
+    }
+  },
+
+  _renderRecordGrid(records) {
+    const grid = document.getElementById('records-grid');
+    if (!grid) return;
+    this._photoRecordCache = Object.fromEntries(records.map(r => [r.id, r]));
+    if (!records.length) {
+      grid.innerHTML = '<div class="empty-state"><i class="fa-solid fa-camera"></i><p>\u6682\u65e0\u8bb0\u5f55\uff0c\u70b9\u51fb\u65b0\u5efa\u8bb0\u5f55\u5f00\u59cb</p></div>';
+      return;
+    }
+    grid.innerHTML = records.map(r => {
+      const d = new Date(r.createdAt);
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+      const weatherBit = r.weather ? `<span class="record-tag"><i class="fa-solid fa-cloud-sun"></i> ${this.sanitize(String(r.weather.temp))}\u2103 ${this.sanitize(r.weather.condition || '')}</span>` : '';
+      const sensorBit = Array.isArray(r.linkedSensors) && r.linkedSensors.length ? `<span class="record-tag"><i class="fa-solid fa-microchip"></i> ${r.linkedSensors.length} \u4e2a\u4f20\u611f\u5668</span>` : '';
+      const notes = String(r.userNotes || '');
+      const notesPreview = notes ? notes.slice(0, 50) + (notes.length > 50 ? '\u2026' : '') : '';
+      return `
+        <div class="record-card" onclick="app.openRecordDetail('${this.sanitize(r.id)}')">
+          <button class="btn-icon record-delete-btn" title="\u5220\u9664\u8bb0\u5f55" onclick="event.stopPropagation(); app.deletePhotoRecord('${this.sanitize(r.id)}')"><i class="fa-solid fa-trash"></i></button>
+          <div class="record-card-img">
+            <img data-photo-id="${this.sanitize(r.id)}" alt="\u8bb0\u5f55\u56fe\u7247" loading="lazy">
+          </div>
+          <div class="record-card-body">
+            <div class="record-card-date">${dateStr}</div>
+            <div class="record-tags">${weatherBit}${sensorBit}</div>
+            ${notesPreview ? `<div class="record-notes-preview">${this.sanitize(notesPreview)}</div>` : ''}
+            <div class="record-ai-badge pending">\u5f85\u5206\u6790</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    this._hydrateRecordImages(records);
+  },
+
+  async deletePhotoRecord(recordId) {
+    if (!recordId) return;
+    if (!window.confirm('\u786e\u5b9a\u5220\u9664\u8be5\u7530\u95f4\u8bb0\u5f55\u5417\uff1f')) return;
+    try {
+      await this._photoRequest('/records?id=' + encodeURIComponent(recordId), { method: 'DELETE' });
+      delete this._photoRecordCache[recordId];
+      if (this._selectedCropId) await this._loadRecords(this._selectedCropId);
+      UI.toast('\u8bb0\u5f55\u5df2\u5220\u9664', 'success');
+    } catch (e) {
+      UI.toast('\u5220\u9664\u5931\u8d25\uff1a' + e.message, 'danger');
+    }
+  },
+
+  async _loadPhotoImage(record) {
+    if (!record?.id || !record.imageUrl) return '';
+    if (this._photoImageUrls[record.id]) return this._photoImageUrls[record.id];
+    const res = await fetch(record.imageUrl, { headers: AuthService.authHeaders() });
+    if (!res.ok) throw new Error('image ' + res.status);
+    const objectUrl = URL.createObjectURL(await res.blob());
+    this._photoImageUrls[record.id] = objectUrl;
+    return objectUrl;
+  },
+
+  _hydrateRecordImages(records) {
+    records.forEach(record => {
+      this._loadPhotoImage(record).then(src => {
+        const img = document.querySelector(`img[data-photo-id="${CSS.escape(record.id)}"]`);
+        if (img && src) img.src = src;
+      }).catch(() => {
+        const img = document.querySelector(`img[data-photo-id="${CSS.escape(record.id)}"]`);
+        if (img?.parentElement) img.parentElement.innerHTML = '<div class="img-error"><i class="fa-solid fa-image"></i></div>';
+      });
+    });
+  },
+
+  openRecordDetail(recordId) {
+    const r = this._photoRecordCache[recordId];
+    if (!r) return;
+    const d = new Date(r.createdAt);
+    let html = `
+      <img data-detail-photo-id="${this.sanitize(r.id)}" class="detail-img" alt="">
+      <div class="detail-section">
+        <div class="detail-label">\u65f6\u95f4</div>
+        <div>${d.toLocaleString('zh-CN')}</div>
+      </div>
+    `;
+    if (r.gps) html += `
+      <div class="detail-section">
+        <div class="detail-label">\u4f4d\u7f6e</div>
+        <div>\u7eac\u5ea6 ${Number(r.gps.lat).toFixed(5)}  \u7ecf\u5ea6 ${Number(r.gps.lng).toFixed(5)}\uff08\u7cbe\u5ea6 ${r.gps.accuracy ? Math.round(r.gps.accuracy) + 'm' : '\u672a\u77e5'}\uff09</div>
+      </div>
+    `;
+    if (r.weather) {
+      const weatherParts = [];
+      if (r.weather.condition) weatherParts.push(this.sanitize(r.weather.condition));
+      if (r.weather.temp !== undefined && Number.isFinite(Number(r.weather.temp))) weatherParts.push(`${Number(r.weather.temp)}\u00b0C`);
+      if (r.weather.humidity !== undefined && Number.isFinite(Number(r.weather.humidity))) weatherParts.push(`\u6e7f\u5ea6${Number(r.weather.humidity)}%`);
+      if (r.weather.windSpeed !== undefined && Number.isFinite(Number(r.weather.windSpeed))) weatherParts.push(`\u98ce\u901f${Number(r.weather.windSpeed)}km/h`);
+      if (r.weather.precip !== undefined && Number.isFinite(Number(r.weather.precip))) weatherParts.push(`\u964d\u6c34${Number(r.weather.precip)}mm/h`);
+      html += `
+        <div class="detail-section">
+          <div class="detail-label">\u5929\u6c14</div>
+          <div>${weatherParts.join(' ')}</div>
+        </div>
+      `;
+    }
+    if (Array.isArray(r.linkedSensors) && r.linkedSensors.length) {
+      html += '<div class="detail-section"><div class="detail-label">\u4f20\u611f\u5668\u5feb\u7167</div>';
+      r.linkedSensors.forEach(s => {
+        html += `<div class="sensor-snapshot-block"><div class="sensor-snapshot-name">${this.sanitize(s.deviceName || s.deviceId)}</div>`;
+        if (s.startTime || s.endTime) {
+          html += `<div class="sensor-snapshot-time">${new Date(s.startTime).toLocaleString('zh-CN')} - ${new Date(s.endTime).toLocaleString('zh-CN')}</div>`;
+        } else if (s.selectedTimestamp) {
+          html += `<div class="sensor-snapshot-time">${new Date(s.selectedTimestamp).toLocaleString('zh-CN')}</div>`;
+        }
+        const snapshots = Array.isArray(s.snapshots) ? s.snapshots : (s.snapshot ? [s.snapshot] : []);
+        if (!snapshots.length) {
+          html += '<div class="sensor-snapshot-time">\u8be5\u65f6\u95f4\u8303\u56f4\u5185\u6682\u65e0\u8bfb\u6570</div>';
+        }
+        snapshots.forEach(snapshot => {
+          const entries = Object.entries(snapshot.values || {});
+          html += `<div class="sensor-snapshot-time">${this.sanitize(snapshot.snapshotTimeStr || '')}</div>`;
+          if (entries.length) {
+            html += '<table class="snapshot-table"><tbody>' +
+              entries.map(([k, v]) => `<tr><td>${this.sanitize(k)}</td><td><strong>${this.sanitize(String(v))}</strong></td></tr>`).join('') +
+              '</tbody></table>';
+          }
+        });
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+    if (r.userNotes) html += `
+      <div class="detail-section">
+        <div class="detail-label">\u5907\u6ce8</div>
+        <div class="detail-notes">${this.sanitize(r.userNotes)}</div>
+      </div>
+    `;
+    html += '<div class="detail-section"><div class="detail-label">AI \u5206\u6790</div><div class="record-ai-badge pending">\u5f85\u5206\u6790</div></div>';
+    document.getElementById('record-detail-body').innerHTML = html;
+    this.openModal('modal-record-detail');
+    this._loadPhotoImage(r).then(src => {
+      const img = document.querySelector(`img[data-detail-photo-id="${CSS.escape(r.id)}"]`);
+      if (img && src) img.src = src;
+    }).catch(() => {});
+  },
+
+  openNewCropModal() {
+    const locations = DataRepository.listLocations();
+    if (!locations.length) {
+      UI.toast('\u8bf7\u5148\u53bb\u8bbe\u5907\u7ba1\u7406\u6216\u5730\u5757\u7ba1\u7406\u9875\u521b\u5efa\u5730\u5757\uff0c\u518d\u65b0\u5efa\u519c\u4f5c\u7269', 'warning');
+      return;
+    }
+    ['crop-name','crop-variety'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    const locSelect = document.getElementById('crop-location-id');
+    if (locSelect) {
+      locSelect.innerHTML = locations.map(loc => `<option value="${this.sanitize(loc.id)}">${this.sanitize(loc.name)}</option>`).join('');
+      locSelect.value = locations[0]?.id || '';
+    }
+    this.openModal('modal-new-crop');
+    setTimeout(() => document.getElementById('crop-name')?.focus(), 50);
+  },
+
+  async submitNewCrop() {
+    const name = document.getElementById('crop-name').value.trim();
+    if (!name) { UI.toast('\u8bf7\u8f93\u5165\u519c\u4f5c\u7269\u540d\u79f0', 'warning'); return; }
+    try {
+      const data = await this._photoRequest('/crops', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          variety: document.getElementById('crop-variety').value.trim(),
+          locationId: document.getElementById('crop-location-id')?.value || '',
+          locationDesc: DataRepository.listLocations().find(item => item.id === document.getElementById('crop-location-id')?.value)?.name || '',
+        }),
+      });
+      this.closeModal('modal-new-crop');
+      UI.toast('\u519c\u4f5c\u7269\u5df2\u521b\u5efa', 'success');
+      await this._loadCrops();
+      await this.selectCrop(data.crop.id, data.crop.name);
+    } catch(e) {
+      UI.toast('\u521b\u5efa\u5931\u8d25\uff1a' + e.message, 'danger');
+    }
+  },
+
+  openNewRecordModal() {
+    if (!this._selectedCropId) { UI.toast('\u8bf7\u5148\u9009\u62e9\u519c\u4f5c\u7269', 'warning'); return; }
+    this._photoCompressedBase64 = null;
+    this._currentWeather = null;
+    document.getElementById('photo-upload-area').style.display = 'flex';
+    document.getElementById('photo-preview-wrap').style.display = 'none';
+    document.getElementById('photo-file-input').value = '';
+    document.getElementById('record-lat').value = '';
+    document.getElementById('record-lng').value = '';
+    document.getElementById('record-notes').value = '';
+    document.getElementById('weather-display').style.display = 'none';
+    const now = new Date();
+    document.getElementById('record-datetime').value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    const crop = (this._crops || []).find(item => item.id === this._selectedCropId);
+    const location = crop?.locationId ? DataRepository.listLocations().find(item => item.id === crop.locationId) : null;
+    const lat = Number(location?.lat);
+    const lng = Number(location?.lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
+      document.getElementById('record-lat').value = lat.toFixed(6);
+      document.getElementById('record-lng').value = lng.toFixed(6);
+      this._fetchWeather(lat, lng);
+    }
+    this._renderSensorSelectList();
+    this.openModal('modal-new-record');
+  },
+
+  _renderSensorSelectList() {
+    const devices = DataRepository.listDevices().filter(d => d.type.startsWith('sensor'));
+    const list = document.getElementById('sensor-select-list');
+    if (!list) return;
+    if (!devices.length) {
+      list.innerHTML = '<div class="sensor-empty">\u6682\u65e0\u4f20\u611f\u5668\u8bbe\u5907</div>';
+      return;
+    }
+    list.innerHTML = devices.map(d => `
+      <div class="sensor-select-row" id="sensor-row-${this.sanitize(d.id)}">
+        <label class="sensor-check-label">
+          <input type="checkbox" class="sensor-checkbox" value="${this.sanitize(d.id)}" data-name="${this.sanitize(d.name || d.id)}" onchange="app.onSensorCheckChange('${this.sanitize(d.id)}')">
+          <span>${this.sanitize(d.name || d.id)}</span>
+        </label>
+        <input type="datetime-local" class="text-input sensor-time-input" id="sensor-time-start-${this.sanitize(d.id)}" style="display:none" title="\u8d77\u59cb\u65f6\u95f4">
+        <input type="datetime-local" class="text-input sensor-time-input" id="sensor-time-end-${this.sanitize(d.id)}" style="display:none" title="\u7ed3\u675f\u65f6\u95f4">
+      </div>
+    `).join('');
+  },
+
+  onSensorCheckChange(deviceId) {
+    const cb = document.querySelector(`.sensor-checkbox[value="${CSS.escape(deviceId)}"]`);
+    const startInput = document.getElementById(`sensor-time-start-${deviceId}`);
+    const endInput = document.getElementById(`sensor-time-end-${deviceId}`);
+    if (!cb || !startInput || !endInput) return;
+    startInput.style.display = cb.checked ? 'inline-block' : 'none';
+    endInput.style.display = cb.checked ? 'inline-block' : 'none';
+    if (cb.checked) {
+      const end = document.getElementById('record-datetime').value
+        ? new Date(document.getElementById('record-datetime').value)
+        : new Date();
+      const start = new Date(end.getTime() - 60 * 60 * 1000);
+      const fmt = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      if (!startInput.value) startInput.value = fmt(start);
+      if (!endInput.value) endInput.value = fmt(end);
+    }
+  },
+
+  async handlePhotoSelect(input) {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const base64 = await this._compressImage(file);
+      this._photoCompressedBase64 = base64;
+      document.getElementById('photo-upload-area').style.display = 'none';
+      const preview = document.getElementById('photo-preview');
+      preview.src = base64;
+      document.getElementById('photo-preview-wrap').style.display = 'block';
+      const kb = Math.round(base64.length * 0.75 / 1024);
+      document.getElementById('photo-size-info').textContent = `\u538b\u7f29\u540e\u7ea6 ${kb} KB`;
+    } catch(e) {
+      UI.toast('\u56fe\u7247\u5904\u7406\u5931\u8d25', 'danger');
+    }
+  },
+
+  _compressImage(file, maxDim = 1200, quality = 0.85) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let w = img.width;
+        let h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w >= h) {
+            h = Math.round(h * maxDim / w);
+            w = maxDim;
+          } else {
+            w = Math.round(w * maxDim / h);
+            h = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('\u56fe\u7247\u52a0\u8f7d\u5931\u8d25'));
+      };
+      img.src = url;
+    });
+  },
+
+  async _fetchWeather(lat, lng) {
+    try {
+      const data = await this._photoRequest('/weather?lat=' + encodeURIComponent(lat) + '&lng=' + encodeURIComponent(lng));
+      this._currentWeather = data.weather;
+      const wd = document.getElementById('weather-display');
+      wd.style.display = 'flex';
+      const precipText = data.weather.precip !== undefined && Number.isFinite(Number(data.weather.precip))
+        ? ` \u964d\u6c34${Number(data.weather.precip)}mm/h`
+        : '';
+      wd.innerHTML = `<i class="fa-solid fa-cloud-sun"></i> ${this.sanitize(data.weather.condition || '')} ${this.sanitize(String(data.weather.temp))}\u2103 \u6e7f\u5ea6${this.sanitize(String(data.weather.humidity))}% \u98ce\u901f${this.sanitize(String(data.weather.windSpeed))}km/h${precipText}`;
+    } catch(e) {
+      this._currentWeather = null;
+    }
+  },
+
+  async submitNewRecord() {
+    if (!this._photoCompressedBase64) {
+      UI.toast('\u8bf7\u5148\u9009\u62e9\u56fe\u7247', 'warning');
+      return;
+    }
+    const btn = document.getElementById('btn-submit-record');
+    btn.disabled = true;
+    btn.textContent = '\u4fdd\u5b58\u4e2d...';
+    try {
+      const linkedSensors = [];
+      const checkedBoxes = document.querySelectorAll('.sensor-checkbox:checked');
+      for (const cb of checkedBoxes) {
+        const deviceId = cb.value;
+        const deviceName = cb.dataset.name;
+        const startInput = document.getElementById(`sensor-time-start-${deviceId}`);
+        const endInput = document.getElementById(`sensor-time-end-${deviceId}`);
+        const endDate = endInput?.value ? new Date(endInput.value) : new Date();
+        const startDate = startInput?.value ? new Date(startInput.value) : new Date(endDate.getTime() - 60 * 60 * 1000);
+        const startTime = startDate.toISOString();
+        const endTime = endDate.toISOString();
+        try {
+          const data = await this._photoRequest('/sensor-range?deviceId=' + encodeURIComponent(deviceId) + '&startTime=' + encodeURIComponent(startTime) + '&endTime=' + encodeURIComponent(endTime));
+          linkedSensors.push({
+            deviceId,
+            deviceName,
+            startTime,
+            endTime,
+            snapshots: data.readings || [],
+          });
+        } catch(e) {}
+      }
+
+      const lat = parseFloat(document.getElementById('record-lat').value);
+      const lng = parseFloat(document.getElementById('record-lng').value);
+      const dtVal = document.getElementById('record-datetime').value;
+      const data = await this._photoRequest('/records', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cropId: this._selectedCropId,
+          imageBase64: this._photoCompressedBase64,
+          createdAt: dtVal ? new Date(dtVal).toISOString() : new Date().toISOString(),
+          gps: (!Number.isNaN(lat) && !Number.isNaN(lng)) ? { lat, lng, accuracy: null, source: 'location' } : null,
+          weather: this._currentWeather || null,
+          linkedSensors,
+          userNotes: document.getElementById('record-notes').value.trim(),
+        }),
+      });
+      this.closeModal('modal-new-record');
+      this._currentWeather = null;
+      this._photoCompressedBase64 = null;
+      UI.toast('\u8bb0\u5f55\u5df2\u4fdd\u5b58', 'success');
+      await this._loadRecords(this._selectedCropId);
+    } catch(e) {
+      UI.toast('\u4fdd\u5b58\u5931\u8d25\uff1a' + e.message, 'danger');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '\u4fdd\u5b58\u8bb0\u5f55';
+    }
+  },
+
+  async openPhotoConfig() {
+    try {
+      const data = await this._photoRequest('/config');
+      if (data.ok) {
+        document.getElementById('cfg-qweather-key').placeholder = data.config.qweatherKey ? '\u5df2\u914d\u7f6e\uff08\u8f93\u5165\u65b0\u503c\u53ef\u66f4\u65b0\uff09' : '\u672a\u914d\u7f6e';
+        document.getElementById('cfg-vision-model').value = data.config.visionModel || 'qwen-vl-plus';
+      }
+    } catch(e) {}
+    this.openModal('modal-photo-config');
+  },
+
+  async savePhotoConfig() {
+    const payload = {
+      qweatherKey: document.getElementById('cfg-qweather-key').value.trim(),
+      visionApiKey: document.getElementById('cfg-vision-key').value.trim(),
+      visionModel: document.getElementById('cfg-vision-model').value,
+    };
+    try {
+      await this._photoRequest('/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      this.closeModal('modal-photo-config');
+      UI.toast('\u914d\u7f6e\u5df2\u4fdd\u5b58', 'success');
+    } catch(e) {
+      UI.toast('\u4fdd\u5b58\u914d\u7f6e\u5931\u8d25', 'danger');
+    }
+  },
+
   // ====================================================
   // CLOUD PLATFORM MODAL LOGIC
   // ====================================================
@@ -2964,17 +3474,22 @@ const app = {
     this.renderDevices();
     this.updateSidebarStatus();
 
-    UI.toast(`\u6210\u529f\u5bfc\u5165 ${this._cloudSelected.size} \u53f0\u8bbe\u5907\uff0c\u6b63\u5728\u540e\u53f0\u5199\u5165\u9996\u6761\u6570\u636e`, 'success');
-    Promise.allSettled(importedIds.map(async id => {
+    const initialFetchResults = await Promise.allSettled(importedIds.map(async id => {
       const dev = devices.find(item => item.id === id);
-      const serverData = await BackendAdapter.getDeviceRealtime(id);
+      const serverData = await BackendAdapter.getDeviceRealtime(id, { force: true });
       if (dev?.apiConfig && serverData?.ok && serverData?.dataItems) {
         SensorEngine.setApiData(dev.apiConfig.deviceAddr, serverData.dataItems, serverData.timestamp || Date.now());
       }
-    })).then(() => {
-      if (this.currentPage === 'devices') this.renderDevices();
-      if (this.currentPage === 'dashboard') this.initDashboard();
-    }).catch(err => console.warn('[Import initial fetch]', err.message));
+    }));
+    initialFetchResults
+      .filter(result => result.status === 'rejected')
+      .forEach(result => console.warn('[Import initial fetch]', result.reason?.message || result.reason));
+    if (this.currentPage === 'devices') this.renderDevices();
+    if (this.currentPage === 'dashboard') this.initDashboard();
+    if (this.currentPage === 'realtime') this.initRealtime();
+    if (this.currentPage === 'history' || this.currentPage === 'chart') this.initHistory();
+    if (this.currentPage === 'cloudsync') this.initCloudSync();
+    UI.toast(`\u6210\u529f\u5bfc\u5165 ${this._cloudSelected.size} \u53f0\u8bbe\u5907\uff0c\u9996\u6761\u6570\u636e\u5df2\u5199\u5165`, 'success');
     this._cloudSelected = new Set();
     this._cloudRenameMap = {};
     if (importBtn) {

@@ -71,6 +71,9 @@
                 <a class="nav-link" data-page="pestdb">
                     <i class="fa-solid fa-bug"></i><span>病害虫数据库</span>
                 </a>
+                <a class="nav-link" data-page="photos">
+                    <i class="fa-solid fa-camera"></i><span>图像记录</span>
+                </a>
 
                 <div class="nav-group-label">智能控制</div>
                 <a class="nav-link" data-page="automation">
@@ -264,6 +267,173 @@
                                     </td></tr>
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Photos -->
+                <div class="page" id="page-photos">
+                    <div class="page-toolbar">
+                        <div class="toolbar-group">
+                            <button class="btn-primary" id="btn-new-crop" onclick="app.openNewCropModal()">
+                                <i class="fa-solid fa-plus"></i> 新建农作物
+                            </button>
+                        </div>
+                        <div class="toolbar-group" style="margin-left:auto">
+                            <button class="btn-ghost" onclick="app.openPhotoConfig()" title="API配置">
+                                <i class="fa-solid fa-gear"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="photos-layout">
+                        <!-- 左侧农作物列表 -->
+                        <div class="crops-panel" id="crops-panel">
+                            <div class="crops-panel-header">农作物</div>
+                            <div class="crops-list" id="crops-list"></div>
+                        </div>
+
+                        <!-- 右侧记录区域 -->
+                        <div class="records-panel" id="records-panel">
+                            <div class="records-header" id="records-header" style="display:none">
+                                <span id="records-crop-title" class="records-crop-name"></span>
+                                <button class="btn-primary btn-sm" onclick="app.openNewRecordModal()">
+                                    <i class="fa-solid fa-plus"></i> 新建记录
+                                </button>
+                            </div>
+                            <div class="records-empty" id="records-empty">
+                                <i class="fa-solid fa-seedling"></i>
+                                <p>请先选择或新建农作物</p>
+                            </div>
+                            <div class="records-grid" id="records-grid"></div>
+                        </div>
+                    </div>
+
+                    <!-- 新建农作物 Modal -->
+                    <div class="modal-overlay" id="modal-new-crop" style="display:none">
+                        <div class="modal-box">
+                            <div class="modal-header">
+                                <span>新建农作物</span>
+                                <button class="modal-close" onclick="app.closeModal('modal-new-crop')">×</button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="form-group">
+                                    <label>名称 <span style="color:var(--danger)">*</span></label>
+                                    <input class="text-input" id="crop-name" placeholder="如：番茄、黄瓜">
+                                </div>
+                                <div class="form-group">
+                                    <label>品种</label>
+                                    <input class="text-input" id="crop-variety" placeholder="如：圣女果">
+                                </div>
+                                <div class="form-group">
+                                    <label>所属地块</label>
+                                    <select class="select-input" id="crop-location-id"></select>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn-ghost" onclick="app.closeModal('modal-new-crop')">取消</button>
+                                <button class="btn-primary" onclick="app.submitNewCrop()">创建</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 新建记录 Modal -->
+                    <div class="modal-overlay" id="modal-new-record" style="display:none">
+                        <div class="modal-box modal-box-wide">
+                            <div class="modal-header">
+                                <span>新建记录</span>
+                                <button class="modal-close" onclick="app.closeModal('modal-new-record')">×</button>
+                            </div>
+                            <div class="modal-body">
+                                <!-- 图片上传 -->
+                                <div class="form-section-title">图片</div>
+                                <div class="photo-upload-area" id="photo-upload-area" onclick="document.getElementById('photo-file-input').click()">
+                                    <i class="fa-solid fa-image"></i>
+                                    <span>点击选择图片</span>
+                                    <input type="file" id="photo-file-input" accept="image/*" style="display:none" onchange="app.handlePhotoSelect(this)">
+                                </div>
+                                <div id="photo-preview-wrap" style="display:none">
+                                    <img id="photo-preview" class="photo-preview-img" alt="图片预览">
+                                    <span id="photo-size-info" class="photo-size-hint"></span>
+                                </div>
+
+                                <!-- 时间 -->
+                                <div class="form-section-title">时间</div>
+                                <div class="form-group">
+                                    <label>记录时间</label>
+                                    <input class="text-input" type="datetime-local" id="record-datetime">
+                                </div>
+
+                                <!-- GPS + 天气 -->
+                                <div class="form-section-title">位置与天气</div>
+                                <div class="form-row form-row-inline">
+                                    <div>
+                                        <label>纬度</label>
+                                        <input class="text-input" type="number" id="record-lat" placeholder="自动获取" step="0.000001">
+                                    </div>
+                                    <div>
+                                        <label>经度</label>
+                                        <input class="text-input" type="number" id="record-lng" placeholder="自动获取" step="0.000001">
+                                    </div>
+                                </div>
+                                <div id="weather-display" class="weather-chip" style="display:none"></div>
+
+                                <!-- 传感器关联 -->
+                                <div class="form-section-title">关联传感器数据（可选）</div>
+                                <div id="sensor-select-list" class="sensor-select-list"></div>
+
+                                <!-- 备注 -->
+                                <div class="form-section-title">备注</div>
+                                <div class="form-group">
+                                    <textarea class="text-input" id="record-notes" rows="3" placeholder="描述观察情况、疑似问题等..." maxlength="500"></textarea>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn-ghost" onclick="app.closeModal('modal-new-record')">取消</button>
+                                <button class="btn-primary" id="btn-submit-record" onclick="app.submitNewRecord()">保存记录</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 记录详情 Modal -->
+                    <div class="modal-overlay" id="modal-record-detail" style="display:none">
+                        <div class="modal-box modal-box-wide">
+                            <div class="modal-header">
+                                <span>记录详情</span>
+                                <button class="modal-close" onclick="app.closeModal('modal-record-detail')">×</button>
+                            </div>
+                            <div class="modal-body" id="record-detail-body"></div>
+                        </div>
+                    </div>
+
+                    <!-- API 配置 Modal -->
+                    <div class="modal-overlay" id="modal-photo-config" style="display:none">
+                        <div class="modal-box">
+                            <div class="modal-header">
+                                <span>图像模块配置</span>
+                                <button class="modal-close" onclick="app.closeModal('modal-photo-config')">×</button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="form-group">
+                                    <label>和风天气 API Key</label>
+                                    <input class="text-input" type="password" id="cfg-qweather-key" placeholder="已配置则显示">
+                                </div>
+                                <div class="form-group">
+                                    <label>视觉 AI API Key <span style="color:var(--text-muted);font-size:12px">（暂未启用）</span></label>
+                                    <input class="text-input" type="password" id="cfg-vision-key" placeholder="留空暂不启用">
+                                </div>
+                                <div class="form-group">
+                                    <label>视觉 AI 模型</label>
+                                    <select class="select-input" id="cfg-vision-model">
+                                        <option value="qwen-vl-plus">通义千问VL Plus</option>
+                                        <option value="glm-4v">GLM-4V</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn-ghost" onclick="app.closeModal('modal-photo-config')">取消</button>
+                                <button class="btn-primary" onclick="app.savePhotoConfig()">保存</button>
+                            </div>
                         </div>
                     </div>
                 </div>
