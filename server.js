@@ -7,6 +7,8 @@ const crypto = require('crypto');
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'server-data');
 const STATE_FILE = path.join(DATA_DIR, 'app-state.json');
+const PHOTO_RECORDS_FILE = path.join(DATA_DIR, 'photo-records.json');
+const PHOTOS_DIR = path.join(DATA_DIR, 'photos');
 const DEFAULT_TARGET_BASE = 'http://www.0531yun.com';
 const DEFAULT_TENANT_ID = 'tenant_default';
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123456';
@@ -24,6 +26,8 @@ let isSyncInProgress = false;
 let signatureSet = new Set();
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(PHOTOS_DIR, { recursive: true });
+if (!fs.existsSync(PHOTO_RECORDS_FILE)) writePhotoRecords(readPhotoRecords());
 
 function emptyState() {
     return {
@@ -213,6 +217,19 @@ function writeState(data) {
     }, WRITE_DEBOUNCE_MS);
 }
 
+function readPhotoRecords() {
+    // 若文件不存在返回初始结构
+    if (!fs.existsSync(PHOTO_RECORDS_FILE)) {
+        return { crops: [], records: [], config: {
+            qweatherKey: 'f5832afbc18d40069dfe1e07da03663a',
+            visionApiKey: '', visionModel: 'qwen-vl-plus' }};
+    }
+    return JSON.parse(fs.readFileSync(PHOTO_RECORDS_FILE, 'utf8'));
+}
+
+function writePhotoRecords(data) {
+    fs.writeFileSync(PHOTO_RECORDS_FILE, JSON.stringify(data));
+}
 function flushSyncBeforeExit(signal) {
     if (isShuttingDown) return;
     isShuttingDown = true;
@@ -1107,6 +1124,166 @@ const server = http.createServer(async (req, res) => {
                 isSyncInProgress = false;
             }
         }
+        if (pathname === '/api/v1/photos/crops') {
+            const auth = requireAuth(); if (!auth) return;
+            const pr = readPhotoRecords();
+
+            if (req.method === 'GET') {
+                return sendJson(200, { ok: true, crops: pr.crops });
+            }
+            if (req.method === 'POST') {
+                const body = await readBody(req);
+                if (!body.name) return sendJson(400, { ok: false, msg: 'name required' });
+                const crop = {
+                    id: safeId('crop'),
+                    name: String(body.name).trim(),
+                    variety: String(body.variety || '').trim(),
+                    locationDesc: String(body.locationDesc || '').trim(),
+                    createdAt: new Date().toISOString()
+                };
+                pr.crops.push(crop);
+                writePhotoRecords(pr);
+                return sendJson(201, { ok: true, crop });
+            }
+        }
+
+        if (pathname === '/api/v1/photos/records' && req.method === 'POST') {
+            const auth = requireAuth(); if (!auth) return;
+            const body = await readBody(req, 15 * 1024 * 1024); // 15MB 上限
+            if (!body.cropId || !body.imageBase64) {
+                return sendJson(400, { ok: false, msg: 'cropId and imageBase64 required' });
+            }
+            const pr = readPhotoRecords();
+            if (!pr.crops.find(c => c.id === body.cropId)) {
+                return sendJson(404, { ok: false, msg: 'crop not found' });
+            }
+
+            // 解码并存储图片
+            const imgBuffer = Buffer.from(
+                body.imageBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64'
+            );
+            const now = body.createdAt ? new Date(body.createdAt) : new Date();
+            const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+            const dir = path.join(PHOTOS_DIR, yearMonth);
+            fs.mkdirSync(dir, { recursive: true });
+            const id = safeId('photo');
+            const imgPath = path.join(dir, `${id}.jpg`);
+            fs.writeFileSync(imgPath, imgBuffer);
+
+            const record = {
+                id,
+                cropId: body.cropId,
+                createdAt: now.toISOString(),
+                imagePath: `server-data/photos/${yearMonth}/${id}.jpg`,
+                imageUrl: `/api/v1/photos/records/${id}/image`,
+                gps: body.gps || null,
+                weather: body.weather || null,
+                linkedSensors: Array.isArray(body.linkedSensors) ? body.linkedSensors : [],
+                userNotes: String(body.userNotes || ''),
+                aiAnalysis: null
+            };
+            pr.records.push(record);
+            writePhotoRecords(pr);
+            const { imageBase64: _, ...recordWithoutImg } = record; // 不回传 base64
+            return sendJson(201, { ok: true, record: recordWithoutImg });
+        }
+
+        if (pathname === '/api/v1/photos/records' && req.method === 'GET') {
+            const auth = requireAuth(); if (!auth) return;
+            const pr = readPhotoRecords();
+            let records = pr.records;
+            if (query.cropId) records = records.filter(r => r.cropId === query.cropId);
+            records = [...records].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+            return sendJson(200, { ok: true, records });
+        }
+
+        if (pathname.startsWith('/api/v1/photos/records/') && pathname.endsWith('/image')) {
+            const auth = requireAuth(); if (!auth) return;
+            const id = pathname.split('/')[5]; // /api/v1/photos/records/{id}/image
+            const pr = readPhotoRecords();
+            const record = pr.records.find(r => r.id === id);
+            if (!record) return sendJson(404, { ok: false, msg: 'not found' });
+            const imgPath = path.join(__dirname, record.imagePath);
+            if (!fs.existsSync(imgPath)) return sendJson(404, { ok: false, msg: 'file missing' });
+            res.writeHead(200, {
+                'Content-Type': 'image/jpeg',
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'max-age=86400'
+            });
+            return fs.createReadStream(imgPath).pipe(res);
+        }
+
+        if (pathname === '/api/v1/photos/sensor-snapshot' && req.method === 'GET') {
+            const auth = requireAuth(); if (!auth) return;
+            const { deviceId, timestamp } = query;
+            if (!deviceId || !timestamp) return sendJson(400, { ok: false, msg: 'deviceId and timestamp required' });
+            const state = readState();
+            const targetTs = new Date(timestamp).getTime();
+            const readings = state.sensorReadings.filter(r => r.deviceId === deviceId);
+            if (!readings.length) return sendJson(404, { ok: false, msg: 'no readings for device' });
+            const closest = readings.reduce((a, b) =>
+                Math.abs(a.ts - targetTs) <= Math.abs(b.ts - targetTs) ? a : b
+            );
+            const channels = state.channels.filter(c => c.deviceId === deviceId);
+            const units = {};
+            channels.forEach(c => { units[c.displayName] = c.unit; });
+            return sendJson(200, { ok: true,
+                deviceId, selectedTimestamp: timestamp,
+                snapshotTs: closest.ts,
+                snapshotTimeStr: new Date(closest.ts).toISOString(),
+                values: closest.externalValues,
+                units
+            });
+        }
+
+        if (pathname === '/api/v1/photos/config') {
+            const auth = requireAuth(); if (!auth) return;
+            const pr = readPhotoRecords();
+
+            if (req.method === 'GET') {
+                // 脱敏返回，前端只需知道是否已配置
+                return sendJson(200, { ok: true, config: {
+                    qweatherKey: pr.config.qweatherKey ? '***' : '',
+                    visionApiKey: pr.config.visionApiKey ? '***' : '',
+                    visionModel: pr.config.visionModel || 'qwen-vl-plus'
+                }});
+            }
+            if (req.method === 'PUT') {
+                const body = await readBody(req);
+                if (body.qweatherKey !== undefined && body.qweatherKey !== '***')
+                    pr.config.qweatherKey = body.qweatherKey;
+                if (body.visionApiKey !== undefined && body.visionApiKey !== '***')
+                    pr.config.visionApiKey = body.visionApiKey;
+                if (body.visionModel) pr.config.visionModel = body.visionModel;
+                writePhotoRecords(pr);
+                return sendJson(200, { ok: true });
+            }
+        }
+
+        if (pathname === '/api/v1/photos/weather' && req.method === 'GET') {
+            const auth = requireAuth(); if (!auth) return;
+            const { lat, lng } = query;
+            if (!lat || !lng) return sendJson(400, { ok: false, msg: 'lat and lng required' });
+            const pr = readPhotoRecords();
+            if (!pr.config.qweatherKey) return sendJson(503, { ok: false, error: 'weather_api_not_configured' });
+            try {
+                // 和风天气 location 参数顺序：经度,纬度
+                const url = `https://devapi.qweather.com/v7/weather/now?location=${lng},${lat}&key=${pr.config.qweatherKey}&lang=zh`;
+                const result = await requestJson(url, { method: 'GET' });
+                if (result.data.code !== '200') return sendJson(502, { ok: false, error: 'weather_api_error', code: result.data.code });
+                const now = result.data.now;
+                return sendJson(200, { ok: true, weather: {
+                    fetchedAt: new Date().toISOString(),
+                    temp: Number(now.temp),
+                    humidity: Number(now.humidity),
+                    condition: now.text,
+                    windSpeed: Number(now.windSpeed),
+                    source: 'qweather'
+                }});
+            } catch(e) {
+                return sendJson(502, { ok: false, error: 'weather_fetch_failed' });
+            }
+        }
         if (pathname.startsWith('/proxy')) {
             const targetBase = (req.headers['x-target-base'] || DEFAULT_TARGET_BASE).replace(/\/+$/, '');
             const targetUrl = targetBase + pathname.replace('/proxy', '') + myUrl.search;
@@ -1149,6 +1326,7 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`[SERVER] RUNNING ON ${PORT}`);
     console.log(`[AUTH] Default admin: admin / ${DEFAULT_ADMIN_PASSWORD}`);
 });
+
 
 
 
