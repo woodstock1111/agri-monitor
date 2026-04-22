@@ -221,8 +221,8 @@ function readPhotoRecords() {
     // Return the initial photo records structure when the file does not exist.
     if (!fs.existsSync(PHOTO_RECORDS_FILE)) {
         return { crops: [], records: [], config: {
-            qweatherKey: 'f5832afbc18d40069dfe1e07da03663a',
-            visionApiKey: '', visionModel: 'qwen-vl-plus' }};
+            amapKey: '',
+            visionApiKey: '', visionModel: 'qwen-vl-plus', textModel: 'qwen-turbo' }};
     }
     return JSON.parse(fs.readFileSync(PHOTO_RECORDS_FILE, 'utf8'));
 }
@@ -1249,6 +1249,77 @@ const server = http.createServer(async (req, res) => {
             return fs.createReadStream(imgPath).pipe(res);
         }
 
+        if (pathname.startsWith('/api/v1/photos/records/') && pathname.endsWith('/annotate') && req.method === 'POST') {
+            const auth = requireAuth(); if (!auth) return;
+            const id = pathname.split('/')[5]; // /api/v1/photos/records/{id}/annotate
+            const pr = readPhotoRecords();
+            const record = pr.records.find(r => r.id === id);
+            if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
+            const visionApiKey = String(pr.config.visionApiKey || '').trim();
+            const textModel = String(pr.config.textModel || 'qwen-turbo').trim();
+            if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
+
+            const crop = (pr.crops || []).find(item => item.id === record.cropId) || {};
+            const weather = record.weather || {};
+            const weatherText = [
+                weather.condition || '',
+                weather.temp !== undefined ? `${weather.temp}°C` : '',
+                weather.humidity !== undefined ? `湿度${weather.humidity}%` : '',
+                weather.windPower ? `风力${weather.windPower}级` : '',
+            ].filter(Boolean).join(' ') || '无';
+            const sensorSummary = (record.linkedSensors || []).map(sensor => {
+                const snapshots = Array.isArray(sensor.snapshots) ? sensor.snapshots : (sensor.snapshot ? [sensor.snapshot] : []);
+                const latest = [...snapshots]
+                    .filter(Boolean)
+                    .sort((a, b) => Number(a.ts || 0) - Number(b.ts || 0))
+                    .slice(-1)[0];
+                if (!latest) return null;
+                return `${sensor.deviceName || sensor.deviceId}: ${JSON.stringify(latest.values || {})}`;
+            }).filter(Boolean).join('\n') || '无';
+            const userPrompt = `作物：${crop.name || '未知作物'}（品种：${crop.variety || '未知'}）
+拍摄时间：${record.createdAt}
+天气：${weatherText}
+传感器摘要：${sensorSummary}
+农户备注：${record.userNotes || '无'}
+
+请输出以下格式的 JSON 标注：
+{
+  "growthStage": "生长阶段（如苗期/分蘖期/拔节期/抽穗期/灌浆期/成熟期，不确定填null）",
+  "symptoms": ["观察到的症状列表，无则空数组"],
+  "affectedPart": "受影响部位（如叶片/根部/茎秆/果实，无则null）",
+  "possibleCause": "可能原因（如病害/虫害/缺素/浇水过度/干旱，不确定填null）",
+  "severity": severity等级数字（0=正常 1=轻微 2=中等 3=严重），
+  "actions": ["建议或已执行操作列表，无则空数组"],
+  "tags": ["关键词标签列表，3个以内"]
+}`;
+            const body = JSON.stringify({
+                model: textModel,
+                messages: [
+                    { role: 'system', content: '你是农业数据标注专家，负责将农户的田间观察备注转换为结构化标注数据。只输出 JSON，不要任何其他文字。' },
+                    { role: 'user', content: userPrompt },
+                ],
+            });
+            try {
+                const result = await requestJson('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${visionApiKey}`,
+                    },
+                }, body);
+                const content = result.data?.choices?.[0]?.message?.content || '';
+                try {
+                    record.aiAnalysis = JSON.parse(content);
+                } catch {
+                    record.aiAnalysis = content;
+                }
+                writePhotoRecords(pr);
+                return sendJson(200, { ok: true, aiAnalysis: record.aiAnalysis });
+            } catch (error) {
+                return sendJson(502, { ok: false, msg: error.message || 'Annotation failed' });
+            }
+        }
+
         if (pathname === '/api/v1/photos/sensor-range' && req.method === 'GET') {
             const auth = requireAuth(); if (!auth) return;
             const { deviceId, startTime, endTime } = query;
@@ -1308,18 +1379,20 @@ const server = http.createServer(async (req, res) => {
             if (req.method === 'GET') {
                 // Return masked config values to the frontend.
                 return sendJson(200, { ok: true, config: {
-                    qweatherKey: pr.config.qweatherKey ? '***' : '',
+                    amapKey: (pr.config.amapKey || pr.config.qweatherKey) ? '***' : '',
                     visionApiKey: pr.config.visionApiKey ? '***' : '',
-                    visionModel: pr.config.visionModel || 'qwen-vl-plus'
+                    visionModel: pr.config.visionModel || 'qwen-vl-plus',
+                    textModel: pr.config.textModel || 'qwen-turbo'
                 }});
             }
             if (req.method === 'PUT') {
                 const body = await readBody(req);
-                if (body.qweatherKey !== undefined && body.qweatherKey !== '***')
-                    pr.config.qweatherKey = body.qweatherKey;
+                if (body.amapKey !== undefined && body.amapKey !== '***')
+                    pr.config.amapKey = body.amapKey;
                 if (body.visionApiKey !== undefined && body.visionApiKey !== '***')
                     pr.config.visionApiKey = body.visionApiKey;
                 if (body.visionModel) pr.config.visionModel = body.visionModel;
+                if (body.textModel) pr.config.textModel = body.textModel;
                 writePhotoRecords(pr);
                 return sendJson(200, { ok: true });
             }
@@ -1330,21 +1403,28 @@ const server = http.createServer(async (req, res) => {
             const { lat, lng } = query;
             if (!lat || !lng) return sendJson(400, { ok: false, msg: 'lat and lng required' });
             const pr = readPhotoRecords();
-            if (!pr.config.qweatherKey) return sendJson(503, { ok: false, error: 'weather_api_not_configured' });
+            const amapKey = pr.config.amapKey || pr.config.qweatherKey || '';
+            if (!amapKey) return sendJson(503, { ok: false, error: 'weather_api_not_configured' });
             try {
-                // QWeather expects location as longitude,latitude.
-                const url = `https://devapi.qweather.com/v7/weather/now?location=${lng},${lat}&key=${pr.config.qweatherKey}&lang=zh`;
-                const result = await requestJson(url, { method: 'GET' });
-                if (result.data.code !== '200') return sendJson(502, { ok: false, error: 'weather_api_error', code: result.data.code });
-                const now = result.data.now;
+                const regeoUrl = `https://restapi.amap.com/v3/geocode/regeo?key=${encodeURIComponent(amapKey)}&location=${encodeURIComponent(`${lng},${lat}`)}&output=json`;
+                const regeo = await requestJson(regeoUrl, { method: 'GET' });
+                if (regeo.data?.status !== '1') return sendJson(502, { ok: false, error: 'regeo_api_error', info: regeo.data?.info });
+                const adcode = regeo.data?.regeocode?.addressComponent?.adcode;
+                if (!adcode) return sendJson(502, { ok: false, error: 'adcode_not_found' });
+                const weatherUrl = `https://restapi.amap.com/v3/weather/weatherInfo?key=${encodeURIComponent(amapKey)}&city=${encodeURIComponent(adcode)}&extensions=base&output=json`;
+                const result = await requestJson(weatherUrl, { method: 'GET' });
+                if (result.data?.status !== '1' || !Array.isArray(result.data.lives) || !result.data.lives[0]) {
+                    return sendJson(502, { ok: false, error: 'weather_api_error', info: result.data?.info });
+                }
+                const now = result.data.lives[0];
                 return sendJson(200, { ok: true, weather: {
                     fetchedAt: new Date().toISOString(),
-                    temp: Number(now.temp),
+                    temp: Number(now.temperature),
                     humidity: Number(now.humidity),
-                    condition: now.text,
-                    windSpeed: Number(now.windSpeed),
-                    precip: Number(now.precip),
-                    source: 'qweather'
+                    condition: now.weather,
+                    windPower: String(now.windpower || ''),
+                    windDirection: String(now.winddirection || ''),
+                    source: 'amap'
                 }});
             } catch(e) {
                 return sendJson(502, { ok: false, error: 'weather_fetch_failed' });

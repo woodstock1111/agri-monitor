@@ -2905,8 +2905,8 @@ const app = {
       if (r.weather.condition) weatherParts.push(this.sanitize(r.weather.condition));
       if (r.weather.temp !== undefined && Number.isFinite(Number(r.weather.temp))) weatherParts.push(`${Number(r.weather.temp)}\u00b0C`);
       if (r.weather.humidity !== undefined && Number.isFinite(Number(r.weather.humidity))) weatherParts.push(`\u6e7f\u5ea6${Number(r.weather.humidity)}%`);
-      if (r.weather.windSpeed !== undefined && Number.isFinite(Number(r.weather.windSpeed))) weatherParts.push(`\u98ce\u901f${Number(r.weather.windSpeed)}km/h`);
-      if (r.weather.precip !== undefined && Number.isFinite(Number(r.weather.precip))) weatherParts.push(`\u964d\u6c34${Number(r.weather.precip)}mm/h`);
+      if (r.weather.windPower) weatherParts.push(`\u98ce\u529b${this.sanitize(String(r.weather.windPower))}\u7ea7`);
+      if (r.weather.windDirection) weatherParts.push(`\u98ce\u5411${this.sanitize(String(r.weather.windDirection))}`);
       html += `
         <div class="detail-section">
           <div class="detail-label">\u5929\u6c14</div>
@@ -2946,13 +2946,67 @@ const app = {
         <div class="detail-notes">${this.sanitize(r.userNotes)}</div>
       </div>
     `;
-    html += '<div class="detail-section"><div class="detail-label">AI \u5206\u6790</div><div class="record-ai-badge pending">\u5f85\u5206\u6790</div></div>';
+    html += `
+      <div class="detail-section">
+        <div class="detail-label">AI \u5206\u6790</div>
+        <div id="record-ai-analysis">${this._renderAnnotation(r)}</div>
+      </div>
+    `;
     document.getElementById('record-detail-body').innerHTML = html;
     this.openModal('modal-record-detail');
     this._loadPhotoImage(r).then(src => {
       const img = document.querySelector(`img[data-detail-photo-id="${CSS.escape(r.id)}"]`);
       if (img && src) img.src = src;
     }).catch(() => {});
+  },
+
+  _renderAnnotation(record) {
+    const analysis = record?.aiAnalysis;
+    if (!analysis) {
+      return `<button class="btn-primary btn-sm" id="btn-ai-annotate-${this.sanitize(record.id)}" onclick="app.annotatePhotoRecord('${this.sanitize(record.id)}')"><i class="fa-solid fa-tags"></i> \u751f\u6210\u6807\u6ce8</button>`;
+    }
+    if (typeof analysis === 'string') {
+      return `<div class="detail-notes">${this.sanitize(analysis)}</div>`;
+    }
+    const severityLabels = ['\u6b63\u5e38', '\u8f7b\u5fae', '\u4e2d\u7b49', '\u4e25\u91cd'];
+    const severity = Number(analysis.severity);
+    const severityText = Number.isInteger(severity) && severity >= 0 && severity <= 3 ? severityLabels[severity] : '-';
+    const list = value => Array.isArray(value) && value.length
+      ? '<ul class="ai-analysis-list">' + value.map(item => `<li>${this.sanitize(String(item))}</li>`).join('') + '</ul>'
+      : '<span style="color:var(--text-muted)">-</span>';
+    return `
+      <div class="ai-analysis-result">
+        <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u751f\u957f\u9636\u6bb5</div><div>${this.sanitize(analysis.growthStage || '-')}</div></div>
+        <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u75c7\u72b6</div>${list(analysis.symptoms)}</div>
+        <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u53d7\u5f71\u54cd\u90e8\u4f4d</div><div>${this.sanitize(analysis.affectedPart || '-')}</div></div>
+        <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u53ef\u80fd\u539f\u56e0</div><div>${this.sanitize(analysis.possibleCause || '-')}</div></div>
+        <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u4e25\u91cd\u7a0b\u5ea6</div><div>${severityText}</div></div>
+        <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u64cd\u4f5c\u5efa\u8bae</div>${list(analysis.actions)}</div>
+        <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u6807\u7b7e</div>${list(analysis.tags)}</div>
+      </div>
+    `;
+  },
+
+  async annotatePhotoRecord(recordId) {
+    const record = this._photoRecordCache[recordId];
+    if (!record) return;
+    const host = document.getElementById('record-ai-analysis');
+    const btn = document.getElementById('btn-ai-annotate-' + recordId);
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> \u6807\u6ce8\u4e2d...';
+    }
+    if (host && !btn) host.innerHTML = '<div class="record-ai-badge pending">\u6807\u6ce8\u4e2d...</div>';
+    try {
+      const data = await this._photoRequest('/records/' + encodeURIComponent(recordId) + '/annotate', { method: 'POST' });
+      record.aiAnalysis = data.aiAnalysis;
+      this._photoRecordCache[recordId] = record;
+      if (host) host.innerHTML = this._renderAnnotation(record);
+      UI.toast('\u6807\u6ce8\u5df2\u751f\u6210', 'success');
+    } catch (e) {
+      if (host) host.innerHTML = this._renderAnnotation(record);
+      UI.toast('\u6807\u6ce8\u5931\u8d25\uff1a' + e.message, 'danger');
+    }
   },
 
   openNewCropModal() {
@@ -3115,10 +3169,11 @@ const app = {
       this._currentWeather = data.weather;
       const wd = document.getElementById('weather-display');
       wd.style.display = 'flex';
-      const precipText = data.weather.precip !== undefined && Number.isFinite(Number(data.weather.precip))
-        ? ` \u964d\u6c34${Number(data.weather.precip)}mm/h`
-        : '';
-      wd.innerHTML = `<i class="fa-solid fa-cloud-sun"></i> ${this.sanitize(data.weather.condition || '')} ${this.sanitize(String(data.weather.temp))}\u2103 \u6e7f\u5ea6${this.sanitize(String(data.weather.humidity))}% \u98ce\u901f${this.sanitize(String(data.weather.windSpeed))}km/h${precipText}`;
+      const windText = [
+        data.weather.windPower ? `\u98ce\u529b${this.sanitize(String(data.weather.windPower))}\u7ea7` : '',
+        data.weather.windDirection ? `\u98ce\u5411${this.sanitize(String(data.weather.windDirection))}` : '',
+      ].filter(Boolean).join(' ');
+      wd.innerHTML = `<i class="fa-solid fa-cloud-sun"></i> ${this.sanitize(data.weather.condition || '')} ${this.sanitize(String(data.weather.temp))}\u2103 \u6e7f\u5ea6${this.sanitize(String(data.weather.humidity))}% ${windText}`;
     } catch(e) {
       this._currentWeather = null;
     }
@@ -3189,8 +3244,9 @@ const app = {
     try {
       const data = await this._photoRequest('/config');
       if (data.ok) {
-        document.getElementById('cfg-qweather-key').placeholder = data.config.qweatherKey ? '\u5df2\u914d\u7f6e\uff08\u8f93\u5165\u65b0\u503c\u53ef\u66f4\u65b0\uff09' : '\u672a\u914d\u7f6e';
+        document.getElementById('cfg-amap-key').placeholder = data.config.amapKey ? '\u5df2\u914d\u7f6e\uff08\u8f93\u5165\u65b0\u503c\u53ef\u66f4\u65b0\uff09' : '\u672a\u914d\u7f6e';
         document.getElementById('cfg-vision-model').value = data.config.visionModel || 'qwen-vl-plus';
+        document.getElementById('cfg-text-model').value = data.config.textModel || 'qwen-turbo';
       }
     } catch(e) {}
     this.openModal('modal-photo-config');
@@ -3198,9 +3254,10 @@ const app = {
 
   async savePhotoConfig() {
     const payload = {
-      qweatherKey: document.getElementById('cfg-qweather-key').value.trim(),
+      amapKey: document.getElementById('cfg-amap-key').value.trim(),
       visionApiKey: document.getElementById('cfg-vision-key').value.trim(),
       visionModel: document.getElementById('cfg-vision-model').value,
+      textModel: document.getElementById('cfg-text-model').value.trim() || 'qwen-turbo',
     };
     try {
       await this._photoRequest('/config', {
