@@ -1950,6 +1950,10 @@ button:active,
 .modal-overlay {
   background: rgba(30,41,59,0.90);
 }
+#modal-record-detail {
+  background: transparent;
+  backdrop-filter: blur(12px);
+}
 
 .modal-box {
   max-height: 88vh;
@@ -3490,6 +3494,7 @@ body::before {
 .record-notes-preview { font-size: 12px; color: var(--text-secondary, var(--text-muted)); line-height: 1.4; }
 .record-ai-badge { display: inline-block; margin-top: 6px; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
 .record-ai-badge.pending { background: rgba(255,204,0,.15); color: #cc9900; }
+.record-ai-badge.done { background: rgba(16,185,129,0.15); color: var(--success); }
 
 .photo-upload-area {
   border: 2px dashed var(--border);
@@ -3540,7 +3545,11 @@ body::before {
 .form-row-inline > div { flex: 1; }
 .btn-sm { padding: 5px 12px; font-size: 12px; }
 
-.modal-box-wide { max-width: 680px; width: 95vw; }
+.modal-box-wide { max-width: 520px; width: 92vw; max-height: 85vh; }
+#modal-record-detail .modal-body {
+  overflow-y: auto;
+  max-height: calc(85vh - 60px);
+}
 .detail-img {
   width: 100%;
   border-radius: 8px;

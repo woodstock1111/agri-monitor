@@ -892,7 +892,7 @@ const app = {
     document.querySelectorAll('.nav-link').forEach(l => l.classList.toggle('active', l.dataset.page === page));
     const titles = {
       dashboard:'\u7cfb\u7edf\u603b\u89c8', realtime:'\u5b9e\u65f6\u6570\u636e', video:'\u89c6\u9891\u76d1\u63a7', history:'\u66f2\u7ebf\u56fe\u8868',
-      cloudsync:'\u5386\u53f2\u8bb0\u5f55', pestdb:'\u75c5\u5bb3\u866b\u6570\u636e\u5e93', photos:'\u56fe\u50cf\u8bb0\u5f55', automation:'\u81ea\u52a8\u5316\u6d41\u7a0b', locations:'\u5730\u5757\u7ba1\u7406', devices:'\u8bbe\u5907\u7ba1\u7406',
+      cloudsync:'\u5386\u53f2\u8bb0\u5f55', pestdb:'\u75c5\u5bb3\u866b\u6570\u636e\u5e93', photos:'AI\u8bb0\u5f55', automation:'\u81ea\u52a8\u5316\u6d41\u7a0b', locations:'\u5730\u5757\u7ba1\u7406', devices:'\u8bbe\u5907\u7ba1\u7406',
       accounts:'\u8d26\u53f7\u7ba1\u7406'
     };
     document.getElementById('page-title').textContent = titles[page] || '';
@@ -1986,6 +1986,7 @@ const app = {
     if (!el) return;
     el.style.display = '';
     el.classList.add('open');
+    if (el.id === 'modal-record-detail') document.body.style.overflow = 'hidden';
     if (t === 'location') setTimeout(() => this.initLocMapPicker(), 200);
     if (t === 'device') setTimeout(() => this.initDevMapPicker(), 200);
   },
@@ -1994,6 +1995,7 @@ const app = {
     if (!el) return;
     el.classList.remove('open');
     if (document.getElementById(t)) el.style.display = 'none';
+    if (el.id === 'modal-record-detail') document.body.style.overflow = '';
     if (t === 'location') this._destroyPickerMap('loc');
     if (t === 'device') this._destroyPickerMap('dev');
   },
@@ -2727,7 +2729,24 @@ const app = {
     document.getElementById('records-header').style.display = 'none';
     document.getElementById('records-empty').style.display = 'flex';
     document.getElementById('records-grid').innerHTML = '';
-    await this._loadCrops();
+    await Promise.all([
+      this._loadPhotoConfigLabel(),
+      this._loadCrops(),
+    ]);
+  },
+
+  _updatePhotoModelLabel(textModel) {
+    const el = document.getElementById('photo-model-label');
+    if (el) el.textContent = textModel ? `模型：${textModel}` : '';
+  },
+
+  async _loadPhotoConfigLabel() {
+    try {
+      const data = await this._photoRequest('/config');
+      this._updatePhotoModelLabel(data.config?.textModel || 'qwen-turbo');
+    } catch (e) {
+      this._updatePhotoModelLabel('');
+    }
   },
 
   async _photoRequest(path, options = {}) {
@@ -2797,7 +2816,7 @@ const app = {
 
   async deleteCrop(cropId) {
     if (!cropId) return;
-    if (!window.confirm('\u786e\u5b9a\u5220\u9664\u8be5\u519c\u4f5c\u7269\u53ca\u5176\u5168\u90e8\u56fe\u50cf\u8bb0\u5f55\u5417\uff1f')) return;
+    if (!window.confirm('\u786e\u5b9a\u5220\u9664\u8be5\u519c\u4f5c\u7269\u53ca\u5176\u5168\u90e8AI\u8bb0\u5f55\u5417\uff1f')) return;
     try {
       await this._photoRequest('/crops?id=' + encodeURIComponent(cropId), { method: 'DELETE' });
       if (this._selectedCropId === cropId) {
@@ -2830,6 +2849,9 @@ const app = {
       const sensorBit = Array.isArray(r.linkedSensors) && r.linkedSensors.length ? `<span class="record-tag"><i class="fa-solid fa-microchip"></i> ${r.linkedSensors.length} \u4e2a\u4f20\u611f\u5668</span>` : '';
       const notes = String(r.userNotes || '');
       const notesPreview = notes ? notes.slice(0, 50) + (notes.length > 50 ? '\u2026' : '') : '';
+      const annotationBadge = r.aiAnalysis
+        ? '<div class="record-ai-badge done">\u5df2\u6807\u6ce8</div>'
+        : '<div class="record-ai-badge pending">\u5f85\u6807\u6ce8</div>';
       return `
         <div class="record-card" onclick="app.openRecordDetail('${this.sanitize(r.id)}')">
           <button class="btn-icon record-delete-btn" title="\u5220\u9664\u8bb0\u5f55" onclick="event.stopPropagation(); app.deletePhotoRecord('${this.sanitize(r.id)}')"><i class="fa-solid fa-trash"></i></button>
@@ -2840,7 +2862,7 @@ const app = {
             <div class="record-card-date">${dateStr}</div>
             <div class="record-tags">${weatherBit}${sensorBit}</div>
             ${notesPreview ? `<div class="record-notes-preview">${this.sanitize(notesPreview)}</div>` : ''}
-            <div class="record-ai-badge pending">\u5f85\u5206\u6790</div>
+            ${annotationBadge}
           </div>
         </div>
       `;
@@ -2966,7 +2988,7 @@ const app = {
       return `<button class="btn-primary btn-sm" id="btn-ai-annotate-${this.sanitize(record.id)}" onclick="app.annotatePhotoRecord('${this.sanitize(record.id)}')"><i class="fa-solid fa-tags"></i> \u751f\u6210\u6807\u6ce8</button>`;
     }
     if (typeof analysis === 'string') {
-      return `<div class="detail-notes">${this.sanitize(analysis)}</div>`;
+      return `<span class="record-ai-badge done">\u5df2\u6807\u6ce8</span><div class="detail-notes">${this.sanitize(analysis)}</div>`;
     }
     const severityLabels = ['\u6b63\u5e38', '\u8f7b\u5fae', '\u4e2d\u7b49', '\u4e25\u91cd'];
     const severity = Number(analysis.severity);
@@ -2976,6 +2998,7 @@ const app = {
       : '<span style="color:var(--text-muted)">-</span>';
     return `
       <div class="ai-analysis-result">
+        <span class="record-ai-badge done">\u5df2\u6807\u6ce8</span>
         <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u751f\u957f\u9636\u6bb5</div><div>${this.sanitize(analysis.growthStage || '-')}</div></div>
         <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u75c7\u72b6</div>${list(analysis.symptoms)}</div>
         <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u53d7\u5f71\u54cd\u90e8\u4f4d</div><div>${this.sanitize(analysis.affectedPart || '-')}</div></div>
@@ -3247,6 +3270,7 @@ const app = {
         document.getElementById('cfg-amap-key').placeholder = data.config.amapKey ? '\u5df2\u914d\u7f6e\uff08\u8f93\u5165\u65b0\u503c\u53ef\u66f4\u65b0\uff09' : '\u672a\u914d\u7f6e';
         document.getElementById('cfg-vision-model').value = data.config.visionModel || 'qwen-vl-plus';
         document.getElementById('cfg-text-model').value = data.config.textModel || 'qwen-turbo';
+        this._updatePhotoModelLabel(data.config.textModel || 'qwen-turbo');
       }
     } catch(e) {}
     this.openModal('modal-photo-config');
@@ -3266,6 +3290,7 @@ const app = {
         body: JSON.stringify(payload),
       });
       this.closeModal('modal-photo-config');
+      this._updatePhotoModelLabel(payload.textModel);
       UI.toast('\u914d\u7f6e\u5df2\u4fdd\u5b58', 'success');
     } catch(e) {
       UI.toast('\u4fdd\u5b58\u914d\u7f6e\u5931\u8d25', 'danger');
