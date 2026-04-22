@@ -2138,6 +2138,7 @@ const app = {
       if(type==='location') this.deleteLocation(id);
       else if(type==='device'){
         DataRepository.deleteDevice(id);
+        Store.updateDeviceHistoryRows(id, []);
         this.renderDevices();
         try {
           await SyncService.pushNowForced();

@@ -912,6 +912,7 @@ const server = http.createServer(async (req, res) => {
                 const body = await readBody(req, 10 * 1024 * 1024);
                 const next = mergeOperationalState(auth.state, body, auth.user);
                 writeState(next);
+                signatureSet = new Set((next.sensorReadings || []).map(item => item.signature).filter(Boolean));
                 return sendJson(200, { ok: true });
             }
             return sendJson(200, operationalSnapshot(auth.state, auth.user));
