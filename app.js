@@ -1431,9 +1431,10 @@ const app = {
         this._renderApiSensorCards(dev, rtData);
       } else if (lastReadings.length) {
         const latest = lastReadings[0];
-        const date = new Date(latest.ts || latest.deviceTimestamp || 0);
+        const utc8ms = (latest.ts || latest.deviceTimestamp || 0) + 8 * 3600 * 1000;
+        const date = new Date(utc8ms);
         const pad = n => String(n).padStart(2, '0');
-        const timeStr = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+        const timeStr = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
         if (grid) grid.innerHTML = `
           <div style="grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;padding:0 4px">
             <div class="api-data-timestamp"><i class="fa-solid fa-cloud"></i> \u5728\u7ebf\u4f20\u611f\u5668 \u00b7 \u8bbe\u5907 ${addr}</div>
@@ -1514,9 +1515,10 @@ const app = {
       return;
     }
     tbody.innerHTML = readings.map(r => {
-      const date = new Date(r.ts || r.deviceTimestamp || 0);
+      const utc8ms = (r.ts || r.deviceTimestamp || 0) + 8 * 3600 * 1000;
+      const date = new Date(utc8ms);
       const pad = n => String(n).padStart(2, '0');
-      const fallbackTime = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+      const fallbackTime = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
       const time = r.recordTimeStr || fallbackTime;
       return `<tr><td style="font-family:'JetBrains Mono';font-size:12px">${time}</td><td>${dev.name}</td>${cols.map(c => `<td>${r.values[c] !== undefined ? r.values[c] : '-'}</td>`).join('')}</tr>`;
     }).join('');
