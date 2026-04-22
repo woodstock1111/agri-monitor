@@ -273,24 +273,21 @@
 
                 <!-- Photos -->
                 <div class="page" id="page-photos">
-                    <div class="page-toolbar">
-                        <div class="toolbar-group">
-                            <button class="btn-primary" id="btn-new-crop" onclick="app.openNewCropModal()">
-                                <i class="fa-solid fa-plus"></i> 新建农作物
-                            </button>
-                        </div>
-                        <div class="toolbar-group" style="margin-left:auto">
-                            <span id="photo-model-label" style="font-size:12px;color:var(--text-muted);margin-right:6px"></span>
-                            <button class="btn-ghost" onclick="app.openPhotoConfig()" title="API配置">
-                                <i class="fa-solid fa-gear"></i>
-                            </button>
-                        </div>
-                    </div>
-
                     <div class="photos-layout">
                         <!-- 左侧农作物列表 -->
                         <div class="crops-panel" id="crops-panel">
-                            <div class="crops-panel-header">农作物</div>
+                            <div class="crops-panel-header">
+                                <button class="btn-icon" onclick="app.openPhotoConfig()" title="API配置">
+                                    <i class="fa-solid fa-gear"></i>
+                                </button>
+                                <div class="crops-panel-title">
+                                    <span>农作物</span>
+                                    <span id="photo-model-label" style="font-size:12px;color:var(--text-muted);letter-spacing:0;text-transform:none"></span>
+                                </div>
+                                <button class="btn-primary btn-sm" id="btn-new-crop" onclick="app.openNewCropModal()" title="新建农作物">
+                                    <i class="fa-solid fa-plus"></i>
+                                </button>
+                            </div>
                             <div class="crops-list" id="crops-list"></div>
                         </div>
 

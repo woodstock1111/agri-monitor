@@ -1512,7 +1512,7 @@ const app = {
       return;
     }
     tbody.innerHTML = readings.map(r => {
-      const time = new Date(r.ts || r.deviceTimestamp || 0).toLocaleString('zh-CN');
+      const time = r.recordTimeStr || new Date(r.ts || r.deviceTimestamp || 0).toLocaleString('zh-CN');
       return `<tr><td style="font-family:'JetBrains Mono';font-size:12px">${time}</td><td>${dev.name}</td>${cols.map(c => `<td>${r.values[c] !== undefined ? r.values[c] : '-'}</td>`).join('')}</tr>`;
     }).join('');
   },
@@ -1608,14 +1608,23 @@ const app = {
         : ['temp', 'humid', 'soil', 'light', 'co2', 'wind'];
     }
 
-    const labels = rows.length
-      ? rows.map(r => new Date(r._ts).toLocaleString('zh-CN', {
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-        }))
-      : [];
+    const formatHistoryAxisLabel = r => {
+      const raw = String(r.recordTimeStr || '').trim();
+      if (raw) {
+        const match = raw.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})[ T](\d{1,2}):(\d{1,2})/);
+        if (match) {
+          return `${String(match[2]).padStart(2, '0')}-${String(match[3]).padStart(2, '0')} ${String(match[4]).padStart(2, '0')}:${String(match[5]).padStart(2, '0')}`;
+        }
+        return raw.replace('T', ' ').slice(5, 16);
+      }
+      return new Date(r._ts).toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    };
+    const labels = rows.length ? rows.map(formatHistoryAxisLabel) : [];
 
     // Draw one chart point per real reading. No hourly averaging.
     const pointData = (key) => {
