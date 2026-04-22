@@ -1024,7 +1024,8 @@ const server = http.createServer(async (req, res) => {
                 });
                 if (rows.length >= limit) break;
             }
-            if (order === 'asc') rows = rows.reverse();
+            rows.sort((a, b) => a.ts - b.ts);
+            if (order === 'desc') rows = rows.reverse();
             return sendJson(200, { deviceId, rows });
         }
 
@@ -1125,7 +1126,7 @@ const server = http.createServer(async (req, res) => {
                     };
                     const latestRecord = normalizePlatformCloudRow(state, dev, latestRow, 'cloud-history-sync');
                     const currentRtTs = Number(state.serverRealtime?.[dev.id]?.deviceTimestamp);
-                    if (!Number.isFinite(currentRtTs) || latestRecord.deviceTimestamp >= currentRtTs) {
+                    if (latestRecord.deviceTimestamp >= Date.now() - 2 * CLOUD_POLL_INTERVAL_MS && (!Number.isFinite(currentRtTs) || latestRecord.deviceTimestamp >= currentRtTs)) {
                         updatePlatformRealtime(state, dev, latestRecord, latestRow.dataItem || []);
                     }
                 }
