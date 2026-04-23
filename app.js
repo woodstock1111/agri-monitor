@@ -748,6 +748,8 @@ const ChartHelper = {
       type: 'line', data: { labels, datasets },
       options: {
         responsive: true, maintainAspectRatio: false, animation: { duration: 500 },
+        interaction: { mode: 'index', intersect: false },
+        elements: { point: { radius: 0, hoverRadius: 4, hitRadius: 10 } },
         plugins: { legend: { position:'top', labels: { usePointStyle: true, padding: 16 } } },
         scales: { x: { grid: { color:'#f1f5f9' } }, y: { grid: { color:'#f1f5f9' } } }
       }
@@ -2117,6 +2119,8 @@ const app = {
     DataRepository.saveDevice(dev);
     this.closeModal('device'); this.clearDeviceForm(); this.renderDevices(); this.updateSidebarStatus();
     if (this.currentPage === 'dashboard') this.initDashboard();
+    if (this.currentPage === 'realtime') this.initRealtime();
+    if (this.currentPage === 'history') this.initHistory();
     UI.toast('\u8bbe\u5907\u5df2\u4fdd\u5b58', 'success');
   },
   editDevice(id) {
@@ -2166,6 +2170,8 @@ const app = {
       else if(type==='automation'){ DataRepository.deleteAutomation(id); this.renderAutomation(); }
       this.closeModal('confirm'); this.updateSidebarStatus();
       if (this.currentPage === 'dashboard') this.initDashboard();
+      if (this.currentPage === 'realtime') this.initRealtime();
+      if (this.currentPage === 'history') this.initHistory();
       UI.toast('\u5220\u9664\u6210\u529f', 'success');
     };
     this.openModal('confirm');
