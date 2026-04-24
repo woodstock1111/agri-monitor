@@ -1119,7 +1119,7 @@ const app = {
       <div class="ft-date-bar" ondragover="app._ftDateDragOver(event)" ondragleave="app._ftDateDragLeave(event)">
         <button class="btn-ghost btn-sm" onclick="app._shiftFtDate(-1)" title="前一天"><i class="fa-solid fa-chevron-left"></i></button>
         <div class="ft-date-center">
-          <button id="ft-date-title" class="ft-date-title" onmouseenter="app._openFtCalendar(this)" onclick="app._openFtCalendar(this)">
+          <button id="ft-date-title" class="ft-date-title" onmouseenter="clearTimeout(app._ftPopoverCloseTimer); app._openFtCalendar(this)" onmouseleave="app._scheduleFtPopoverClose()" onclick="app._openFtCalendar(this)">
             <span>${year}年${month}月${day}日 ${weekday}</span>
             <i class="fa-solid fa-calendar-days"></i>
           </button>
@@ -1154,6 +1154,8 @@ const app = {
     pop.className = 'ft-calendar-popover';
     this._ftPopover = pop;
     document.body.appendChild(pop);
+    pop.addEventListener('mouseenter', () => clearTimeout(this._ftPopoverCloseTimer));
+    pop.addEventListener('mouseleave', () => this._scheduleFtPopoverClose());
     const rect = (this._ftCalendarAnchor || document.body).getBoundingClientRect();
     pop.style.left = Math.min(rect.left + window.scrollX, window.scrollX + window.innerWidth - 330) + 'px';
     pop.style.top = (rect.bottom + window.scrollY + 8) + 'px';
@@ -1199,6 +1201,11 @@ const app = {
     this._ftDate = date;
     this._closeFtPopover();
     this.initFarmTasks();
+  },
+
+  _scheduleFtPopoverClose(delay = 180) {
+    clearTimeout(this._ftPopoverCloseTimer);
+    this._ftPopoverCloseTimer = setTimeout(() => this._closeFtPopover(), delay);
   },
 
   async _loadFtTasks() {
@@ -3688,9 +3695,9 @@ const app = {
       const sensorBit = Array.isArray(r.linkedSensors) && r.linkedSensors.length ? `<span class="record-tag"><i class="fa-solid fa-microchip"></i> ${r.linkedSensors.length} \u4e2a\u4f20\u611f\u5668</span>` : '';
       const notes = String(r.userNotes || '');
       const notesPreview = notes ? notes.slice(0, 50) + (notes.length > 50 ? '\u2026' : '') : '';
-      const annotationBadge = r.aiAnalysis
-        ? '<div class="record-ai-badge done">\u5df2\u6807\u6ce8</div>'
-        : '<div class="record-ai-badge pending">\u5f85\u6807\u6ce8</div>';
+      const aiAction = r.aiAnalysis
+        ? '<button class="record-ai-action done" onclick="event.stopPropagation()" disabled>AI 已标注</button>'
+        : `<button class="record-ai-action" id="btn-ai-card-${this.sanitize(r.id)}" onclick="event.stopPropagation(); app.annotatePhotoRecord('${this.sanitize(r.id)}')"><i class="fa-solid fa-wand-magic-sparkles"></i> AI 标注</button>`;
       return `
         <div class="record-card" onclick="app.openRecordDetail('${this.sanitize(r.id)}')">
           <button class="btn-icon record-delete-btn" title="\u5220\u9664\u8bb0\u5f55" onclick="event.stopPropagation(); app.deletePhotoRecord('${this.sanitize(r.id)}')"><i class="fa-solid fa-trash"></i></button>
@@ -3701,7 +3708,7 @@ const app = {
             <div class="record-card-date">${dateStr}</div>
             <div class="record-tags">${weatherBit}${sensorBit}</div>
             ${notesPreview ? `<div class="record-notes-preview">${this.sanitize(notesPreview)}</div>` : ''}
-            ${annotationBadge}
+            ${aiAction}
           </div>
         </div>
       `;
@@ -3908,9 +3915,14 @@ const app = {
     if (!record) return;
     const host = document.getElementById('record-ai-analysis');
     const btn = document.getElementById('btn-ai-annotate-' + recordId);
+    const cardBtn = document.getElementById('btn-ai-card-' + recordId);
     if (btn) {
       btn.disabled = true;
       btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> \u6807\u6ce8\u4e2d...';
+    }
+    if (cardBtn) {
+      cardBtn.disabled = true;
+      cardBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 标注中';
     }
       if (host && !btn) host.innerHTML = '<div class="record-ai-badge pending">\u6807\u6ce8\u4e2d...</div>';
       try {
@@ -3923,8 +3935,13 @@ const app = {
       this._photoRecordCache[recordId] = record;
       if (host) host.innerHTML = this._renderAnnotation(record);
       UI.toast('\u6807\u6ce8\u5df2\u751f\u6210', 'success');
+      if (!host && this.currentPage === 'photos' && this._selectedCropId) await this._loadRecords(this._selectedCropId);
     } catch (e) {
       if (host) host.innerHTML = this._renderAnnotation(record);
+      if (cardBtn) {
+        cardBtn.disabled = false;
+        cardBtn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> AI 标注';
+      }
       UI.toast('\u6807\u6ce8\u5931\u8d25\uff1a' + e.message, 'danger');
     }
   },

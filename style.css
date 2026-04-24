@@ -4624,7 +4624,8 @@ body::before {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 14px 16px;
+  min-height: 64px;
+  padding: 0 24px;
   font-weight: 700;
   font-size: 14px;
   color: var(--text-primary);
@@ -4674,7 +4675,7 @@ body::before {
 .crops-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 18px;
 }
 
 .crops-empty {
@@ -4752,18 +4753,25 @@ body::before {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
 }
 
 .records-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  min-height: 64px;
+  padding: 0 24px;
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--border);
 }
 
 .records-crop-name {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 .records-empty {
@@ -4784,9 +4792,9 @@ body::before {
 .records-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 16px;
+  gap: 14px;
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 18px;
 }
 
 .record-card {
@@ -4800,8 +4808,8 @@ body::before {
 }
 
 .record-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, .15);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(30, 41, 59, 0.08);
 }
 
 .record-delete-btn {
@@ -4840,7 +4848,7 @@ body::before {
 }
 
 .record-card-body {
-  padding: 10px 12px;
+  padding: 14px 16px 48px;
 }
 
 .record-card-date {
@@ -4853,7 +4861,7 @@ body::before {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  margin-bottom: 6px;
+  margin-bottom: 10px;
 }
 
 .record-tag {
@@ -4886,6 +4894,35 @@ body::before {
 .record-ai-badge.done {
   background: rgba(16, 185, 129, 0.15);
   color: var(--success);
+}
+
+.record-ai-action {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(124, 58, 237, 0.24);
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(37, 99, 235, 0.92), rgba(124, 58, 237, 0.92));
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  box-shadow: 0 6px 16px rgba(67, 56, 202, 0.22);
+}
+
+.record-ai-action.done {
+  background: rgba(124, 58, 237, 0.12);
+  color: rgba(67, 56, 202, 0.76);
+  box-shadow: none;
+}
+
+.record-ai-action:disabled {
+  cursor: default;
 }
 
 .photo-upload-area {
@@ -5159,6 +5196,11 @@ body.ft-farm-dragging #farmtasks-date-header .ft-date-bar::after {
   min-height: 260px;
 }
 
+.ft-user-panel {
+  display: flex;
+  flex-direction: column;
+}
+
 .ft-palette-panel {
   padding-bottom: 14px;
 }
@@ -5411,31 +5453,39 @@ body.ft-farm-dragging #farmtasks-date-header .ft-date-bar::after {
 
 #ft-user-list {
   position: relative;
+  flex: 1;
   min-height: 204px;
   padding: 18px;
-  transition: background .16s ease, outline-color .16s ease;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  transition: background .16s ease, border-color .16s ease;
 }
 
+body.ft-farm-dragging #ft-user-list,
 #ft-user-list.drag-over {
-  background: rgba(232, 240, 254, 0.58);
-  outline: 2px dashed rgba(16, 112, 224, 0.54);
-  outline-offset: -10px;
-  border-radius: 10px;
+  background: rgba(232, 240, 254, 0.72);
+  border-color: rgba(16, 112, 224, 0.48);
 }
 
+body.ft-farm-dragging #ft-user-list::after,
 #ft-user-list.drag-over::after {
   content: "松手添加到我的农事";
   position: absolute;
-  inset: 12px;
-  border-radius: 8px;
-  background: rgba(232, 240, 254, 0.42);
+  inset: 4px;
+  border-radius: 10px;
+  background: rgba(232, 240, 254, 0.84);
   color: var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   pointer-events: none;
+  z-index: 4;
+}
+
+body.ft-farm-dragging #ft-user-list .ft-card {
+  opacity: 0.38;
 }
 
 .ft-empty-drop {
@@ -5845,4 +5895,218 @@ body.ft-farm-dragging #farmtasks-date-header .ft-date-bar::after {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent !important;
+}
+
+/* Final visual pass: calm solid canvas, no page gradients */
+:root {
+  --bg-base: #eef2f6;
+  --bg-surface: #f8fafc;
+  --bg-panel: #f8fafc;
+  --glass-fill: rgba(248, 250, 252, 0.82);
+  --glass-fill-strong: rgba(248, 250, 252, 0.92);
+}
+
+html,
+body {
+  background: #eef2f6 !important;
+  background-color: #eef2f6 !important;
+  background-image: none !important;
+}
+
+body::before {
+  display: none !important;
+  content: none !important;
+}
+
+.app-shell,
+.main-wrap,
+.page-area,
+.page {
+  background: transparent !important;
+  background-image: none !important;
+}
+
+.topbar,
+.glass-panel,
+.device-table-wrap,
+.video-slot,
+.location-card,
+.pest-card,
+.auto-rule-card,
+.runtime-banner,
+.alert-drawer,
+.modal-box,
+#sensor-grid,
+.kpi-card,
+.factor-checkbox-group,
+.cloud-device-item,
+.crops-panel,
+.records-panel,
+.record-card {
+  background-color: rgba(248, 250, 252, 0.86) !important;
+  background-image: none !important;
+  border-color: rgba(203, 213, 225, 0.72) !important;
+  box-shadow: 0 10px 28px rgba(30, 41, 59, 0.06) !important;
+}
+
+.text-input,
+.select-input,
+.btn-ghost,
+.btn-secondary,
+.panel-btn,
+.alert-btn,
+.sidebar-toggle,
+.map-layer-btn,
+.live-badge,
+.ft-card,
+.ft-preset-card,
+.dash-ft-card {
+  background-color: rgba(255, 255, 255, 0.72) !important;
+  background-image: none !important;
+  border-color: rgba(203, 213, 225, 0.72) !important;
+}
+
+.record-card:hover {
+  box-shadow: 0 8px 18px rgba(30, 41, 59, 0.08) !important;
+}
+
+.sidebar,
+.sidebar-brand,
+.sidebar-nav,
+.sidebar-status,
+.topbar {
+  background-color: rgba(248, 250, 252, 0.88) !important;
+  background-image: none !important;
+}
+
+.sidebar {
+  border-right: 1px solid rgba(203, 213, 225, 0.72) !important;
+}
+
+.topbar {
+  border: 1px solid rgba(203, 213, 225, 0.72) !important;
+  box-shadow: 0 10px 28px rgba(30, 41, 59, 0.06) !important;
+}
+
+.ft-card.ai,
+.dash-ft-card.ai {
+  border-color: rgba(124, 58, 237, 0.24) !important;
+  background:
+    linear-gradient(180deg, rgba(124, 58, 237, 0.08), rgba(16, 112, 224, 0.05)),
+    rgba(255, 255, 255, 0.72) !important;
+}
+
+.records-panel,
+.crops-panel {
+  border-radius: 12px !important;
+  border: 1px solid rgba(203, 213, 225, 0.72) !important;
+  overflow: hidden;
+}
+
+.records-header,
+.crops-panel-header {
+  min-height: 64px !important;
+  padding: 0 24px !important;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.72) !important;
+}
+
+/* AI records: compact cards with an internal panel scrollbar */
+.photos-layout,
+.records-panel {
+  min-height: 0;
+}
+
+.records-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.records-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  align-content: start;
+  justify-content: start;
+  grid-template-columns: repeat(auto-fill, 150px) !important;
+  gap: 12px !important;
+  padding: 16px !important;
+  padding-right: 12px !important;
+}
+
+.records-grid .empty-state {
+  grid-column: 1 / -1;
+}
+
+.records-grid::-webkit-scrollbar {
+  width: 6px;
+}
+
+.records-grid::-webkit-scrollbar-track {
+  background: rgba(226, 232, 240, 0.58);
+  border-radius: 999px;
+}
+
+.records-grid::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.34);
+  border-radius: 999px;
+}
+
+.records-grid::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.48);
+}
+
+.record-card {
+  width: 150px;
+  border-radius: 9px !important;
+}
+
+.record-card-img {
+  aspect-ratio: 4 / 3;
+}
+
+.record-card-body {
+  padding: 10px 10px 40px !important;
+}
+
+.record-card-date {
+  margin-bottom: 5px !important;
+  font-size: 11px !important;
+  line-height: 1.25;
+}
+
+.record-tags {
+  gap: 4px !important;
+  margin-bottom: 6px !important;
+}
+
+.record-tag {
+  padding: 1px 5px !important;
+  font-size: 10px !important;
+  line-height: 1.35;
+}
+
+.record-notes-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 11px !important;
+  line-height: 1.35 !important;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.record-delete-btn {
+  top: 6px !important;
+  right: 6px !important;
+  width: 24px !important;
+  height: 24px !important;
+}
+
+.record-ai-action {
+  right: 8px !important;
+  bottom: 8px !important;
+  min-height: 24px !important;
+  padding: 0 8px !important;
+  font-size: 11px !important;
 }
