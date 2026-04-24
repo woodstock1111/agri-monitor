@@ -8,6 +8,7 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'server-data');
 const STATE_FILE = path.join(DATA_DIR, 'app-state.json');
 const PHOTO_RECORDS_FILE = path.join(DATA_DIR, 'photo-records.json');
+const FARM_TASKS_FILE = path.join(DATA_DIR, 'farm-tasks.json');
 const PHOTOS_DIR = path.join(DATA_DIR, 'photos');
 const DEFAULT_TARGET_BASE = 'http://www.0531yun.com';
 const DEFAULT_TENANT_ID = 'tenant_default';
@@ -215,6 +216,17 @@ function writeState(data) {
     writeTimeout = setTimeout(() => {
         void flushToDisk();
     }, WRITE_DEBOUNCE_MS);
+}
+
+function readFarmTasks() {
+    if (!fs.existsSync(FARM_TASKS_FILE)) return { tasks: [] };
+    const data = JSON.parse(fs.readFileSync(FARM_TASKS_FILE, 'utf8'));
+    if (!Array.isArray(data.tasks)) data.tasks = [];
+    return data;
+}
+
+function writeFarmTasks(data) {
+    fs.writeFileSync(FARM_TASKS_FILE, JSON.stringify(data));
 }
 
 function readPhotoRecords() {
@@ -1137,6 +1149,81 @@ const server = http.createServer(async (req, res) => {
                 isSyncInProgress = false;
             }
         }
+
+        if (pathname === '/api/v1/farm-tasks/calendar' && req.method === 'GET') {
+            const auth = requireAuth(); if (!auth) return;
+            const year = Number(query.year);
+            const month = Number(query.month);
+            if (!Number.isFinite(year) || !Number.isFinite(month)) {
+                return sendJson(400, { ok: false, msg: 'year and month required' });
+            }
+            const prefix = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-`;
+            const ft = readFarmTasks();
+            const calendar = {};
+            (ft.tasks || []).forEach(task => {
+                const date = String(task.date || '');
+                if (!date.startsWith(prefix)) return;
+                calendar[date] = (calendar[date] || 0) + 1;
+            });
+            return sendJson(200, { ok: true, calendar });
+        }
+
+        if (pathname === '/api/v1/farm-tasks' && req.method === 'GET') {
+            const auth = requireAuth(); if (!auth) return;
+            const date = String(query.date || '').trim();
+            const ft = readFarmTasks();
+            const tasks = (ft.tasks || [])
+                .filter(task => String(task.date || '') === date)
+                .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+            return sendJson(200, { ok: true, tasks });
+        }
+
+        if (pathname === '/api/v1/farm-tasks' && req.method === 'POST') {
+            const auth = requireAuth(); if (!auth) return;
+            const body = await readBody(req);
+            const title = String(body.title || '').trim();
+            const date = String(body.date || '').trim();
+            if (!title || !date) return sendJson(400, { ok: false, msg: 'title and date required' });
+            const ft = readFarmTasks();
+            const task = {
+                id: safeId('task'),
+                title,
+                category: String(body.category || '').trim(),
+                type: body.type === 'ai' ? 'ai' : 'user',
+                date,
+                status: 'pending',
+                completedAt: null,
+                aiReason: null,
+                createdAt: Date.now()
+            };
+            ft.tasks.push(task);
+            writeFarmTasks(ft);
+            return sendJson(201, { ok: true, task });
+        }
+
+        if (pathname.startsWith('/api/v1/farm-tasks/') && req.method === 'PUT') {
+            const auth = requireAuth(); if (!auth) return;
+            const id = pathname.split('/')[4];
+            const body = await readBody(req);
+            const ft = readFarmTasks();
+            const task = (ft.tasks || []).find(item => item.id === id);
+            if (!task) return sendJson(404, { ok: false, msg: 'task not found' });
+            ['title', 'status', 'completedAt', 'date', 'category', 'createdAt'].forEach(key => {
+                if (body[key] !== undefined) task[key] = body[key];
+            });
+            writeFarmTasks(ft);
+            return sendJson(200, { ok: true, task });
+        }
+
+        if (pathname.startsWith('/api/v1/farm-tasks/') && req.method === 'DELETE') {
+            const auth = requireAuth(); if (!auth) return;
+            const id = pathname.split('/')[4];
+            const ft = readFarmTasks();
+            ft.tasks = (ft.tasks || []).filter(task => task.id !== id);
+            writeFarmTasks(ft);
+            return sendJson(200, { ok: true });
+        }
+
         if (pathname === '/api/v1/photos/crops') {
             const auth = requireAuth(); if (!auth) return;
             const pr = readPhotoRecords();
@@ -1205,6 +1292,7 @@ const server = http.createServer(async (req, res) => {
                 weather: body.weather || null,
                 linkedSensors: Array.isArray(body.linkedSensors) ? body.linkedSensors : [],
                 userNotes: String(body.userNotes || ''),
+                farmNotes: String(body.farmNotes || ''),
                 aiAnalysis: null
             };
             pr.records.push(record);
@@ -1235,6 +1323,20 @@ const server = http.createServer(async (req, res) => {
             return sendJson(200, { ok: true });
         }
 
+        if (pathname.startsWith('/api/v1/photos/records/') && req.method === 'PUT') {
+            const auth = requireAuth(); if (!auth) return;
+            const id = pathname.split('/')[5];
+            const body = await readBody(req).catch(() => ({}));
+            const pr = readPhotoRecords();
+            const record = pr.records.find(r => r.id === id);
+            if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
+            ['farmNotes'].forEach(key => {
+                if (body[key] !== undefined) record[key] = String(body[key] || '');
+            });
+            writePhotoRecords(pr);
+            return sendJson(200, { ok: true, record });
+        }
+
         if (pathname.startsWith('/api/v1/photos/records/') && pathname.endsWith('/image')) {
             const auth = requireAuth(); if (!auth) return;
             const id = pathname.split('/')[5]; // /api/v1/photos/records/{id}/image
@@ -1254,6 +1356,7 @@ const server = http.createServer(async (req, res) => {
         if (pathname.startsWith('/api/v1/photos/records/') && pathname.endsWith('/annotate') && req.method === 'POST') {
             const auth = requireAuth(); if (!auth) return;
             const id = pathname.split('/')[5]; // /api/v1/photos/records/{id}/annotate
+            const requestBody = await readBody(req).catch(() => ({}));
             const pr = readPhotoRecords();
             const record = pr.records.find(r => r.id === id);
             if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
@@ -1278,11 +1381,13 @@ const server = http.createServer(async (req, res) => {
                 if (!latest) return null;
                 return `${sensor.deviceName || sensor.deviceId}: ${JSON.stringify(latest.values || {})}`;
             }).filter(Boolean).join('\n') || '无';
+            const farmNotesText = String(requestBody.farmNotes || '').trim();
+            const farmNotesLine = farmNotesText ? `\n农事记录：${farmNotesText}` : '';
             const userPrompt = `作物：${crop.name || '未知作物'}（品种：${crop.variety || '未知'}）
 拍摄时间：${record.createdAt}
 天气：${weatherText}
 传感器摘要：${sensorSummary}
-农户备注：${record.userNotes || '无'}
+农户备注：${record.userNotes || '无'}${farmNotesLine}
 
 请输出以下格式的 JSON 标注：
 {
@@ -1292,6 +1397,7 @@ const server = http.createServer(async (req, res) => {
   "possibleCause": "可能原因（如病害/虫害/缺素/浇水过度/干旱，不确定填null）",
   "severity": severity等级数字（0=正常 1=轻微 2=中等 3=严重），
   "actions": ["建议或已执行操作列表，无则空数组"],
+  "recommendedActions": ["可执行的农事操作列表，如浇水/施肥/除草，最多5条，无则空数组"],
   "tags": ["关键词标签列表，3个以内"]
 }`;
             const body = JSON.stringify({

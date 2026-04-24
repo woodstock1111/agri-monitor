@@ -807,6 +807,13 @@ const app = {
   _crops: [],
   _photoRecordCache: {},
   _photoImageUrls: {},
+  _ftDate: null,
+  _ftTasksCache: [],
+  _ftCalendarMonth: null,
+  _ftPopover: null,
+  _ftLongPressTimer: null,
+  _ftLongPressFired: false,
+  _ftDragTaskId: null,
 
   //     BOOT    
   async init() {
@@ -894,7 +901,7 @@ const app = {
     document.querySelectorAll('.nav-link').forEach(l => l.classList.toggle('active', l.dataset.page === page));
     const titles = {
       dashboard:'\u7cfb\u7edf\u603b\u89c8', realtime:'\u5b9e\u65f6\u6570\u636e', video:'\u89c6\u9891\u76d1\u63a7', history:'\u66f2\u7ebf\u56fe\u8868',
-      cloudsync:'\u5386\u53f2\u8bb0\u5f55', pestdb:'\u75c5\u5bb3\u866b\u6570\u636e\u5e93', photos:'AI\u8bb0\u5f55', automation:'\u81ea\u52a8\u5316\u6d41\u7a0b', locations:'\u5730\u5757\u7ba1\u7406', devices:'\u8bbe\u5907\u7ba1\u7406',
+      farmtasks:'\u519c\u4e8b\u8ba1\u5212', cloudsync:'\u5386\u53f2\u8bb0\u5f55', pestdb:'\u75c5\u5bb3\u866b\u6570\u636e\u5e93', photos:'AI\u8bb0\u5f55', automation:'\u81ea\u52a8\u5316\u6d41\u7a0b', locations:'\u5730\u5757\u7ba1\u7406', devices:'\u8bbe\u5907\u7ba1\u7406',
       accounts:'\u8d26\u53f7\u7ba1\u7406'
     };
     document.getElementById('page-title').textContent = titles[page] || '';
@@ -912,7 +919,7 @@ const app = {
     }
     this.stopLive();
     const init = {
-      dashboard: () => this.initDashboard(), realtime: () => this.initRealtime(),
+      dashboard: () => this.initDashboard(), farmtasks: () => this.initFarmTasks(), realtime: () => this.initRealtime(),
       video: () => this.renderVideo(), history: () => this.initHistory(), cloudsync: () => this.initCloudSync(),
       pestdb: () => this.renderPests(), photos: () => this.renderPhotos(), automation: () => this.renderAutomation(),
       locations: () => this.renderLocations(), devices: () => this.renderDevices(), accounts: () => this.renderAccounts(),
@@ -1046,6 +1053,748 @@ const app = {
     });
   },
 
+  //     FARM TASKS
+  _ftToday() {
+    const d = new Date(Date.now() + 8 * 3600 * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  },
+
+  _ftDateParts(dateStr = this._ftDate || this._ftToday()) {
+    const [y, m, d] = String(dateStr).split('-').map(Number);
+    return { year: y, month: m, day: d };
+  },
+
+  async _ftRequest(path, options = {}) {
+    return AuthService.request('/farm-tasks' + path, {
+      ...options,
+      headers: AuthService.authHeaders(options.headers || {}),
+    });
+  },
+
+  async initFarmTasks() {
+    this._ftDate = this._ftDate || this._ftToday();
+    this._ftCalendarMonth = this._ftDateParts();
+    this._ensureFtStyle();
+    if (!this._ftClickOutsideHandler) {
+      this._ftClickOutsideHandler = e => {
+        if (this._ftPopover && !this._ftPopover.contains(e.target) && e.target !== this._ftCalendarAnchor) {
+          this._closeFtPopover();
+        }
+      };
+      document.addEventListener('click', this._ftClickOutsideHandler, { capture: true });
+    }
+    this._renderFtDateHeader();
+    await this._loadFtTasks();
+  },
+
+  _ensureFtStyle() {
+    if (document.getElementById('farmtasks-runtime-style')) return;
+    const style = document.createElement('style');
+    style.id = 'farmtasks-runtime-style';
+    style.textContent = `
+      .ft-card.ft-completing { animation: ftComplete 400ms ease; }
+      .ft-card.ft-reverting { animation: ftRevert 300ms ease; }
+      @keyframes ftComplete {
+        0% { background: var(--bg-surface); }
+        40% { background: rgba(16, 185, 129, 0.35); transform: scale(0.96); }
+        100% { background: var(--bg-surface); }
+      }
+      @keyframes ftRevert {
+        0% { background: var(--bg-surface); }
+        40% { background: rgba(245, 158, 11, 0.35); transform: scale(0.97); }
+        100% { background: var(--bg-surface); }
+      }
+      #ft-new-category .active { border-color: var(--accent) !important; background: var(--accent-light) !important; }
+    `;
+    document.head.appendChild(style);
+  },
+
+  _renderFtDateHeader() {
+    const el = document.getElementById('farmtasks-date-header');
+    if (!el) return;
+    const { year, month, day } = this._ftDateParts();
+    const weekday = ['星期日','星期一','星期二','星期三','星期四','星期五','星期六'][new Date(year, month - 1, day).getDay()];
+    el.innerHTML = `
+      <div class="ft-date-bar" ondragover="app._ftDateDragOver(event)" ondragleave="app._ftDateDragLeave(event)">
+        <button class="btn-ghost btn-sm" onclick="app._shiftFtDate(-1)" title="前一天"><i class="fa-solid fa-chevron-left"></i></button>
+        <div class="ft-date-center">
+          <button id="ft-date-title" class="ft-date-title" onmouseenter="app._openFtCalendar(this)" onclick="app._openFtCalendar(this)">
+            <span>${year}年${month}月${day}日 ${weekday}</span>
+            <i class="fa-solid fa-calendar-days"></i>
+          </button>
+        </div>
+        <button class="btn-ghost btn-sm" onclick="app._shiftFtDate(1)" title="后一天"><i class="fa-solid fa-chevron-right"></i></button>
+      </div>
+      <div id="ft-date-drop-calendar" class="ft-date-drop-calendar"></div>
+    `;
+  },
+
+  _shiftFtDate(delta) {
+    const { year, month, day } = this._ftDateParts();
+    const next = new Date(year, month - 1, day + delta);
+    const pad = n => String(n).padStart(2, '0');
+    this._ftDate = `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`;
+    this.initFarmTasks();
+  },
+
+  _closeFtPopover() {
+    if (this._ftPopover) this._ftPopover.remove();
+    this._ftPopover = null;
+  },
+
+  async _openFtCalendar(anchor, year = null, month = null) {
+    if (anchor) this._ftCalendarAnchor = anchor;
+    const base = this._ftCalendarMonth || this._ftDateParts();
+    const y = year || base.year;
+    const m = month || base.month;
+    this._ftCalendarMonth = { year: y, month: m };
+    this._closeFtPopover();
+    const pop = document.createElement('div');
+    pop.className = 'ft-calendar-popover';
+    this._ftPopover = pop;
+    document.body.appendChild(pop);
+    const rect = (this._ftCalendarAnchor || document.body).getBoundingClientRect();
+    pop.style.left = Math.min(rect.left + window.scrollX, window.scrollX + window.innerWidth - 330) + 'px';
+    pop.style.top = (rect.bottom + window.scrollY + 8) + 'px';
+    let calendar = {};
+    try {
+      const data = await this._ftRequest(`/calendar?year=${encodeURIComponent(y)}&month=${encodeURIComponent(m)}`);
+      calendar = data.calendar || {};
+    } catch (e) {
+      UI.toast('农事日历加载失败：' + e.message, 'danger');
+    }
+    const firstDay = new Date(y, m - 1, 1).getDay();
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const today = this._ftToday();
+    const cells = [];
+    for (let i = 0; i < 42; i += 1) {
+      const day = i - firstDay + 1;
+      if (day < 1 || day > daysInMonth) {
+        cells.push('<div style="width:32px;height:32px"></div>');
+        continue;
+      }
+      const date = `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const selected = date === this._ftDate;
+      const todayStyle = date === today ? 'outline:2px solid var(--accent);outline-offset:-2px;' : '';
+      const classes = ['ft-calendar-day', calendar[date] ? 'has-task' : '', date === today ? 'is-today' : '', selected ? 'is-selected' : ''].filter(Boolean).join(' ');
+      cells.push(`<button class="${classes}" onclick="app._selectFtDate('${date}')" style="${todayStyle}">${day}</button>`);
+    }
+    const prev = new Date(y, m - 2, 1);
+    const next = new Date(y, m, 1);
+    pop.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <button class="btn-icon" onclick="app._openFtCalendar(null, ${prev.getFullYear()}, ${prev.getMonth() + 1})"><i class="fa-solid fa-chevron-left"></i></button>
+        <strong>${y}年${m}月</strong>
+        <button class="btn-icon" onclick="app._openFtCalendar(null, ${next.getFullYear()}, ${next.getMonth() + 1})"><i class="fa-solid fa-chevron-right"></i></button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(7,32px);gap:6px;justify-content:center;text-align:center;font-size:12px;color:var(--text-muted);margin-bottom:6px">
+        ${['日','一','二','三','四','五','六'].map(w => `<span>${w}</span>`).join('')}
+      </div>
+      <div class="ft-calendar-grid">${cells.join('')}</div>
+    `;
+  },
+
+  _selectFtDate(date) {
+    this._ftDate = date;
+    this._closeFtPopover();
+    this.initFarmTasks();
+  },
+
+  async _loadFtTasks() {
+    try {
+      const data = await this._ftRequest('?date=' + encodeURIComponent(this._ftDate));
+      this._ftTasksCache = data.tasks || [];
+      this._renderFtAiSection();
+      this._renderFtUserSection();
+    } catch (e) {
+      UI.toast('农事任务加载失败：' + e.message, 'danger');
+    }
+  },
+
+  _ftCategoryEmoji(category = '其他') {
+    return ({ '\u6d47\u6c34':'\ud83d\udca7', '\u9664\u8349':'\ud83c\udf3f', '\u65bd\u80a5':'\ud83c\udf31', '\u6253\u836f':'\ud83e\uddf4', '\u91c7\u6536':'\ud83c\udf3e', '\u5de1\u67e5':'\ud83d\udc41', '\u5176\u4ed6':'\ud83d\udccb' })[category] || '\ud83d\udccb';
+  },
+
+  _renderFtAiSection() {
+    const el = document.getElementById('farmtasks-ai-section');
+    if (!el) return;
+    const tasks = this._ftTasksCache.filter(task => task.type === 'ai');
+    el.innerHTML = `
+      <div class="glass-panel" style="margin-bottom:16px">
+        <div class="panel-header"><span class="panel-title">✨ AI 推荐</span></div>
+        <div class="ft-task-grid ft-ai-list">
+          ${tasks.length ? tasks.map(task => this._renderFtCard(task)).join('') : '<div class="ft-ai-empty">暂无推荐，完成 AI 记录标注后生成</div>'}
+        </div>
+      </div>
+    `;
+  },
+
+  _renderFtUserSection() {
+    const el = document.getElementById('farmtasks-user-section');
+    if (!el) return;
+    const tasks = this._ftTasksCache.filter(task => task.type !== 'ai');
+    const pending = tasks.filter(task => task.status !== 'done');
+    el.innerHTML = `
+      <div class="ft-workbench">
+        <aside class="glass-panel ft-palette-panel">
+          <div class="panel-header">
+            <span class="panel-title">农事</span>
+            <button class="btn-icon" onclick="app.addFtPreset()" title="添加农事"><i class="fa-solid fa-plus"></i></button>
+          </div>
+          <div class="ft-preset-list">
+            ${this._getFtPresets().map(item => this._renderFtPreset(item)).join('')}
+          </div>
+          <div class="ft-palette-hint">拖到右侧添加</div>
+        </aside>
+        <div class="glass-panel ft-user-panel">
+          <div class="panel-header"><span class="panel-title">我的农事</span><span class="badge badge-sensor">${pending.length} 待办</span></div>
+          <div id="ft-user-list" class="ft-drop-zone" ondragover="app._ftPaletteDragOver(event)" ondragleave="app._ftPaletteDragLeave(event)" ondrop="app._ftPaletteDrop(event)">
+            ${tasks.map(task => this._renderFtCard(task)).join('') || '<div class="empty-state ft-empty-drop"><p>今天还没有农事任务</p></div>'}
+          </div>
+        </div>
+      </div>
+    `;
+  },
+
+  _getFtPresets() {
+    const defaults = [
+      { title: '浇水', category: '浇水' },
+      { title: '除草', category: '除草' },
+      { title: '农药', category: '打药' },
+    ];
+    let custom = [];
+    try { custom = JSON.parse(localStorage.getItem('agri_ft_presets') || '[]') || []; } catch { custom = []; }
+    return [...defaults, ...custom].filter(item => item && item.title);
+  },
+
+  _renderFtPreset(item) {
+    const title = this.sanitize(item.title || '');
+    const category = this.sanitize(item.category || item.title || '其他');
+    return `
+      <button class="ft-preset-card" draggable="true" data-title="${title}" data-category="${category}"
+        ondragstart="app._ftPresetDragStart(event)" ondragend="app._ftPresetDragEnd()">
+        <span class="ft-emoji">${this._ftCategoryEmoji(item.category || item.title)}</span>
+        <span>${title}</span>
+      </button>
+    `;
+  },
+
+  _renderFtCard(task) {
+    const done = task.status === 'done';
+    const id = this.sanitize(task.id);
+    const ai = task.type === 'ai';
+    return `
+      <div class="ft-card ${done ? 'done' : ''} ${ai ? 'ai' : ''}" draggable="true" data-task-id="${id}"
+        ondragstart="app._ftDragStart(event, '${id}')" ondragover="app._ftDragOver(event)" ondragleave="app._ftDragLeave(event)" ondragend="app._ftDragEnd(event)" ondrop="app._ftDrop(event, '${id}')">
+        <div class="ft-emoji">${this._ftCategoryEmoji(task.category)}</div>
+        <div class="ft-title" contenteditable="true" onmousedown="event.stopPropagation()" onmouseup="event.stopPropagation()" onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}" onblur="app.updateFtTaskTitle('${id}', this.textContent)">${this.sanitize(task.title || '')}</div>
+        <div class="ft-card-footer">
+          <button class="ft-switch ${done ? 'done' : 'pending'}" title="拖动切换完成状态"
+            onmousedown="event.stopPropagation()" onclick="event.stopPropagation(); app.toggleFtStatus('${id}')"
+            onpointerdown="app._startFtSwitchDrag(event, '${id}')">
+            <span class="ft-switch-label">${done ? '已完成' : '未完成'}</span>
+            <span class="ft-switch-knob"></span>
+          </button>
+        </div>
+        <div class="ft-actions">
+          <button class="btn-icon delete" title="删除" onmousedown="event.stopPropagation()" onclick="event.stopPropagation(); app.deleteFtTask('${id}')">✕</button>
+        </div>
+      </div>
+    `;
+  },
+
+  _renderFtNewRow() {
+    const cats = ['浇水','除草','施肥','打药','采收','巡查','其他'];
+    return `
+      <div style="display:flex;align-items:center;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border);flex-wrap:wrap">
+        <div id="ft-new-category" data-value="巡查" style="display:flex;gap:6px">${cats.map(cat => `<button class="btn-icon ${cat === '巡查' ? 'active' : ''}" data-cat="${cat}" onclick="app._selectFtNewCategory(this)" title="${cat}">${this._ftCategoryEmoji(cat)}</button>`).join('')}</div>
+        <input class="text-input" id="ft-new-title" placeholder="添加今天的农事任务" style="flex:1;min-width:220px" onkeydown="if(event.key==='Enter') app.createFtTask()">
+        <button class="btn-primary btn-sm" onclick="app.createFtTask()"><i class="fa-solid fa-check"></i></button>
+      </div>
+    `;
+  },
+
+  _selectFtNewCategory(btn) {
+    const wrap = document.getElementById('ft-new-category');
+    if (!wrap) return;
+    wrap.dataset.value = btn.dataset.cat || '其他';
+    wrap.querySelectorAll('button').forEach(el => {
+      el.classList.toggle('active', el === btn);
+      el.style.borderColor = el === btn ? 'var(--accent)' : 'var(--border)';
+      el.style.background = el === btn ? 'var(--accent-light)' : 'transparent';
+    });
+  },
+
+  _focusFtNewTask() {
+    document.getElementById('ft-new-title')?.focus();
+  },
+
+  async addFtPreset() {
+    const title = await this.promptAction('添加农事名称', '请输入农事名称');
+    const nextTitle = String(title || '').trim();
+    if (!nextTitle) return;
+    let custom = [];
+    try { custom = JSON.parse(localStorage.getItem('agri_ft_presets') || '[]') || []; } catch { custom = []; }
+    custom.push({ title: nextTitle, category: nextTitle });
+    localStorage.setItem('agri_ft_presets', JSON.stringify(custom));
+    this._renderFtUserSection();
+  },
+
+  async createFtTask() {
+    const input = document.getElementById('ft-new-title');
+    const title = input?.value.trim();
+    if (!title) { UI.toast('请输入任务标题', 'warning'); return; }
+    const category = document.getElementById('ft-new-category')?.dataset.value || '巡查';
+    try {
+      await this._ftRequest('', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, category, date: this._ftDate, type: 'user' }),
+      });
+      input.value = '';
+      await this._loadFtTasks();
+      UI.toast('任务已创建', 'success');
+    } catch (e) {
+      UI.toast('创建任务失败：' + e.message, 'danger');
+    }
+  },
+
+  async createFtTaskFromPreset(title, category) {
+    return this.createFtTaskFromPresetForDate(title, category, this._ftDate);
+  },
+
+  async createFtTaskFromPresetForDate(title, category, date) {
+    const nextTitle = String(title || '').trim();
+    if (!nextTitle) return;
+    try {
+      await this._ftRequest('', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: nextTitle, category: category || nextTitle, date: date || this._ftDate, type: 'user' }),
+      });
+      await this._loadFtTasks();
+      UI.toast('已添加到我的农事', 'success');
+    } catch (e) {
+      UI.toast('添加农事失败：' + e.message, 'danger');
+    }
+  },
+
+  async updateFtTaskTitle(id, title) {
+    const nextTitle = String(title || '').trim();
+    if (!nextTitle) { await this._loadFtTasks(); return; }
+    try {
+      await this._ftRequest('/' + encodeURIComponent(id), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: nextTitle }),
+      });
+      const task = this._ftTasksCache.find(item => item.id === id);
+      if (task) task.title = nextTitle;
+    } catch (e) {
+      UI.toast('保存任务失败：' + e.message, 'danger');
+    }
+  },
+
+  _startFtStatusPress(id, card) {
+    this._cancelFtStatusPress();
+    this._ftLongPressFired = false;
+    this._ftLongPressTimer = setTimeout(async () => {
+      if (this._ftSuppressStatusClick) return;
+      this._ftLongPressFired = true;
+      navigator.vibrate?.(50);
+      await this._setFtStatus(id, 'pending', null, 'ft-reverting', card);
+    }, 750);
+  },
+
+  async _endFtStatusPress(id, card) {
+    if (!this._ftLongPressTimer) return;
+    if (this._ftSuppressStatusClick) {
+      this._cancelFtStatusPress();
+      return;
+    }
+    clearTimeout(this._ftLongPressTimer);
+    this._ftLongPressTimer = null;
+    if (this._ftLongPressFired) return;
+    const task = this._ftTasksCache.find(item => item.id === id);
+    if (!task || task.status === 'done') return;
+    await this._setFtStatus(id, 'done', Date.now(), 'ft-completing', card);
+  },
+
+  _cancelFtStatusPress() {
+    if (this._ftLongPressTimer) clearTimeout(this._ftLongPressTimer);
+    this._ftLongPressTimer = null;
+  },
+
+  async _setFtStatus(id, status, completedAt, cls, card) {
+    try {
+      if (card && cls) card.classList.add(cls);
+      await this._ftRequest('/' + encodeURIComponent(id), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, completedAt }),
+      });
+      const task = this._ftTasksCache.find(item => item.id === id);
+      if (task) {
+        task.status = status;
+        task.completedAt = completedAt;
+      }
+      this._renderFtUserSection();
+    } catch (e) {
+      UI.toast('更新任务失败：' + e.message, 'danger');
+      await this._loadFtTasks();
+    }
+  },
+
+  async toggleFtStatus(id) {
+    if (this._ftSwitchDragged) return;
+    const task = this._ftTasksCache.find(item => item.id === id);
+    if (!task) return;
+    const nextDone = task.status !== 'done';
+    await this._setFtStatus(id, nextDone ? 'done' : 'pending', nextDone ? Date.now() : null, null, null);
+  },
+
+  _startFtSwitchDrag(event, id) {
+    event.stopPropagation();
+    const startX = event.clientX;
+    this._ftSwitchDragged = false;
+    const cleanup = () => {
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', up);
+    };
+    const move = e => {
+      if (Math.abs(e.clientX - startX) > 10) this._ftSwitchDragged = true;
+    };
+    const up = async e => {
+      const delta = e.clientX - startX;
+      cleanup();
+      if (Math.abs(delta) < 12) return;
+      this._ftSwitchDragged = true;
+      setTimeout(() => { this._ftSwitchDragged = false; }, 250);
+      const task = this._ftTasksCache.find(item => item.id === id);
+      if (!task) return;
+      if (delta > 0 && task.status !== 'done') await this._setFtStatus(id, 'done', Date.now(), null, null);
+      if (delta < 0 && task.status === 'done') await this._setFtStatus(id, 'pending', null, null, null);
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up, { once: true });
+  },
+
+  async deleteFtTask(id) {
+    if (!await this.confirmAction('确定删除该农事任务吗？')) return;
+    try {
+      await this._ftRequest('/' + encodeURIComponent(id), { method: 'DELETE' });
+      await this._loadFtTasks();
+    } catch (e) {
+      UI.toast('删除任务失败：' + e.message, 'danger');
+    }
+  },
+
+  _openFtSchedule(anchor, id) {
+    const task = this._ftTasksCache.find(item => item.id === id);
+    if (!task) return;
+    this._closeFtPopover();
+    const pop = document.createElement('div');
+    pop.className = 'ft-schedule-popover';
+    const rect = anchor.getBoundingClientRect();
+    pop.style.left = Math.min(rect.left + window.scrollX, window.scrollX + window.innerWidth - 240) + 'px';
+    pop.style.top = (rect.bottom + window.scrollY + 8) + 'px';
+    pop.innerHTML = `
+      <div style="font-weight:600;margin-bottom:10px">安排到其他日期</div>
+      <input type="date" class="text-input" id="ft-schedule-date" value="${this.sanitize(task.date || this._ftDate)}">
+      <div class="ft-schedule-actions">
+        <button class="btn-ghost btn-sm" onclick="app.copyFtTask('${this.sanitize(id)}')">复制</button>
+        <button class="btn-primary btn-sm" onclick="app.moveFtTask('${this.sanitize(id)}')">移动</button>
+      </div>
+    `;
+    this._ftPopover = pop;
+    document.body.appendChild(pop);
+  },
+
+  async copyFtTask(id) {
+    const task = this._ftTasksCache.find(item => item.id === id);
+    const date = document.getElementById('ft-schedule-date')?.value;
+    if (!task || !date) return;
+    try {
+      await this._ftRequest('', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: task.title, category: task.category, date, type: task.type || 'user' }),
+      });
+      this._closeFtPopover();
+      UI.toast('任务已复制', 'success');
+    } catch (e) {
+      UI.toast('复制任务失败：' + e.message, 'danger');
+    }
+  },
+
+  async moveFtTask(id) {
+    const date = document.getElementById('ft-schedule-date')?.value;
+    if (!date) return;
+    try {
+      await this._ftRequest('/' + encodeURIComponent(id), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date }),
+      });
+      this._closeFtPopover();
+      await this._loadFtTasks();
+      UI.toast('任务已移动', 'success');
+    } catch (e) {
+      UI.toast('移动任务失败：' + e.message, 'danger');
+    }
+  },
+
+  _ftDragStart(event, id) {
+    this._ftDragTaskId = id;
+    this._ftDraggingPreset = null;
+    this._ftSuppressStatusClick = true;
+    event.currentTarget?.classList.add('dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', id);
+    this._setFtDragUiActive(true);
+  },
+
+  _ftDragOver(event) {
+    if (!this._ftDragTaskId) return;
+    event.preventDefault();
+    document.querySelectorAll('#ft-user-list .ft-card.drag-over').forEach(el => {
+      if (el !== event.currentTarget) el.classList.remove('drag-over');
+    });
+    event.currentTarget?.classList.add('drag-over');
+  },
+
+  _ftDragLeave(event) {
+    event.currentTarget?.classList.remove('drag-over');
+  },
+
+  _ftDragEnd(event) {
+    event.currentTarget?.classList.remove('dragging');
+    document.querySelectorAll('#ft-user-list .ft-card.drag-over').forEach(el => el.classList.remove('drag-over'));
+    this._ftDragTaskId = null;
+    this._hideFtDateDropCalendar();
+    this._setFtDragUiActive(false);
+    setTimeout(() => { this._ftSuppressStatusClick = false; }, 150);
+  },
+
+  _ftDrop(event, targetId) {
+    event.preventDefault();
+    if (!this._ftDragTaskId || this._ftDragTaskId === targetId) return;
+    const list = document.getElementById('ft-user-list');
+    const dragged = list?.querySelector(`[data-task-id="${CSS.escape(this._ftDragTaskId)}"]`);
+    const target = list?.querySelector(`[data-task-id="${CSS.escape(targetId)}"]`);
+    if (!list || !dragged || !target) return;
+    document.querySelectorAll('#ft-user-list .ft-card.drag-over').forEach(el => el.classList.remove('drag-over'));
+    target.before(dragged);
+    this._persistFtDomOrder();
+  },
+
+  _ftPresetDragStart(event, title = null, category = null) {
+    title = title || event.currentTarget?.dataset.title || '';
+    category = category || event.currentTarget?.dataset.category || title;
+    this._ftDraggingPreset = { title, category };
+    this._ftDragTaskId = null;
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData('text/plain', title);
+    this._setFtDragUiActive(true);
+  },
+
+  _ftPaletteDragOver(event) {
+    if (!this._ftDraggingPreset) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    document.getElementById('ft-user-list')?.classList.add('drag-over');
+  },
+
+  _ftPaletteDragLeave(event) {
+    if (!event.currentTarget?.contains(event.relatedTarget)) {
+      event.currentTarget?.classList.remove('drag-over');
+    }
+  },
+
+  async _ftPaletteDrop(event) {
+    if (!this._ftDraggingPreset) return;
+    event.preventDefault();
+    event.currentTarget?.classList.remove('drag-over');
+    const preset = this._ftDraggingPreset;
+    this._ftDraggingPreset = null;
+    this._setFtDragUiActive(false);
+    await this.createFtTaskFromPreset(preset.title, preset.category);
+  },
+
+  _ftPresetDragEnd() {
+    document.getElementById('ft-user-list')?.classList.remove('drag-over');
+    this._hideFtDateDropCalendar();
+    this._ftDraggingPreset = null;
+    this._setFtDragUiActive(false);
+  },
+
+  _setFtDragUiActive(active) {
+    document.body.classList.toggle('ft-farm-dragging', Boolean(active));
+  },
+
+  _hasFtDateDragPayload() {
+    return Boolean(this._ftDraggingPreset || this._ftDragTaskId);
+  },
+
+  _ftDateDragOver(event) {
+    if (!this._hasFtDateDragPayload()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = this._ftDraggingPreset ? 'copy' : 'move';
+    this._renderFtDateDropCalendar();
+  },
+
+  _ftDateDragLeave(event) {
+    const header = document.getElementById('farmtasks-date-header');
+    if (header && event.relatedTarget && header.contains(event.relatedTarget)) return;
+    this._ftDateDropHideTimer = setTimeout(() => this._hideFtDateDropCalendar(), 180);
+  },
+
+  _renderFtDateDropCalendar() {
+    clearTimeout(this._ftDateDropHideTimer);
+    const host = document.getElementById('ft-date-drop-calendar');
+    if (!host) return;
+    const base = this._ftCalendarDropMonth || this._ftDateParts();
+    this._ftCalendarDropMonth = base;
+    const y = base.year;
+    const m = base.month;
+    const firstDay = new Date(y, m - 1, 1).getDay();
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const today = this._ftToday();
+    const cells = [];
+    for (let i = 0; i < 42; i += 1) {
+      const day = i - firstDay + 1;
+      if (day < 1 || day > daysInMonth) {
+        cells.push('<div class="ft-date-drop-day empty"></div>');
+        continue;
+      }
+      const date = `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const cls = ['ft-date-drop-day', date === today ? 'is-today' : '', date === this._ftDate ? 'is-selected' : ''].filter(Boolean).join(' ');
+      cells.push(`<button class="${cls}" data-date="${date}" ondragenter="app._ftDateDayDragOver(event)" ondragover="app._ftDateDayDragOver(event)" ondragleave="app._ftDateDayDragLeave(event)" ondrop="app._ftDateDayDrop(event, '${date}')"><span>${day}</span><em>放这里</em></button>`);
+    }
+    host.innerHTML = `
+      <div class="ft-date-drop-panel" ondragover="app._ftDateDragOver(event)" ondrop="app._ftDatePanelDrop(event)">
+        <div class="ft-date-drop-head">
+          <button class="btn-icon" onmousedown="event.preventDefault()" onclick="app._shiftFtDateDropMonth(-1)"><i class="fa-solid fa-chevron-left"></i></button>
+          <strong>${y}年${m}月</strong>
+          <button class="btn-icon" onmousedown="event.preventDefault()" onclick="app._shiftFtDateDropMonth(1)"><i class="fa-solid fa-chevron-right"></i></button>
+        </div>
+        <div class="ft-date-drop-hint"><i class="fa-solid fa-calendar-plus"></i> 拖到日期格子里安排农事</div>
+        <div class="ft-date-drop-week">${['日','一','二','三','四','五','六'].map(w => `<span>${w}</span>`).join('')}</div>
+        <div class="ft-date-drop-grid">${cells.join('')}</div>
+      </div>
+    `;
+    host.classList.add('open');
+  },
+
+  _shiftFtDateDropMonth(delta) {
+    const base = this._ftCalendarDropMonth || this._ftDateParts();
+    const next = new Date(base.year, base.month - 1 + delta, 1);
+    this._ftCalendarDropMonth = { year: next.getFullYear(), month: next.getMonth() + 1, day: 1 };
+    this._renderFtDateDropCalendar();
+  },
+
+  _hideFtDateDropCalendar() {
+    clearTimeout(this._ftDateDropHideTimer);
+    const host = document.getElementById('ft-date-drop-calendar');
+    if (!host) return;
+    host.classList.remove('open');
+    host.innerHTML = '';
+  },
+
+  _ftDateDayDragOver(event) {
+    if (!this._hasFtDateDragPayload()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = this._ftDraggingPreset ? 'copy' : 'move';
+    document.querySelectorAll('.ft-date-drop-day.drag-over').forEach(el => {
+      if (el !== event.currentTarget) el.classList.remove('drag-over');
+    });
+    event.currentTarget?.classList.add('drag-over');
+  },
+
+  _ftDateDayDragLeave(event) {
+    event.currentTarget?.classList.remove('drag-over');
+  },
+
+  async _ftDateDayDrop(event, date) {
+    if (!this._hasFtDateDragPayload()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget?.classList.remove('drag-over');
+    const preset = this._ftDraggingPreset;
+    const taskId = this._ftDragTaskId;
+    this._ftDraggingPreset = null;
+    this._ftDragTaskId = null;
+    this._hideFtDateDropCalendar();
+    this._setFtDragUiActive(false);
+    if (preset) {
+      await this.createFtTaskFromPresetForDate(preset.title, preset.category, date);
+      return;
+    }
+    if (!taskId) return;
+    try {
+      await this._ftRequest('/' + encodeURIComponent(taskId), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date }),
+      });
+      await this._loadFtTasks();
+      UI.toast('任务日期已调整', 'success');
+    } catch (e) {
+      UI.toast('调整日期失败：' + e.message, 'danger');
+      await this._loadFtTasks();
+    }
+  },
+
+  async _ftDatePanelDrop(event) {
+    if (!this._hasFtDateDragPayload()) return;
+    event.preventDefault();
+    const day = event.target?.closest?.('.ft-date-drop-day:not(.empty)');
+    if (day?.dataset?.date) {
+      await this._ftDateDayDrop(event, day.dataset.date);
+    }
+  },
+
+  async _persistFtDomOrder() {
+    const ids = Array.from(document.querySelectorAll('#ft-user-list .ft-card')).map(el => el.dataset.taskId);
+    const base = Date.now();
+    this._ftTasksCache.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+    await Promise.allSettled(ids.map((id, index) => this._ftRequest('/' + encodeURIComponent(id), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ createdAt: base + index }),
+    })));
+  },
+
+  async _renderDashboardFarmTasks() {
+    const kpi = document.getElementById('kpi-row');
+    if (!kpi) return;
+    let block = document.getElementById('dash-farmtasks');
+    if (!block) {
+      kpi.insertAdjacentHTML('afterend', '<div class="glass-panel" id="dash-farmtasks" style="margin:16px 0"></div>');
+      block = document.getElementById('dash-farmtasks');
+    }
+    try {
+      const today = this._ftToday();
+      const data = await this._ftRequest('?date=' + encodeURIComponent(today));
+      const tasks = data.tasks || [];
+      const pending = tasks.filter(task => task.status !== 'done');
+      block.innerHTML = `
+        <div class="panel-header">
+          <span class="panel-title"><i class="fa-solid fa-seedling"></i> 今日农事</span>
+          <span class="badge badge-sensor">${pending.length} 待办</span>
+        </div>
+        <div class="dash-ft-grid">
+          ${pending.slice(0, 6).map(task => `<button class="dash-ft-card ${task.type === 'ai' ? 'ai' : ''}" onclick="app._ftDate=app._ftToday();app.navigate('farmtasks')"><span class="dash-ft-emoji">${this._ftCategoryEmoji(task.category)}</span><span>${this.sanitize(task.title || '')}</span></button>`).join('') || '<div class="dash-ft-empty">今日暂无待办农事</div>'}
+        </div>
+      `;
+    } catch (e) {
+      block.innerHTML = '<div style="color:var(--text-muted);font-size:13px">今日农事加载失败</div>';
+    }
+  },
+
   //     DASHBOARD    
   initDashboard() {
     const devices = DataRepository.listDevices();
@@ -1057,19 +1806,20 @@ const app = {
     const alerts = this.getAlerts();
 
     document.getElementById('kpi-row').innerHTML = `
-      <div class="kpi-card accent" onclick="app.navigate('devices')" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u8bbe\u5907\u7ba1\u7406">
-        <div class="kpi-icon"><i class="fa-solid fa-microchip"></i></div>
-        <div><div class="kpi-label">\u5728\u7ebf\u8bbe\u5907</div><div class="kpi-value">${online}<span class="kpi-unit">/${devices.length}</span></div><div class="kpi-sub">\u70b9\u51fb\u7ba1\u7406\u8bbe\u5907 \u2192</div></div></div>
-      <div class="kpi-card ${alerts.length ? 'danger' : 'success'}" onclick="document.getElementById('alertToggle').click()" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u8b66\u62a5\u8be6\u60c5">
-        <div class="kpi-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
-        <div><div class="kpi-label">\u5f53\u524d\u8b66\u62a5</div><div class="kpi-value">${alerts.length}<span class="kpi-unit">\u6761</span></div><div class="kpi-sub">${alerts.length?'\u70b9\u51fb\u67e5\u770b\u8be6\u60c5 \u2192':'\u6240\u6709\u6307\u6807\u6b63\u5e38 \u2713'}</div></div></div>
-      <div class="kpi-card warning" onclick="app.navigate('realtime')" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u5b9e\u65f6\u6570\u636e">
-        <div class="kpi-icon"><i class="fa-solid fa-temperature-half"></i></div>
-        <div><div class="kpi-label">\u5e73\u5747\u6c14\u6e29</div><div class="kpi-value">${avgT.toFixed(1)}<span class="kpi-unit">\u00b0C</span></div><div class="kpi-sub">\u70b9\u51fb\u67e5\u770b\u5b9e\u65f6\u6570\u636e \u2192</div></div></div>
+    <div class="kpi-card accent" onclick="app.navigate('devices')" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u8bbe\u5907\u7ba1\u7406">
+      <div class="kpi-icon"><i class="fa-solid fa-microchip"></i></div>
+      <div><div class="kpi-label">\u5728\u7ebf\u8bbe\u5907</div><div class="kpi-value">${online}<span class="kpi-unit">/${devices.length}</span></div><div class="kpi-sub">\u70b9\u51fb\u7ba1\u7406\u8bbe\u5907 \u2192</div></div></div>
+    <div class="kpi-card ${alerts.length ? 'danger' : 'success'}" onclick="document.getElementById('alertToggle').click()" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u8b66\u62a5\u8be6\u60c5">
+      <div class="kpi-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+      <div><div class="kpi-label">\u5f53\u524d\u8b66\u62a5</div><div class="kpi-value">${alerts.length}<span class="kpi-unit">\u6761</span></div><div class="kpi-sub">${alerts.length?'\u70b9\u51fb\u67e5\u770b\u8be6\u60c5 \u2192':'\u6240\u6709\u6307\u6807\u6b63\u5e38 \u2713'}</div></div></div>
+    <div class="kpi-card warning" onclick="app.navigate('realtime')" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u5b9e\u65f6\u6570\u636e">
+      <div class="kpi-icon"><i class="fa-solid fa-temperature-half"></i></div>
+      <div><div class="kpi-label">\u5e73\u5747\u6c14\u6e29</div><div class="kpi-value">${avgT.toFixed(1)}<span class="kpi-unit">\u00b0C</span></div><div class="kpi-sub">\u70b9\u51fb\u67e5\u770b\u5b9e\u65f6\u6570\u636e \u2192</div></div></div>
       <div class="kpi-card success" onclick="app.navigate('locations')" style="cursor:pointer" title="\u70b9\u51fb\u7ba1\u7406\u5730\u5757">
         <div class="kpi-icon"><i class="fa-solid fa-map"></i></div>
         <div><div class="kpi-label">\u76d1\u6d4b\u5730\u5757</div><div class="kpi-value">${locs.length}<span class="kpi-unit">\u5757</span></div><div class="kpi-sub">\u5171 ${locs.reduce((a,l)=>a+(+l.area||0),0)} \u4ea9 \u00b7 \u70b9\u51fb\u7ba1\u7406 \u2192</div></div></div>
     `;
+    void this._renderDashboardFarmTasks();
 
     if (!this.dashMap) {
       this.dashMap = L.map('dash-map', { zoomControl: true, attributionControl: true }).setView([20.044,110.199], 15);
@@ -2002,6 +2752,7 @@ const app = {
   openModal(t) {
     const el = document.getElementById(t) || document.getElementById('modal-'+t);
     if (!el) return;
+    if (el.parentElement !== document.body) document.body.appendChild(el);
     el.style.display = '';
     el.classList.add('open');
     if (el.id === 'modal-record-detail') document.body.style.overflow = 'hidden';
@@ -2013,10 +2764,78 @@ const app = {
     if (!el) return;
     el.classList.remove('open');
     if (document.getElementById(t)) el.style.display = 'none';
+    if ((t === 'confirm' || el.id === 'modal-confirm') && this._confirmResolver) {
+      const resolve = this._confirmResolver;
+      this._confirmResolver = null;
+      resolve(false);
+    }
     if (el.id === 'modal-record-detail') document.body.style.overflow = '';
     if (t === 'location') this._destroyPickerMap('loc');
     if (t === 'device') this._destroyPickerMap('dev');
   },
+
+  confirmAction(message, title = '确认删除', okText = '确认删除') {
+    return new Promise(resolve => {
+      const msgEl = document.getElementById('confirm-msg');
+      const inputEl = document.getElementById('confirm-input');
+      const okBtn = document.getElementById('confirm-ok-btn');
+      const titleEl = document.querySelector('#modal-confirm .modal-header h3');
+      if (!msgEl || !okBtn || !titleEl) {
+        resolve(false);
+        return;
+      }
+      titleEl.textContent = title;
+      msgEl.textContent = message;
+      if (inputEl) {
+        inputEl.style.display = 'none';
+        inputEl.value = '';
+      }
+      okBtn.textContent = okText;
+      okBtn.onclick = () => {
+        const done = this._confirmResolver;
+        this._confirmResolver = null;
+        this.closeModal('confirm');
+        (done || resolve)(true);
+      };
+      this._confirmResolver = resolve;
+      this.openModal('confirm');
+    });
+  },
+
+  promptAction(title, placeholder = '') {
+    return new Promise(resolve => {
+      const msgEl = document.getElementById('confirm-msg');
+      const inputEl = document.getElementById('confirm-input');
+      const okBtn = document.getElementById('confirm-ok-btn');
+      const titleEl = document.querySelector('#modal-confirm .modal-header h3');
+      if (!msgEl || !inputEl || !okBtn || !titleEl) {
+        resolve('');
+        return;
+      }
+      titleEl.textContent = title;
+      msgEl.textContent = '';
+      inputEl.style.display = '';
+      inputEl.placeholder = placeholder;
+      inputEl.value = '';
+      okBtn.textContent = '添加';
+      const submit = () => {
+        const done = this._confirmResolver;
+        this._confirmResolver = null;
+        const value = inputEl.value.trim();
+        this.closeModal('confirm');
+        inputEl.style.display = 'none';
+        (done || resolve)(value);
+      };
+      okBtn.onclick = submit;
+      inputEl.onkeydown = event => {
+        if (event.key === 'Enter') submit();
+      };
+      this._confirmResolver = resolve;
+      this.openModal('confirm');
+      setTimeout(() => inputEl.focus(), 50);
+    });
+  },
+
   saveLocation() {
     const id = document.getElementById('loc-edit-id').value || 'loc-'+uid();
     const name = document.getElementById('loc-name').value.trim();
@@ -2151,10 +2970,9 @@ const app = {
   },
 
   //     DELETE    
-  confirmDelete(type,id) {
+  async confirmDelete(type,id) {
     const msg = { location:'\u786e\u5b9a\u5220\u9664\u8be5\u5730\u5757\uff1f\u5173\u8054\u8bbe\u5907\u5c06\u53d8\u4e3a"\u672a\u5206\u914d"\u3002', device:'\u786e\u5b9a\u5220\u9664\u8be5\u8bbe\u5907\uff1f', automation:'\u786e\u5b9a\u5220\u9664\u8be5\u81ea\u52a8\u5316\u89c4\u5219\uff1f' };
-    document.getElementById('confirm-msg').textContent = msg[type]||'\u786e\u5b9a\u5220\u9664\uff1f';
-    document.getElementById('confirm-ok-btn').onclick = async () => {
+    if (!await this.confirmAction(msg[type] || '\u786e\u5b9a\u5220\u9664\uff1f')) return;
       if(type==='location') this.deleteLocation(id);
       else if(type==='device'){
         DataRepository.deleteDevice(id);
@@ -2173,8 +2991,6 @@ const app = {
       if (this.currentPage === 'realtime') this.initRealtime();
       if (this.currentPage === 'history') this.initHistory();
       UI.toast('\u5220\u9664\u6210\u529f', 'success');
-    };
-    this.openModal('confirm');
   },
   deleteLocation(id) {
     DataRepository.deleteLocation(id);
@@ -2389,7 +3205,7 @@ const app = {
   async deleteAccount(userId) {
     const user = this._accounts.find(item => item.id === userId);
     if (!user) return;
-    if (!window.confirm('\u786e\u5b9a\u5220\u9664\u8d26\u53f7 ' + user.account + ' \u5417\uff1f')) return;
+    if (!await this.confirmAction('\u786e\u5b9a\u5220\u9664\u8d26\u53f7 ' + user.account + ' \u5417\uff1f')) return;
     try {
       await AuthService.request('/users/' + encodeURIComponent(userId), { method: 'DELETE' });
       await this.renderAccounts();
@@ -2839,7 +3655,7 @@ const app = {
 
   async deleteCrop(cropId) {
     if (!cropId) return;
-    if (!window.confirm('\u786e\u5b9a\u5220\u9664\u8be5\u519c\u4f5c\u7269\u53ca\u5176\u5168\u90e8AI\u8bb0\u5f55\u5417\uff1f')) return;
+    if (!await this.confirmAction('\u786e\u5b9a\u5220\u9664\u8be5\u519c\u4f5c\u7269\u53ca\u5176\u5168\u90e8AI\u8bb0\u5f55\u5417\uff1f')) return;
     try {
       await this._photoRequest('/crops?id=' + encodeURIComponent(cropId), { method: 'DELETE' });
       if (this._selectedCropId === cropId) {
@@ -2895,7 +3711,7 @@ const app = {
 
   async deletePhotoRecord(recordId) {
     if (!recordId) return;
-    if (!window.confirm('\u786e\u5b9a\u5220\u9664\u8be5\u7530\u95f4\u8bb0\u5f55\u5417\uff1f')) return;
+    if (!await this.confirmAction('\u786e\u5b9a\u5220\u9664\u8be5\u7530\u95f4\u8bb0\u5f55\u5417\uff1f')) return;
     try {
       await this._photoRequest('/records?id=' + encodeURIComponent(recordId), { method: 'DELETE' });
       delete this._photoRecordCache[recordId];
@@ -2985,15 +3801,21 @@ const app = {
       });
       html += '</div>';
     }
-    if (r.userNotes) html += `
-      <div class="detail-section">
-        <div class="detail-label">\u5907\u6ce8</div>
-        <div class="detail-notes">${this.sanitize(r.userNotes)}</div>
-      </div>
-    `;
-    html += `
-      <div class="detail-section">
-        <div class="detail-label">AI \u5206\u6790</div>
+      if (r.userNotes) html += `
+        <div class="detail-section">
+          <div class="detail-label">\u5907\u6ce8</div>
+          <div class="detail-notes">${this.sanitize(r.userNotes)}</div>
+        </div>
+      `;
+      html += `
+        <div class="detail-section">
+          <div class="detail-label">\u519c\u4e8b\u8bb0\u5f55</div>
+          <textarea class="text-input" rows="3" onblur="app._saveFarmNotes('${this.sanitize(r.id)}', this.value)" placeholder="\u8bb0\u5f55\u672c\u6b21\u89c2\u5bdf\u524d\u540e\u7684\u519c\u4e8b\u64cd\u4f5c...">${this.sanitize(r.farmNotes || '')}</textarea>
+        </div>
+      `;
+      html += `
+        <div class="detail-section">
+          <div class="detail-label">AI \u5206\u6790</div>
         <div id="record-ai-analysis">${this._renderAnnotation(r)}</div>
       </div>
     `;
@@ -3005,36 +3827,84 @@ const app = {
     }).catch(() => {});
   },
 
-  _renderAnnotation(record) {
-    const analysis = record?.aiAnalysis;
-    if (!analysis) {
-      return `<button class="btn-primary btn-sm" id="btn-ai-annotate-${this.sanitize(record.id)}" onclick="app.annotatePhotoRecord('${this.sanitize(record.id)}')"><i class="fa-solid fa-tags"></i> \u751f\u6210\u6807\u6ce8</button>`;
-    }
-    if (typeof analysis === 'string') {
-      return `<span class="record-ai-badge done">\u5df2\u6807\u6ce8</span><div class="detail-notes">${this.sanitize(analysis)}</div>`;
-    }
+    _renderAnnotation(record) {
+      const analysis = record?.aiAnalysis;
+      if (!analysis) {
+        return `<button class="btn-primary btn-sm" id="btn-ai-annotate-${this.sanitize(record.id)}" onclick="app.annotatePhotoRecord('${this.sanitize(record.id)}')"><i class="fa-solid fa-tags"></i> \u751f\u6210\u6807\u6ce8</button>`;
+      }
+      if (typeof analysis === 'string') {
+        return `<span class="record-ai-badge done">\u5df2\u6807\u6ce8</span><div class="detail-notes">${this.sanitize(analysis)}</div>`;
+      }
     const severityLabels = ['\u6b63\u5e38', '\u8f7b\u5fae', '\u4e2d\u7b49', '\u4e25\u91cd'];
     const severity = Number(analysis.severity);
     const severityText = Number.isInteger(severity) && severity >= 0 && severity <= 3 ? severityLabels[severity] : '-';
-    const list = value => Array.isArray(value) && value.length
-      ? '<ul class="ai-analysis-list">' + value.map(item => `<li>${this.sanitize(String(item))}</li>`).join('') + '</ul>'
-      : '<span style="color:var(--text-muted)">-</span>';
-    return `
-      <div class="ai-analysis-result">
-        <span class="record-ai-badge done">\u5df2\u6807\u6ce8</span>
+      const list = value => Array.isArray(value) && value.length
+        ? '<ul class="ai-analysis-list">' + value.map(item => `<li>${this.sanitize(String(item))}</li>`).join('') + '</ul>'
+        : '<span style="color:var(--text-muted)">-</span>';
+      const recommendedActions = Array.isArray(analysis.recommendedActions) ? analysis.recommendedActions.filter(Boolean).slice(0, 5) : [];
+      const recommendedBlock = recommendedActions.length ? `
+        <div class="sensor-snapshot-block">
+          <div class="sensor-snapshot-name">\u63a8\u8350\u519c\u4e8b</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            ${recommendedActions.map(action => `
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <span>${this.sanitize(String(action))}</span>
+                <button class="btn-ghost btn-sm" data-action="${this.sanitize(String(action))}" onclick="app.addRecommendedActionToToday(this.dataset.action)">
+                  <i class="fa-solid fa-plus"></i> \u52a0\u5165\u4eca\u65e5\u8ba1\u5212
+                </button>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : '';
+      return `
+        <div class="ai-analysis-result">
+          <span class="record-ai-badge done">\u5df2\u6807\u6ce8</span>
         <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u751f\u957f\u9636\u6bb5</div><div>${this.sanitize(analysis.growthStage || '-')}</div></div>
         <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u75c7\u72b6</div>${list(analysis.symptoms)}</div>
         <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u53d7\u5f71\u54cd\u90e8\u4f4d</div><div>${this.sanitize(analysis.affectedPart || '-')}</div></div>
         <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u53ef\u80fd\u539f\u56e0</div><div>${this.sanitize(analysis.possibleCause || '-')}</div></div>
-        <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u4e25\u91cd\u7a0b\u5ea6</div><div>${severityText}</div></div>
-        <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u64cd\u4f5c\u5efa\u8bae</div>${list(analysis.actions)}</div>
-        <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u6807\u7b7e</div>${list(analysis.tags)}</div>
-      </div>
-    `;
-  },
+          <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u4e25\u91cd\u7a0b\u5ea6</div><div>${severityText}</div></div>
+          <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u64cd\u4f5c\u5efa\u8bae</div>${list(analysis.actions)}</div>
+          <div class="sensor-snapshot-block"><div class="sensor-snapshot-name">\u6807\u7b7e</div>${list(analysis.tags)}</div>
+          ${recommendedBlock}
+        </div>
+      `;
+    },
 
-  async annotatePhotoRecord(recordId) {
-    const record = this._photoRecordCache[recordId];
+    async _saveFarmNotes(recordId, text) {
+      const record = this._photoRecordCache[recordId];
+      if (record) record.farmNotes = text;
+      try {
+        await this._photoRequest('/records/' + encodeURIComponent(recordId), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ farmNotes: text }),
+        });
+        if (record) this._photoRecordCache[recordId] = record;
+      } catch (e) {
+        console.warn('[Farm notes save]', e.message);
+      }
+    },
+
+    async addRecommendedActionToToday(action) {
+      const title = String(action || '').trim();
+      if (!title) return;
+      try {
+        await this._ftRequest('', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, date: this._ftToday(), type: 'ai' }),
+        });
+        UI.toast('\u5df2\u52a0\u5165\u4eca\u65e5\u519c\u4e8b\u8ba1\u5212', 'success');
+        if (this.currentPage === 'farmtasks' && this._ftDate === this._ftToday()) await this._loadFtTasks();
+      } catch (e) {
+        UI.toast('\u52a0\u5165\u4eca\u65e5\u8ba1\u5212\u5931\u8d25\uff1a' + e.message, 'danger');
+      }
+    },
+
+    async annotatePhotoRecord(recordId) {
+      const record = this._photoRecordCache[recordId];
     if (!record) return;
     const host = document.getElementById('record-ai-analysis');
     const btn = document.getElementById('btn-ai-annotate-' + recordId);
@@ -3042,10 +3912,14 @@ const app = {
       btn.disabled = true;
       btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> \u6807\u6ce8\u4e2d...';
     }
-    if (host && !btn) host.innerHTML = '<div class="record-ai-badge pending">\u6807\u6ce8\u4e2d...</div>';
-    try {
-      const data = await this._photoRequest('/records/' + encodeURIComponent(recordId) + '/annotate', { method: 'POST' });
-      record.aiAnalysis = data.aiAnalysis;
+      if (host && !btn) host.innerHTML = '<div class="record-ai-badge pending">\u6807\u6ce8\u4e2d...</div>';
+      try {
+        const data = await this._photoRequest('/records/' + encodeURIComponent(recordId) + '/annotate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ farmNotes: record.farmNotes || '' }),
+        });
+        record.aiAnalysis = data.aiAnalysis;
       this._photoRecordCache[recordId] = record;
       if (host) host.innerHTML = this._renderAnnotation(record);
       UI.toast('\u6807\u6ce8\u5df2\u751f\u6210', 'success');
@@ -3107,6 +3981,7 @@ const app = {
     document.getElementById('record-lat').value = '';
     document.getElementById('record-lng').value = '';
     document.getElementById('record-notes').value = '';
+    document.getElementById('record-farm-notes').value = '';
     document.getElementById('weather-display').style.display = 'none';
     const now = new Date();
     document.getElementById('record-datetime').value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -3271,6 +4146,7 @@ const app = {
           weather: this._currentWeather || null,
           linkedSensors,
           userNotes: document.getElementById('record-notes').value.trim(),
+          farmNotes: document.getElementById('record-farm-notes').value.trim(),
         }),
       });
       this.closeModal('modal-new-record');

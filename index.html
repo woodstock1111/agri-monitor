@@ -54,6 +54,9 @@
                 <a class="nav-link active" data-page="dashboard">
                     <i class="fa-solid fa-gauge-high"></i><span>系统总览</span>
                 </a>
+                <a class="nav-link" data-page="farmtasks">
+                    <i class="fa-solid fa-seedling"></i><span>农事计划</span>
+                </a>
                 <a class="nav-link" data-page="realtime">
                     <i class="fa-solid fa-wave-square"></i><span>实时数据</span>
                     <span class="nav-badge live">LIVE</span>
@@ -153,6 +156,13 @@
                             <div class="alert-feed" id="dash-alerts"></div>
                         </div>
                     </div>
+                </div>
+
+                <!-- Farm Tasks -->
+                <div class="page" id="page-farmtasks">
+                    <div id="farmtasks-date-header"></div>
+                    <div id="farmtasks-ai-section"></div>
+                    <div id="farmtasks-user-section"></div>
                 </div>
 
                 <!-- Realtime -->
@@ -282,7 +292,7 @@
                                 </button>
                                 <div class="crops-panel-title">
                                     <span>农作物</span>
-                                    <span id="photo-model-label" style="font-size:12px;color:var(--text-muted);letter-spacing:0;text-transform:none"></span>
+                                    <span id="photo-model-label"></span>
                                 </div>
                                 <button class="btn-primary btn-sm" id="btn-new-crop" onclick="app.openNewCropModal()" title="新建农作物">
                                     <i class="fa-solid fa-plus"></i>
@@ -311,8 +321,8 @@
                     <div class="modal-overlay" id="modal-new-crop" style="display:none">
                         <div class="modal-box">
                             <div class="modal-header">
-                                <span>新建农作物</span>
-                                <button class="modal-close" onclick="app.closeModal('modal-new-crop')">×</button>
+                                <h3>新建农作物</h3>
+                                <button class="modal-close" onclick="app.closeModal('modal-new-crop')"><i class="fa-solid fa-xmark"></i></button>
                             </div>
                             <div class="modal-body">
                                 <div class="form-group">
@@ -339,8 +349,8 @@
                     <div class="modal-overlay" id="modal-new-record" style="display:none">
                         <div class="modal-box modal-box-wide">
                             <div class="modal-header">
-                                <span>新建记录</span>
-                                <button class="modal-close" onclick="app.closeModal('modal-new-record')">×</button>
+                                <h3>新建记录</h3>
+                                <button class="modal-close" onclick="app.closeModal('modal-new-record')"><i class="fa-solid fa-xmark"></i></button>
                             </div>
                             <div class="modal-body">
                                 <!-- 图片上传 -->
@@ -385,6 +395,12 @@
                                 <div class="form-group">
                                     <textarea class="text-input" id="record-notes" rows="3" placeholder="描述观察情况、疑似问题等..." maxlength="500"></textarea>
                                 </div>
+
+                                <!-- 农事记录 -->
+                                <div class="form-section-title">农事记录</div>
+                                <div class="form-group">
+                                    <textarea class="text-input" id="record-farm-notes" rows="3" placeholder="记录本次观察前后的农事操作..." maxlength="500"></textarea>
+                                </div>
                             </div>
                             <div class="modal-footer">
                                 <button class="btn-ghost" onclick="app.closeModal('modal-new-record')">取消</button>
@@ -397,8 +413,8 @@
                     <div class="modal-overlay" id="modal-record-detail" style="display:none">
                         <div class="modal-box modal-box-wide">
                             <div class="modal-header">
-                                <span>记录详情</span>
-                                <button class="modal-close" onclick="app.closeModal('modal-record-detail')">×</button>
+                                <h3>记录详情</h3>
+                                <button class="modal-close" onclick="app.closeModal('modal-record-detail')"><i class="fa-solid fa-xmark"></i></button>
                             </div>
                             <div class="modal-body" id="record-detail-body"></div>
                         </div>
@@ -408,8 +424,8 @@
                     <div class="modal-overlay" id="modal-photo-config" style="display:none">
                         <div class="modal-box">
                             <div class="modal-header">
-                                <span>图像模块配置</span>
-                                <button class="modal-close" onclick="app.closeModal('modal-photo-config')">×</button>
+                                <h3>图像模块配置</h3>
+                                <button class="modal-close" onclick="app.closeModal('modal-photo-config')"><i class="fa-solid fa-xmark"></i></button>
                             </div>
                             <div class="modal-body">
                                 <div class="form-group">
@@ -667,7 +683,7 @@
     <div class="modal-overlay" id="modal-confirm">
         <div class="modal-box modal-sm">
             <div class="modal-header"><h3>确认删除</h3><button class="modal-close" onclick="app.closeModal('confirm')"><i class="fa-solid fa-xmark"></i></button></div>
-            <div class="modal-body"><p id="confirm-msg">确定要删除吗？</p></div>
+            <div class="modal-body"><p id="confirm-msg">确定要删除吗？</p><input class="text-input" id="confirm-input" style="display:none" autocomplete="off"></div>
             <div class="modal-footer"><button class="btn-ghost" onclick="app.closeModal('confirm')">取消</button><button class="btn-danger" id="confirm-ok-btn">确认删除</button></div>
         </div>
     </div>
