@@ -6110,3 +6110,190 @@ body::before {
   padding: 0 8px !important;
   font-size: 11px !important;
 }
+
+/* Final consistency pass: keep toolbar controls on the same solid glass as cards */
+.page-toolbar,
+#page-realtime .page-toolbar,
+#page-history .page-toolbar,
+#page-cloudsync .page-toolbar {
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.page-toolbar .toolbar-group {
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.select-input,
+.text-input,
+.page-toolbar .select-input,
+.page-toolbar .text-input,
+#cs-sync-range-preset,
+#cloud-hist-range-preset,
+#cs-device-select,
+#hist-location-select,
+#hist-device-select,
+#hist-range,
+#rt-location-select,
+#rt-device-select {
+  background-color: rgba(248, 250, 252, 0.86) !important;
+  background-image: none !important;
+  border: 1px solid rgba(203, 213, 225, 0.72) !important;
+  box-shadow: 0 10px 28px rgba(30, 41, 59, 0.06) !important;
+}
+
+.select-input:hover,
+.text-input:hover,
+.page-toolbar .select-input:hover,
+.page-toolbar .text-input:hover,
+#cs-sync-range-preset:hover,
+#cloud-hist-range-preset:hover,
+#cs-device-select:hover,
+#hist-location-select:hover,
+#hist-device-select:hover,
+#hist-range:hover,
+#rt-location-select:hover,
+#rt-device-select:hover {
+  background-color: rgba(248, 250, 252, 0.94) !important;
+  background-image: none !important;
+}
+
+.select-input:focus,
+.text-input:focus,
+.page-toolbar .select-input:focus,
+.page-toolbar .text-input:focus,
+#cs-sync-range-preset:focus,
+#cloud-hist-range-preset:focus,
+#cs-device-select:focus,
+#hist-location-select:focus,
+#hist-device-select:focus,
+#hist-range:focus,
+#rt-location-select:focus,
+#rt-device-select:focus {
+  background-color: rgba(248, 250, 252, 0.96) !important;
+  background-image: none !important;
+  border-color: rgba(16, 112, 224, 0.38) !important;
+  box-shadow: 0 0 0 3px rgba(16, 112, 224, 0.12), 0 10px 28px rgba(30, 41, 59, 0.06) !important;
+}
+
+#page-realtime #sensor-grid > div:first-child:not(.sensor-card):not(.empty-state),
+#page-history .chart-wrap,
+#page-cloudsync .glass-panel,
+#page-cloudsync .cloud-hist-config-row,
+#page-cloudsync .factor-checkbox-group {
+  background-color: rgba(248, 250, 252, 0.86) !important;
+  background-image: none !important;
+  border-color: rgba(203, 213, 225, 0.72) !important;
+  box-shadow: 0 10px 28px rgba(30, 41, 59, 0.06) !important;
+}
+
+.nav-link[data-page="photos"] span {
+  background: linear-gradient(90deg, #2563eb, #7c3aed, #06b6d4);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+}
+
+.nav-link[data-page="photos"] i {
+  color: #2563eb !important;
+}
+
+/* Final shadow pass: softer elevation across large cards */
+:root {
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.035);
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 18px rgba(15, 23, 42, 0.035);
+  --shadow-lg: 0 1px 2px rgba(15, 23, 42, 0.045), 0 12px 28px rgba(15, 23, 42, 0.04);
+  --shadow-panel: 0 1px 2px rgba(15, 23, 42, 0.045), 0 10px 24px rgba(15, 23, 42, 0.04);
+  --shadow-panel-hover: 0 1px 2px rgba(15, 23, 42, 0.05), 0 12px 28px rgba(15, 23, 42, 0.05);
+  --shadow-control: 0 1px 2px rgba(15, 23, 42, 0.035), 0 4px 10px rgba(15, 23, 42, 0.025);
+}
+
+.topbar {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.045), 0 12px 26px rgba(15, 23, 42, 0.035) !important;
+}
+
+.glass-panel,
+.device-table-wrap,
+.video-slot,
+.location-card,
+.pest-card,
+.auto-rule-card,
+.runtime-banner,
+.alert-drawer,
+.modal-box,
+#sensor-grid,
+#page-realtime #sensor-grid > div:first-child:not(.sensor-card):not(.empty-state),
+.chart-wrap,
+#page-history .chart-wrap,
+#page-cloudsync .glass-panel,
+.crops-panel,
+.records-panel,
+.kpi-card,
+.dash-section,
+.map-box,
+.table-wrap {
+  box-shadow: var(--shadow-panel) !important;
+}
+
+.glass-panel:hover,
+.device-table-wrap:hover,
+.video-slot:hover,
+.location-card:hover,
+.pest-card:hover,
+.auto-rule-card:hover,
+.runtime-banner:hover,
+#sensor-grid:hover,
+.chart-wrap:hover,
+.crops-panel:hover,
+.records-panel:hover,
+.kpi-card:hover {
+  box-shadow: var(--shadow-panel-hover) !important;
+}
+
+.sensor-card,
+.ft-card,
+.ft-preset-card,
+.dash-ft-card,
+.record-card,
+.cloud-device-item,
+.factor-checkbox-group,
+.select-input,
+.text-input,
+.page-toolbar .select-input,
+.page-toolbar .text-input,
+.btn-ghost,
+.btn-secondary,
+.panel-btn,
+.alert-btn,
+.sidebar-toggle,
+.map-layer-btn,
+.live-badge {
+  box-shadow: var(--shadow-control) !important;
+}
+
+.sensor-card:hover,
+.ft-card:hover,
+.ft-preset-card:hover,
+.dash-ft-card:hover,
+.record-card:hover,
+.cloud-device-item:hover,
+.select-input:hover,
+.text-input:hover,
+.btn-ghost:hover,
+.btn-secondary:hover,
+.panel-btn:hover,
+.alert-btn:hover,
+.sidebar-toggle:hover,
+.map-layer-btn:hover {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.045), 0 6px 14px rgba(15, 23, 42, 0.035) !important;
+}
+
+.btn-primary,
+#rt-refresh-btn,
+#sync-cloud-btn,
+.page-toolbar .btn-primary {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), 0 6px 14px rgba(16, 112, 224, 0.18) !important;
+}
