@@ -401,6 +401,50 @@
                                 <div class="form-group">
                                     <textarea class="text-input" id="record-farm-notes" rows="3" placeholder="记录本次观察前后的农事操作..." maxlength="500"></textarea>
                                 </div>
+
+                                <!-- 观察标签 -->
+                                <div class="form-section-title">观察标签（可选）</div>
+                                <div class="form-group">
+                                    <div id="label-visual-pills" class="label-pill-group"></div>
+                                </div>
+
+                                <!-- 生长阶段 -->
+                                <div class="form-section-title">生长阶段（可选）</div>
+                                <div class="form-group">
+                                    <div id="label-growth-pills" class="label-pill-group"></div>
+                                </div>
+
+                                <!-- 严重程度 -->
+                                <div class="form-section-title">严重程度（可选）</div>
+                                <div class="form-group">
+                                    <div id="label-severity-pills" class="label-pill-group"></div>
+                                </div>
+
+                                <!-- 操作标签 -->
+                                <div class="form-section-title">操作记录（可选）</div>
+                                <div class="form-group">
+                                    <div id="label-action-pills" class="label-pill-group"></div>
+                                </div>
+                                <div id="action-detail-fields" class="label-detail-fields" style="display:none"></div>
+
+                                <!-- 虫害详情 -->
+                                <div id="pest-detail-section" style="display:none">
+                                    <div class="form-section-title">虫害详情</div>
+                                    <div class="form-group">
+                                        <div id="label-pest-type-pills" class="label-pill-group"></div>
+                                    </div>
+                                    <div class="form-group">
+                                        <div id="label-pest-infestation-pills" class="label-pill-group"></div>
+                                    </div>
+                                </div>
+
+                                <!-- 病害详情 -->
+                                <div id="disease-detail-section" style="display:none">
+                                    <div class="form-section-title">病害详情</div>
+                                    <div class="form-group">
+                                        <div id="label-disease-type-pills" class="label-pill-group"></div>
+                                    </div>
+                                </div>
                             </div>
                             <div class="modal-footer">
                                 <button class="btn-ghost" onclick="app.closeModal('modal-new-record')">取消</button>

@@ -418,6 +418,12 @@ function requestJson(targetUrl, options, bodyStr = null) {
     });
 }
 
+function cleanAiJsonContent(value) {
+    let text = String(value || '').trim();
+    text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    return text;
+}
+
 async function getCloudToken(loginName, password, apiUrl) {
     const baseUrl = apiUrl.replace(/\/+$/, '');
     const key = `${loginName}@${baseUrl}`;
@@ -1293,6 +1299,9 @@ const server = http.createServer(async (req, res) => {
                 linkedSensors: Array.isArray(body.linkedSensors) ? body.linkedSensors : [],
                 userNotes: String(body.userNotes || ''),
                 farmNotes: String(body.farmNotes || ''),
+                labels: body.labels || null,
+                aiDetections: null,
+                annotations: Array.isArray(body.annotations) ? body.annotations : [],
                 aiAnalysis: null
             };
             pr.records.push(record);
@@ -1330,9 +1339,9 @@ const server = http.createServer(async (req, res) => {
             const pr = readPhotoRecords();
             const record = pr.records.find(r => r.id === id);
             if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
-            ['farmNotes'].forEach(key => {
-                if (body[key] !== undefined) record[key] = String(body[key] || '');
-            });
+            if (body.farmNotes !== undefined) record.farmNotes = String(body.farmNotes || '');
+            if (body.labels !== undefined) record.labels = body.labels;
+            if (body.annotations !== undefined) record.annotations = Array.isArray(body.annotations) ? body.annotations : [];
             writePhotoRecords(pr);
             return sendJson(200, { ok: true, record });
         }
@@ -1383,11 +1392,79 @@ const server = http.createServer(async (req, res) => {
             }).filter(Boolean).join('\n') || '无';
             const farmNotesText = String(requestBody.farmNotes || '').trim();
             const farmNotesLine = farmNotesText ? `\n农事记录：${farmNotesText}` : '';
+            const severityTextMap = ['正常', '轻微', '中等', '严重'];
+            const labelLines = [];
+            const labels = record.labels || null;
+            if (labels) {
+                if (Array.isArray(labels.visual) && labels.visual.length) {
+                    labelLines.push(`用户观察标签：${labels.visual.join(', ')}`);
+                }
+                if (labels.growthStage) {
+                    labelLines.push(`用户判断生长阶段：${labels.growthStage}`);
+                }
+                if (labels.severity !== null && labels.severity !== undefined) {
+                    const severity = Number(labels.severity);
+                    const severityText = Number.isInteger(severity) && severity >= 0 && severity <= 3 ? severityTextMap[severity] : String(labels.severity);
+                    labelLines.push(`用户判断严重程度：${severityText}(${labels.severity})`);
+                }
+                if (Array.isArray(labels.actions) && labels.actions.length) {
+                    const actionText = labels.actions.map(action => {
+                        const details = [action.name, action.dosage].filter(Boolean).join('，');
+                        return details ? `${action.type}（${details}）` : action.type;
+                    }).filter(Boolean).join('、');
+                    if (actionText) labelLines.push(`用户操作：${actionText}`);
+                }
+                if (labels.pestDetail) {
+                    const pestTypeMap = {
+                        aphid: '蚜虫',
+                        caterpillar: '菜青虫/毛虫',
+                        whitefly: '白粉虱',
+                        leaf_miner: '潜叶蝇',
+                        thrips: '蓟马',
+                        mite: '红蜘蛛/螨虫',
+                        beetle: '甲虫',
+                        snail_slug: '蜗牛/蛞蝓',
+                        unknown_pest: '未知害虫',
+                    };
+                    const infestationMap = {
+                        scattered: '零星发现',
+                        moderate: '中等扩散',
+                        severe: '严重爆发',
+                    };
+                    const pestParts = [];
+                    if (Array.isArray(labels.pestDetail.species)) {
+                        pestParts.push(...labels.pestDetail.species.map(key => pestTypeMap[key] || key));
+                    }
+                    if (labels.pestDetail.infestation) {
+                        pestParts.push(infestationMap[labels.pestDetail.infestation] || labels.pestDetail.infestation);
+                    }
+                    if (pestParts.length) labelLines.push(`虫害详情：${pestParts.join('，')}`);
+                }
+                if (labels.diseaseDetail && Array.isArray(labels.diseaseDetail.types) && labels.diseaseDetail.types.length) {
+                    const diseaseTypeMap = {
+                        anthracnose: '炭疽病',
+                        leaf_spot: '叶斑病',
+                        blight: '疫病',
+                        powdery_mildew: '白粉病',
+                        downy_mildew: '霜霉病',
+                        rust: '锈病',
+                        unknown_disease: '未知病害',
+                    };
+                    labelLines.push(`病害详情：${labels.diseaseDetail.types.map(key => diseaseTypeMap[key] || key).join('，')}`);
+                }
+            }
+            const labelsLine = labelLines.length ? `\n${labelLines.join('\n')}` : '';
+            const detections = Array.isArray(record.aiDetections?.detections) ? record.aiDetections.detections : [];
+            const detectionLine = detections.length ? `\nAI 区域检测结果：${detections.map(det => {
+                const confidence = Number(det.confidence);
+                const confidenceText = Number.isFinite(confidence) ? `(${Math.round(confidence * 100)}%)` : '';
+                return `${det.label || 'unknown'}${confidenceText}`;
+            }).join(', ')}` : '';
             const userPrompt = `作物：${crop.name || '未知作物'}（品种：${crop.variety || '未知'}）
 拍摄时间：${record.createdAt}
 天气：${weatherText}
 传感器摘要：${sensorSummary}
-农户备注：${record.userNotes || '无'}${farmNotesLine}
+农户备注：${record.userNotes || '无'}${farmNotesLine}${labelsLine}${detectionLine}
 
 请输出以下格式的 JSON 标注：
 {
@@ -1416,8 +1493,9 @@ const server = http.createServer(async (req, res) => {
                     },
                 }, body);
                 const content = result.data?.choices?.[0]?.message?.content || '';
+                const cleanedContent = cleanAiJsonContent(content);
                 try {
-                    record.aiAnalysis = JSON.parse(content);
+                    record.aiAnalysis = JSON.parse(cleanedContent);
                 } catch {
                     record.aiAnalysis = content;
                 }
@@ -1425,6 +1503,70 @@ const server = http.createServer(async (req, res) => {
                 return sendJson(200, { ok: true, aiAnalysis: record.aiAnalysis });
             } catch (error) {
                 return sendJson(502, { ok: false, msg: error.message || 'Annotation failed' });
+            }
+        }
+
+        if (pathname.startsWith('/api/v1/photos/records/') && pathname.endsWith('/detect-regions') && req.method === 'POST') {
+            const auth = requireAuth(); if (!auth) return;
+            const id = pathname.split('/')[5]; // /api/v1/photos/records/{id}/detect-regions
+            const pr = readPhotoRecords();
+            const record = pr.records.find(r => r.id === id);
+            if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
+            const visionApiKey = String(pr.config.visionApiKey || '').trim();
+            const visionModel = String(pr.config.visionModel || 'qwen-vl-plus').trim() || 'qwen-vl-plus';
+            if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
+
+            const imgPath = path.join(__dirname, record.imagePath || '');
+            if (!fs.existsSync(imgPath)) return sendJson(404, { ok: false, msg: 'file missing' });
+            const imageDataUrl = `data:image/jpeg;base64,${fs.readFileSync(imgPath).toString('base64')}`;
+            const allowedLabels = [
+                'insect_visible', 'leaf_holes', 'leaf_yellowing', 'leaf_browning',
+                'leaf_wilting', 'leaf_curling', 'disease_spot', 'white_powder',
+                'soil_crack', 'soil_too_wet', 'weed', 'stem_damage'
+            ];
+            const detectPrompt = `你是农业图像检测专家。请检测照片中所有可见异常区域，并只输出 JSON，不要任何解释文字。
+
+任务要求：
+- 输出每个异常区域的 bbox 矩形框坐标 [x, y, width, height]，坐标基于原始图片像素尺寸。
+- label 只能从以下标签中选择：${allowedLabels.join(', ')}
+- confidence 为 0 到 1 的数字。
+- note 为简短中文描述。
+- 如果图片正常或无法确认异常，返回空 detections 数组。
+
+输出格式：
+{ "detections": [{ "label": "leaf_yellowing", "bbox": [x, y, w, h], "confidence": 0.86, "note": "简短描述" }] }`;
+            const body = JSON.stringify({
+                model: visionModel,
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'image_url', image_url: { url: imageDataUrl } },
+                            { type: 'text', text: detectPrompt },
+                        ],
+                    },
+                ],
+            });
+            try {
+                const result = await requestJson('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${visionApiKey}`,
+                    },
+                }, body);
+                if (result.status >= 400) throw new Error(result.data?.message || 'Region detection failed');
+                const content = result.data?.choices?.[0]?.message?.content || '';
+                const cleanedContent = cleanAiJsonContent(content);
+                try {
+                    record.aiDetections = JSON.parse(cleanedContent);
+                } catch {
+                    record.aiDetections = content;
+                }
+                writePhotoRecords(pr);
+                return sendJson(200, { ok: true, aiDetections: record.aiDetections });
+            } catch (error) {
+                return sendJson(502, { ok: false, msg: error.message || 'Region detection failed' });
             }
         }
 
