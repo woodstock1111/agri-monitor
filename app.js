@@ -2079,9 +2079,6 @@ const app = {
     } else if (addBtn) {
       addBtn.innerHTML = '<i class="fa-solid fa-plus" style="margin-right:4px"></i>\u6dfb\u52a0\u8bbe\u5907';
     }
-    // Toggle map fullscreen overlay
-    const mapPanel = document.getElementById('dash-map')?.closest('.glass-panel');
-    if (mapPanel) mapPanel.classList.toggle('map-fullscreen', isFocused);
     if (!this.dashMap) return;
     this.dashMap.eachLayer(l => { if (l instanceof L.Marker || l instanceof L.CircleMarker) this.dashMap.removeLayer(l); });
     this.addMapMarkers(this.dashMap, locId);
@@ -2091,6 +2088,69 @@ const app = {
       this.dashMap.invalidateSize();
       this._fitDashboardMap(locId);
     }, 350);
+  },
+
+  _refreshDashboardMapSize() {
+    if (!this.dashMap) return;
+    this.dashMap.invalidateSize();
+    this._fitDashboardMap(this._dashMapFilterLoc || 'all');
+    setTimeout(() => {
+      if (!this.dashMap) return;
+      this.dashMap.invalidateSize();
+      this._fitDashboardMap(this._dashMapFilterLoc || 'all');
+    }, 350);
+  },
+
+  _getDashboardMapPanel() {
+    return document.getElementById('dash-map')?.closest('.glass-panel');
+  },
+
+  _enterMapFullscreen(mapPanel) {
+    if (!mapPanel || mapPanel.classList.contains('map-fullscreen')) return;
+    if (!this._mapFullscreenPlaceholder) {
+      this._mapFullscreenPlaceholder = document.createComment('dashboard-map-panel');
+      mapPanel.parentElement?.insertBefore(this._mapFullscreenPlaceholder, mapPanel);
+    }
+    document.body.appendChild(mapPanel);
+    mapPanel.classList.add('map-fullscreen');
+    document.body.classList.add('map-overlay-open');
+  },
+
+  _restoreMapPanel(mapPanel) {
+    if (!mapPanel) return;
+    mapPanel.classList.remove('map-fullscreen');
+    document.body.classList.remove('map-overlay-open');
+    if (this._mapFullscreenPlaceholder?.parentElement) {
+      this._mapFullscreenPlaceholder.parentElement.insertBefore(mapPanel, this._mapFullscreenPlaceholder);
+      this._mapFullscreenPlaceholder.remove();
+    }
+    this._mapFullscreenPlaceholder = null;
+  },
+
+  _syncMapFullscreenButton() {
+    const mapPanel = this._getDashboardMapPanel();
+    const btn = document.getElementById('map-fullscreen-btn');
+    if (!btn || !mapPanel) return;
+    const isFullscreen = mapPanel.classList.contains('map-fullscreen');
+    btn.title = isFullscreen ? '退出全屏' : '全屏地图';
+    btn.innerHTML = `<i class="fa-solid ${isFullscreen ? 'fa-compress' : 'fa-expand'}"></i>`;
+  },
+
+  toggleMapFullscreen() {
+    const mapPanel = this._getDashboardMapPanel();
+    if (!mapPanel) return;
+    if (mapPanel.classList.contains('map-fullscreen')) this._restoreMapPanel(mapPanel);
+    else this._enterMapFullscreen(mapPanel);
+    this._syncMapFullscreenButton();
+    this._refreshDashboardMapSize();
+  },
+
+  exitMapFullscreen() {
+    const mapPanel = this._getDashboardMapPanel();
+    if (!mapPanel) return;
+    this._restoreMapPanel(mapPanel);
+    this._syncMapFullscreenButton();
+    this._refreshDashboardMapSize();
   },
 
   addDeviceFromMap() {

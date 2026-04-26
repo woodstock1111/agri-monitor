@@ -2082,24 +2082,28 @@ input:checked+.toggle-slider:before {
 
 .glass-panel.map-fullscreen {
   position: fixed !important;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 500;
-  border-radius: 0 !important;
+  top: 94px;
+  left: 18px;
+  right: 18px;
+  bottom: 18px;
+  z-index: 520;
+  border-radius: 24px !important;
   margin: 0 !important;
+  background: var(--bg-surface);
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow-lg) !important;
   display: flex;
   flex-direction: column;
-  animation: mapFadeIn 0.3s ease;
+  overflow: hidden;
+  animation: mapFadeIn 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .glass-panel.map-fullscreen .panel-header {
   flex-shrink: 0;
-  padding: 14px 24px;
+  padding: 16px 20px;
   border-bottom: 1px solid var(--border);
-  background: var(--glass-bg);
-  backdrop-filter: blur(16px);
+  background: var(--bg-surface);
+  backdrop-filter: none;
   z-index: 2;
 }
 
@@ -2107,7 +2111,11 @@ input:checked+.toggle-slider:before {
   flex: 1 !important;
   height: auto !important;
   min-height: 0;
-  border-radius: 0 !important;
+  border-radius: 0 0 24px 24px !important;
+}
+
+body.map-overlay-open {
+  overflow: hidden;
 }
 
 @keyframes mapFadeIn {

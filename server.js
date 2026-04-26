@@ -72,6 +72,11 @@ function safeId(prefix) {
     return `${prefix}_${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`;
 }
 
+function tenantIdForAccount(account) {
+    const slug = String(account || 'tenant').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 32) || 'tenant';
+    return `tenant_${slug}_${crypto.randomBytes(3).toString('hex')}`;
+}
+
 function normalizeState(raw = {}) {
     const state = { ...emptyState(), ...raw };
     let changed = false;
@@ -118,6 +123,23 @@ function normalizeState(raw = {}) {
         });
         changed = true;
     }
+    state.users.forEach(user => {
+        if (!user || user.role === 'platform_admin') return;
+        if (!user.tenantId || user.tenantId === DEFAULT_TENANT_ID) {
+            const tenantId = tenantIdForAccount(user.account || user.id);
+            user.tenantId = tenantId;
+            user.updatedAt = new Date().toISOString();
+            if (!state.tenants.some(item => item.id === tenantId)) {
+                state.tenants.push({
+                    id: tenantId,
+                    name: user.name || user.account || tenantId,
+                    status: 'active',
+                    createdAt: new Date().toISOString(),
+                });
+            }
+            changed = true;
+        }
+    });
 
     [
         'cloudAccounts',
@@ -222,6 +244,9 @@ function readFarmTasks() {
     if (!fs.existsSync(FARM_TASKS_FILE)) return { tasks: [] };
     const data = JSON.parse(fs.readFileSync(FARM_TASKS_FILE, 'utf8'));
     if (!Array.isArray(data.tasks)) data.tasks = [];
+    data.tasks.forEach(item => {
+        if (item && !item.tenantId) item.tenantId = DEFAULT_TENANT_ID;
+    });
     return data;
 }
 
@@ -236,7 +261,23 @@ function readPhotoRecords() {
             amapKey: '',
             visionApiKey: '', visionModel: 'qwen-vl-plus', textModel: 'qwen-turbo' }};
     }
-    return JSON.parse(fs.readFileSync(PHOTO_RECORDS_FILE, 'utf8'));
+    const data = JSON.parse(fs.readFileSync(PHOTO_RECORDS_FILE, 'utf8'));
+    if (!Array.isArray(data.crops)) data.crops = [];
+    if (!Array.isArray(data.records)) data.records = [];
+    data.config = {
+        amapKey: '',
+        visionApiKey: '',
+        visionModel: 'qwen-vl-plus',
+        textModel: 'qwen-turbo',
+        ...(data.config || {}),
+    };
+    data.crops.forEach(item => {
+        if (item && !item.tenantId) item.tenantId = DEFAULT_TENANT_ID;
+    });
+    data.records.forEach(item => {
+        if (item && !item.tenantId) item.tenantId = DEFAULT_TENANT_ID;
+    });
+    return data;
 }
 
 function writePhotoRecords(data) {
@@ -284,6 +325,22 @@ function publicUser(user) {
     if (!user) return null;
     const { passwordHash, ...safe } = user;
     return safe;
+}
+
+function userTenantId(user) {
+    return user?.tenantId || DEFAULT_TENANT_ID;
+}
+
+function canAccessTenantItem(user, item) {
+    if (!item) return false;
+    if (user?.role === 'platform_admin') return true;
+    return !item.tenantId || item.tenantId === userTenantId(user);
+}
+
+function scopedTenantRows(user, rows = []) {
+    if (user?.role === 'platform_admin') return rows;
+    const tenantId = userTenantId(user);
+    return rows.filter(item => !item.tenantId || item.tenantId === tenantId);
 }
 
 function operationalSnapshot(state, user) {
@@ -877,12 +934,22 @@ const server = http.createServer(async (req, res) => {
                 if (!account || !password) return sendJson(400, { ok: false, msg: 'Account and password are required' });
                 if (auth.state.users.some(item => item.account === account)) return sendJson(409, { ok: false, msg: 'Account already exists' });
                 const now = new Date().toISOString();
+                const role = body.role === 'platform_admin' ? 'platform_admin' : 'tenant_admin';
+                const tenantId = body.tenantId || (role === 'platform_admin' ? DEFAULT_TENANT_ID : tenantIdForAccount(account));
+                if (!auth.state.tenants.some(item => item.id === tenantId)) {
+                    auth.state.tenants.push({
+                        id: tenantId,
+                        name: String(body.name || account).trim(),
+                        status: 'active',
+                        createdAt: now,
+                    });
+                }
                 const user = {
                     id: safeId('user'),
-                    tenantId: body.tenantId || DEFAULT_TENANT_ID,
+                    tenantId,
                     account,
                     name: String(body.name || account).trim(),
-                    role: body.role === 'platform_admin' ? 'platform_admin' : 'tenant_admin',
+                    role,
                     status: body.status === 'disabled' ? 'disabled' : 'active',
                     passwordHash: hashPassword(password),
                     createdAt: now,
@@ -1166,7 +1233,7 @@ const server = http.createServer(async (req, res) => {
             const prefix = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-`;
             const ft = readFarmTasks();
             const calendar = {};
-            (ft.tasks || []).forEach(task => {
+            scopedTenantRows(auth.user, ft.tasks || []).forEach(task => {
                 const date = String(task.date || '');
                 if (!date.startsWith(prefix)) return;
                 calendar[date] = (calendar[date] || 0) + 1;
@@ -1178,7 +1245,7 @@ const server = http.createServer(async (req, res) => {
             const auth = requireAuth(); if (!auth) return;
             const date = String(query.date || '').trim();
             const ft = readFarmTasks();
-            const tasks = (ft.tasks || [])
+            const tasks = scopedTenantRows(auth.user, ft.tasks || [])
                 .filter(task => String(task.date || '') === date)
                 .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
             return sendJson(200, { ok: true, tasks });
@@ -1200,7 +1267,8 @@ const server = http.createServer(async (req, res) => {
                 status: 'pending',
                 completedAt: null,
                 aiReason: null,
-                createdAt: Date.now()
+                createdAt: Date.now(),
+                tenantId: userTenantId(auth.user)
             };
             ft.tasks.push(task);
             writeFarmTasks(ft);
@@ -1212,7 +1280,7 @@ const server = http.createServer(async (req, res) => {
             const id = pathname.split('/')[4];
             const body = await readBody(req);
             const ft = readFarmTasks();
-            const task = (ft.tasks || []).find(item => item.id === id);
+            const task = (ft.tasks || []).find(item => item.id === id && canAccessTenantItem(auth.user, item));
             if (!task) return sendJson(404, { ok: false, msg: 'task not found' });
             ['title', 'status', 'completedAt', 'date', 'category', 'createdAt'].forEach(key => {
                 if (body[key] !== undefined) task[key] = body[key];
@@ -1225,7 +1293,9 @@ const server = http.createServer(async (req, res) => {
             const auth = requireAuth(); if (!auth) return;
             const id = pathname.split('/')[4];
             const ft = readFarmTasks();
-            ft.tasks = (ft.tasks || []).filter(task => task.id !== id);
+            const task = (ft.tasks || []).find(item => item.id === id && canAccessTenantItem(auth.user, item));
+            if (!task) return sendJson(404, { ok: false, msg: 'task not found' });
+            ft.tasks = (ft.tasks || []).filter(item => item.id !== id);
             writeFarmTasks(ft);
             return sendJson(200, { ok: true });
         }
@@ -1235,7 +1305,7 @@ const server = http.createServer(async (req, res) => {
             const pr = readPhotoRecords();
 
             if (req.method === 'GET') {
-                return sendJson(200, { ok: true, crops: pr.crops });
+                return sendJson(200, { ok: true, crops: scopedTenantRows(auth.user, pr.crops || []) });
             }
             if (req.method === 'POST') {
                 const body = await readBody(req);
@@ -1246,7 +1316,8 @@ const server = http.createServer(async (req, res) => {
                     variety: String(body.variety || '').trim(),
                     locationId: String(body.locationId || '').trim(),
                     locationDesc: String(body.locationDesc || '').trim(),
-                    createdAt: new Date().toISOString()
+                    createdAt: new Date().toISOString(),
+                    tenantId: userTenantId(auth.user)
                 };
                 pr.crops.push(crop);
                 writePhotoRecords(pr);
@@ -1256,10 +1327,12 @@ const server = http.createServer(async (req, res) => {
                 const body = await readBody(req).catch(() => ({}));
                 const cropId = String(query.id || body.id || '').trim();
                 if (!cropId) return sendJson(400, { ok: false, msg: 'id required' });
-                const removedRecords = (pr.records || []).filter(record => record.cropId === cropId);
+                const crop = (pr.crops || []).find(item => item.id === cropId && canAccessTenantItem(auth.user, item));
+                if (!crop) return sendJson(404, { ok: false, msg: 'crop not found' });
+                const removedRecords = (pr.records || []).filter(record => record.cropId === cropId && canAccessTenantItem(auth.user, record));
                 removedRecords.forEach(deletePhotoRecordFile);
-                pr.crops = (pr.crops || []).filter(crop => crop.id !== cropId);
-                pr.records = (pr.records || []).filter(record => record.cropId !== cropId);
+                pr.crops = (pr.crops || []).filter(item => item.id !== cropId);
+                pr.records = (pr.records || []).filter(record => !(record.cropId === cropId && canAccessTenantItem(auth.user, record)));
                 writePhotoRecords(pr);
                 return sendJson(200, { ok: true });
             }
@@ -1272,7 +1345,7 @@ const server = http.createServer(async (req, res) => {
                 return sendJson(400, { ok: false, msg: 'cropId and imageBase64 required' });
             }
             const pr = readPhotoRecords();
-            if (!pr.crops.find(c => c.id === body.cropId)) {
+            if (!pr.crops.find(c => c.id === body.cropId && canAccessTenantItem(auth.user, c))) {
                 return sendJson(404, { ok: false, msg: 'crop not found' });
             }
 
@@ -1302,7 +1375,8 @@ const server = http.createServer(async (req, res) => {
                 labels: body.labels || null,
                 aiDetections: null,
                 annotations: Array.isArray(body.annotations) ? body.annotations : [],
-                aiAnalysis: null
+                aiAnalysis: null,
+                tenantId: userTenantId(auth.user)
             };
             pr.records.push(record);
             writePhotoRecords(pr);
@@ -1313,7 +1387,7 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/api/v1/photos/records' && req.method === 'GET') {
             const auth = requireAuth(); if (!auth) return;
             const pr = readPhotoRecords();
-            let records = pr.records;
+            let records = scopedTenantRows(auth.user, pr.records || []);
             if (query.cropId) records = records.filter(r => r.cropId === query.cropId);
             records = [...records].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
             return sendJson(200, { ok: true, records });
@@ -1325,7 +1399,8 @@ const server = http.createServer(async (req, res) => {
             const recordId = String(query.id || body.id || '').trim();
             if (!recordId) return sendJson(400, { ok: false, msg: 'id required' });
             const pr = readPhotoRecords();
-            const record = (pr.records || []).find(item => item.id === recordId);
+            const record = (pr.records || []).find(item => item.id === recordId && canAccessTenantItem(auth.user, item));
+            if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
             if (record) deletePhotoRecordFile(record);
             pr.records = (pr.records || []).filter(item => item.id !== recordId);
             writePhotoRecords(pr);
@@ -1337,7 +1412,7 @@ const server = http.createServer(async (req, res) => {
             const id = pathname.split('/')[5];
             const body = await readBody(req).catch(() => ({}));
             const pr = readPhotoRecords();
-            const record = pr.records.find(r => r.id === id);
+            const record = pr.records.find(r => r.id === id && canAccessTenantItem(auth.user, r));
             if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
             if (body.farmNotes !== undefined) record.farmNotes = String(body.farmNotes || '');
             if (body.labels !== undefined) record.labels = body.labels;
@@ -1350,7 +1425,7 @@ const server = http.createServer(async (req, res) => {
             const auth = requireAuth(); if (!auth) return;
             const id = pathname.split('/')[5]; // /api/v1/photos/records/{id}/image
             const pr = readPhotoRecords();
-            const record = pr.records.find(r => r.id === id);
+            const record = pr.records.find(r => r.id === id && canAccessTenantItem(auth.user, r));
             if (!record) return sendJson(404, { ok: false, msg: 'not found' });
             const imgPath = path.join(__dirname, record.imagePath);
             if (!fs.existsSync(imgPath)) return sendJson(404, { ok: false, msg: 'file missing' });
@@ -1367,7 +1442,7 @@ const server = http.createServer(async (req, res) => {
             const id = pathname.split('/')[5]; // /api/v1/photos/records/{id}/annotate
             const requestBody = await readBody(req).catch(() => ({}));
             const pr = readPhotoRecords();
-            const record = pr.records.find(r => r.id === id);
+            const record = pr.records.find(r => r.id === id && canAccessTenantItem(auth.user, r));
             if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
             const visionApiKey = String(pr.config.visionApiKey || '').trim();
             const textModel = String(pr.config.textModel || 'qwen-turbo').trim();
@@ -1510,7 +1585,7 @@ const server = http.createServer(async (req, res) => {
             const auth = requireAuth(); if (!auth) return;
             const id = pathname.split('/')[5]; // /api/v1/photos/records/{id}/detect-regions
             const pr = readPhotoRecords();
-            const record = pr.records.find(r => r.id === id);
+            const record = pr.records.find(r => r.id === id && canAccessTenantItem(auth.user, r));
             if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
             const visionApiKey = String(pr.config.visionApiKey || '').trim();
             const visionModel = String(pr.config.visionModel || 'qwen-vl-plus').trim() || 'qwen-vl-plus';
