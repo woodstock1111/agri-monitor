@@ -1345,7 +1345,8 @@ const server = http.createServer(async (req, res) => {
                 return sendJson(400, { ok: false, msg: 'cropId and imageBase64 required' });
             }
             const pr = readPhotoRecords();
-            if (!pr.crops.find(c => c.id === body.cropId && canAccessTenantItem(auth.user, c))) {
+            const crop = pr.crops.find(c => c.id === body.cropId && canAccessTenantItem(auth.user, c));
+            if (!crop) {
                 return sendJson(404, { ok: false, msg: 'crop not found' });
             }
 
@@ -1364,6 +1365,7 @@ const server = http.createServer(async (req, res) => {
             const record = {
                 id,
                 cropId: body.cropId,
+                cropName: String(crop.name || ''),
                 createdAt: now.toISOString(),
                 imagePath: `server-data/photos/${yearMonth}/${id}.jpg`,
                 imageUrl: `/api/v1/photos/records/${id}/image`,
@@ -1535,7 +1537,7 @@ const server = http.createServer(async (req, res) => {
                 const confidenceText = Number.isFinite(confidence) ? `(${Math.round(confidence * 100)}%)` : '';
                 return `${det.label || 'unknown'}${confidenceText}`;
             }).join(', ')}` : '';
-            const userPrompt = `作物：${crop.name || '未知作物'}（品种：${crop.variety || '未知'}）
+            const userPrompt = `作物：${record.cropName || crop.name || '未知作物'}（品种：${crop.variety || '未知'}）
 拍摄时间：${record.createdAt}
 天气：${weatherText}
 传感器摘要：${sensorSummary}
@@ -1595,8 +1597,8 @@ const server = http.createServer(async (req, res) => {
             if (!fs.existsSync(imgPath)) return sendJson(404, { ok: false, msg: 'file missing' });
             const imageDataUrl = `data:image/jpeg;base64,${fs.readFileSync(imgPath).toString('base64')}`;
             const allowedLabels = [
-                'insect_visible', 'leaf_holes', 'leaf_yellowing', 'leaf_browning',
-                'leaf_wilting', 'leaf_curling', 'disease_spot', 'white_powder',
+                'insect_visible', 'insect_damage', 'leaf_holes', 'leaf_yellowing',
+                'leaf_browning', 'leaf_wilting', 'leaf_curling', 'disease_spot', 'white_powder',
                 'soil_crack', 'soil_too_wet', 'weed', 'stem_damage'
             ];
             const detectPrompt = `你是农业图像检测专家。请检测照片中所有可见异常区域，并只输出 JSON，不要任何解释文字。
@@ -1711,6 +1713,9 @@ const server = http.createServer(async (req, res) => {
                 }});
             }
             if (req.method === 'PUT') {
+                if (auth.user.role !== 'platform_admin') {
+                    return sendJson(403, { ok: false, msg: 'admin only' });
+                }
                 const body = await readBody(req);
                 if (body.amapKey !== undefined && body.amapKey !== '***')
                     pr.config.amapKey = body.amapKey;

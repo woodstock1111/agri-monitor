@@ -827,19 +827,40 @@ const app = {
   _selectedDiseaseTypes: [],
   _labelTaxonomy: {
     visual: [
-      { key: 'insect_visible', label: '虫害可见' },
-      { key: 'leaf_holes', label: '叶片孔洞' },
-      { key: 'leaf_yellowing', label: '叶片发黄' },
-      { key: 'leaf_browning', label: '叶片褐变' },
-      { key: 'leaf_wilting', label: '叶片萎蔫' },
-      { key: 'leaf_curling', label: '叶片卷曲' },
-      { key: 'disease_spot', label: '病斑' },
-      { key: 'white_powder', label: '白粉' },
-      { key: 'soil_crack', label: '土壤裂缝' },
-      { key: 'soil_too_wet', label: '土壤过湿' },
-      { key: 'weed', label: '杂草' },
-      { key: 'stem_damage', label: '茎秆损伤' },
-      { key: 'normal', label: '正常无异常' },
+      {
+        group: '虫害相关',
+        items: [
+          { key: 'insect_visible', label: '虫体可见' },
+          { key: 'insect_damage', label: '虫害咬痕' },
+        ],
+      },
+      {
+        group: '病害相关',
+        items: [
+          { key: 'disease_spot', label: '病斑' },
+          { key: 'white_powder', label: '白粉' },
+        ],
+      },
+      {
+        group: '叶片异常',
+        items: [
+          { key: 'leaf_holes', label: '叶片孔洞' },
+          { key: 'leaf_yellowing', label: '叶片发黄' },
+          { key: 'leaf_browning', label: '叶片褐变' },
+          { key: 'leaf_wilting', label: '叶片萎蔫' },
+          { key: 'leaf_curling', label: '叶片卷曲' },
+        ],
+      },
+      {
+        group: '其他',
+        items: [
+          { key: 'soil_crack', label: '土壤裂缝' },
+          { key: 'soil_too_wet', label: '土壤过湿' },
+          { key: 'weed', label: '杂草' },
+          { key: 'stem_damage', label: '茎秆损伤' },
+          { key: 'normal', label: '正常无异常' },
+        ],
+      },
     ],
     growthStages: [
       { key: 'seedling', label: '苗期' },
@@ -3821,6 +3842,28 @@ const app = {
     }
   },
 
+  _recordHasImageMarks(record) {
+    const annotations = Array.isArray(record?.annotations) ? record.annotations : [];
+    const detections = Array.isArray(record?.aiDetections?.detections) ? record.aiDetections.detections : [];
+    return annotations.length > 0 || detections.length > 0;
+  },
+
+  _recordImageMarkHtml(record) {
+    const marked = this._recordHasImageMarks(record);
+    return `
+      <span class="record-image-mark ${marked ? 'done' : 'pending'}" id="record-image-mark-${this.sanitize(record.id)}">
+        <i class="fa-solid ${marked ? 'fa-draw-polygon' : 'fa-vector-square'}"></i>
+        ${marked ? '图像已标记' : '图像未标记'}
+      </span>
+    `;
+  },
+
+  _refreshRecordImageMark(recordId) {
+    const record = this._photoRecordCache[recordId];
+    const host = document.getElementById('record-image-mark-' + recordId);
+    if (record && host) host.outerHTML = this._recordImageMarkHtml(record);
+  },
+
   _renderRecordGrid(records) {
     const grid = document.getElementById('records-grid');
     if (!grid) return;
@@ -3836,6 +3879,7 @@ const app = {
       const sensorBit = Array.isArray(r.linkedSensors) && r.linkedSensors.length ? `<span class="record-tag"><i class="fa-solid fa-microchip"></i> ${r.linkedSensors.length} \u4e2a\u4f20\u611f\u5668</span>` : '';
       const notes = String(r.userNotes || '');
       const notesPreview = notes ? notes.slice(0, 50) + (notes.length > 50 ? '\u2026' : '') : '';
+      const imageMark = this._recordImageMarkHtml(r);
       const aiAction = r.aiAnalysis
         ? '<button class="record-ai-action done" onclick="event.stopPropagation()" disabled>AI 已标注</button>'
         : `<button class="record-ai-action" id="btn-ai-card-${this.sanitize(r.id)}" onclick="event.stopPropagation(); app.annotatePhotoRecord('${this.sanitize(r.id)}')"><i class="fa-solid fa-wand-magic-sparkles"></i> AI 标注</button>`;
@@ -3843,13 +3887,16 @@ const app = {
         <div class="record-card" onclick="app.openRecordDetail('${this.sanitize(r.id)}')">
           <button class="btn-icon record-delete-btn" title="\u5220\u9664\u8bb0\u5f55" onclick="event.stopPropagation(); app.deletePhotoRecord('${this.sanitize(r.id)}')"><i class="fa-solid fa-trash"></i></button>
           <div class="record-card-img">
+            ${imageMark}
             <img data-photo-id="${this.sanitize(r.id)}" alt="\u8bb0\u5f55\u56fe\u7247" loading="lazy">
           </div>
           <div class="record-card-body">
             <div class="record-card-date">${dateStr}</div>
             <div class="record-tags">${weatherBit}${sensorBit}</div>
             ${notesPreview ? `<div class="record-notes-preview">${this.sanitize(notesPreview)}</div>` : ''}
-            ${aiAction}
+            <div class="record-card-actions">
+              ${aiAction}
+            </div>
           </div>
         </div>
       `;
@@ -4059,9 +4106,14 @@ const app = {
       const diseaseTypeContainer = document.getElementById('label-disease-type-pills');
       if (!vContainer || !gContainer || !sContainer) return;
 
-      vContainer.innerHTML = this._labelTaxonomy.visual.map(item =>
-        `<button type="button" class="label-pill ${this._selectedVisualLabels.includes(item.key) ? 'active' : ''}" data-key="${item.key}" onclick="app._toggleVisualLabel('${item.key}')">${this.sanitize(item.label)}</button>`
-      ).join('');
+      vContainer.innerHTML = this._visualLabelGroups().map(group => `
+        <div class="label-subtitle">${this.sanitize(group.group)}</div>
+        <div class="label-pill-group">
+          ${group.items.map(item =>
+            `<button type="button" class="label-pill ${this._selectedVisualLabels.includes(item.key) ? 'active' : ''}" data-key="${item.key}" onclick="app._toggleVisualLabel('${item.key}')">${this.sanitize(item.label)}</button>`
+          ).join('')}
+        </div>
+      `).join('');
 
       gContainer.innerHTML = this._labelTaxonomy.growthStages.map(item =>
         `<button type="button" class="label-pill ${this._selectedGrowthStage === item.key ? 'active' : ''}" data-key="${item.key}" onclick="app._selectGrowthStage('${item.key}')">${this.sanitize(item.label)}</button>`
@@ -4112,7 +4164,7 @@ const app = {
         actionDetailFields.innerHTML = detailBlocks.join('');
       }
 
-      const showPestDetail = this._selectedVisualLabels.includes('insect_visible');
+      const showPestDetail = this._selectedVisualLabels.includes('insect_visible') || this._selectedVisualLabels.includes('insect_damage');
       if (pestSection) pestSection.style.display = showPestDetail ? '' : 'none';
       if (showPestDetail) {
         if (pestTypeContainer) {
@@ -4235,8 +4287,7 @@ const app = {
       let html = '';
       if (Array.isArray(labels.visual) && labels.visual.length) {
         labels.visual.forEach(key => {
-          const item = taxonomy.visual.find(v => v.key === key);
-          html += `<span class="label-display-pill">${this.sanitize(item ? item.label : key)}</span>`;
+          html += `<span class="label-display-pill">${this.sanitize(this._visualLabelText(key))}</span>`;
         });
       }
       if (labels.growthStage) {
@@ -4275,8 +4326,19 @@ const app = {
       return html;
     },
 
+    _visualLabelGroups() {
+      const visual = this._labelTaxonomy.visual || [];
+      if (!visual.length) return [];
+      if (Array.isArray(visual[0]?.items)) return visual;
+      return [{ group: '视觉标签', items: visual }];
+    },
+
+    _visualLabelItems() {
+      return this._visualLabelGroups().flatMap(group => Array.isArray(group.items) ? group.items : []);
+    },
+
     _visualLabelText(key) {
-      const item = this._labelTaxonomy.visual.find(v => v.key === key);
+      const item = this._visualLabelItems().find(v => v.key === key);
       return item ? item.label : String(key || '');
     },
 
@@ -4326,9 +4388,14 @@ const app = {
       if (!rect || rect[2] <= 0 || rect[3] <= 0) return;
       const [x, y, w, h] = rect;
       const label = String(options.label || '');
+      const lineWidth = Math.max(3, Math.round(ctx.canvas.width / 450));
       ctx.save();
+      ctx.lineWidth = lineWidth + 3;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.setLineDash([]);
+      ctx.strokeRect(x, y, w, h);
       ctx.strokeStyle = options.color || '#2563eb';
-      ctx.lineWidth = Math.max(2, Math.round(ctx.canvas.width / 600));
+      ctx.lineWidth = lineWidth;
       ctx.setLineDash(options.dashed ? [10, 6] : []);
       ctx.strokeRect(x, y, w, h);
       if (label) {
@@ -4378,6 +4445,13 @@ const app = {
             label: '新增标注',
           });
         }
+        if (this._pendingAnnotation?.recordId === recordId) {
+          this._drawRegionBox(ctx, this._pendingAnnotation.bbox, {
+            color: '#f59e0b',
+            dashed: true,
+            label: '选择标签',
+          });
+        }
       }
       this._renderRegionAnnotationList(recordId);
     },
@@ -4408,7 +4482,7 @@ const app = {
         <div class="region-list-block">
           <div class="region-list-title">已确认标注</div>
           ${annotations.map(ann => `
-            <div class="region-list-row">
+            <div class="region-list-row ${ann.id === this._recentAnnotationId ? 'new' : ''}">
               <span>${this.sanitize(this._visualLabelText(ann.label))} <em>${ann.source === 'ai_confirmed' ? 'AI' : '人工'}</em></span>
               <button class="btn-ghost btn-sm" onclick="app.deleteRegionAnnotation('${this.sanitize(recordId)}', '${this.sanitize(ann.id)}')">删除</button>
             </div>
@@ -4437,6 +4511,7 @@ const app = {
       if (!canvas?.width || event.button !== 0) return;
       event.preventDefault();
       this._closeAnnotationPopover();
+      this._pendingAnnotation = null;
       const point = this._canvasPoint(event, canvas);
       this._annotationDraft = { recordId, startX: point.x, startY: point.y, bbox: [point.x, point.y, 0, 0] };
     },
@@ -4458,9 +4533,12 @@ const app = {
       if (this._annotationDraft?.recordId !== recordId) return;
       const bbox = this._normalizeBbox(this._annotationDraft.bbox);
       this._annotationDraft = null;
-      this._renderRegionAnnotations(recordId);
-      if (!bbox || bbox[2] < 10 || bbox[3] < 10) return;
+      if (!bbox || bbox[2] < 10 || bbox[3] < 10) {
+        this._renderRegionAnnotations(recordId);
+        return;
+      }
       this._openAnnotationLabelPopover(recordId, bbox, event);
+      this._renderRegionAnnotations(recordId);
     },
 
     _annotationCanvasMouseLeave(event, recordId) {
@@ -4477,16 +4555,34 @@ const app = {
       pop.innerHTML = `
         <div class="annotation-label-title">选择异常标签</div>
         <div class="annotation-label-grid">
-          ${this._labelTaxonomy.visual.filter(item => item.key !== 'normal').map(item =>
-            `<button type="button" class="label-pill" onclick="app._selectAnnotationLabel('${item.key}')">${this.sanitize(item.label)}</button>`
-          ).join('')}
+          ${this._visualLabelGroups().map(group => {
+            const items = group.items.filter(item => item.key !== 'normal');
+            if (!items.length) return '';
+            return `
+              <div class="label-subtitle">${this.sanitize(group.group)}</div>
+              <div class="label-pill-group">
+                ${items.map(item =>
+                  `<button type="button" class="label-pill" onclick="app._selectAnnotationLabel('${item.key}')">${this.sanitize(item.label)}</button>`
+                ).join('')}
+              </div>
+            `;
+          }).join('')}
         </div>
       `;
       document.body.appendChild(pop);
       const x = event?.clientX ?? window.innerWidth / 2;
       const y = event?.clientY ?? window.innerHeight / 2;
-      pop.style.left = `${Math.min(window.scrollX + x, window.scrollX + window.innerWidth - 260)}px`;
-      pop.style.top = `${Math.min(window.scrollY + y + 10, window.scrollY + window.innerHeight - 180)}px`;
+      const rect = pop.getBoundingClientRect();
+      const gap = 10;
+      const margin = 12;
+      const left = Math.min(Math.max(x, margin), window.innerWidth - rect.width - margin);
+      let top = y + gap;
+      if (top + rect.height > window.innerHeight - margin) {
+        top = y - rect.height - gap;
+      }
+      top = Math.min(Math.max(top, margin), window.innerHeight - rect.height - margin);
+      pop.style.left = `${window.scrollX + left}px`;
+      pop.style.top = `${window.scrollY + top}px`;
       this._annotationPopover = pop;
     },
 
@@ -4510,12 +4606,14 @@ const app = {
       };
       record.annotations = Array.isArray(record.annotations) ? record.annotations : [];
       record.annotations.push(annotation);
+      this._recentAnnotationId = annotation.id;
       this._syncVisualLabelFromAnnotation(record, label);
       this._renderRecordLabelDisplay(pending.recordId);
       this._pendingAnnotation = null;
       this._closeAnnotationPopover();
       this._renderRegionAnnotations(pending.recordId);
       await this._saveRegionAnnotations(pending.recordId);
+      UI.toast('标注已添加：' + this._visualLabelText(label), 'success');
     },
 
     _syncVisualLabelFromAnnotation(record, label) {
@@ -4540,6 +4638,7 @@ const app = {
       } catch (e) {
         UI.toast('保存区域标注失败：' + e.message, 'danger');
       }
+      this._refreshRecordImageMark(recordId);
     },
 
     async confirmAiDetection(recordId, index) {
@@ -4548,18 +4647,21 @@ const app = {
       const bbox = this._normalizeBbox(detection?.bbox);
       if (!record || !detection || !bbox) return;
       record.annotations = Array.isArray(record.annotations) ? record.annotations : [];
-      record.annotations.push({
+      const annotation = {
         id: `ann_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
         type: 'bbox',
         label: detection.label,
         bbox,
         source: 'ai_confirmed',
         createdAt: new Date().toISOString(),
-      });
+      };
+      record.annotations.push(annotation);
+      this._recentAnnotationId = annotation.id;
       this._syncVisualLabelFromAnnotation(record, detection.label);
       this._renderRecordLabelDisplay(recordId);
       this._renderRegionAnnotations(recordId);
       await this._saveRegionAnnotations(recordId);
+      UI.toast('标注已添加：' + this._visualLabelText(detection.label), 'success');
     },
 
     async deleteRegionAnnotation(recordId, annotationId) {
@@ -4583,6 +4685,7 @@ const app = {
         record.aiDetections = data.aiDetections;
         this._photoRecordCache[recordId] = record;
         this._renderRegionAnnotations(recordId);
+        this._refreshRecordImageMark(recordId);
       } catch (e) {
         UI.toast('AI 检测失败：' + e.message, 'danger');
       } finally {
@@ -4649,6 +4752,11 @@ const app = {
       this._photoRecordCache[recordId] = record;
       if (host) host.innerHTML = this._renderAnnotation(record);
       UI.toast('\u6807\u6ce8\u5df2\u751f\u6210', 'success');
+      if (cardBtn) {
+        cardBtn.classList.add('done');
+        cardBtn.disabled = true;
+        cardBtn.innerHTML = 'AI 已标注';
+      }
       if (!host && this.currentPage === 'photos' && this._selectedCropId) await this._loadRecords(this._selectedCropId);
     } catch (e) {
       if (host) host.innerHTML = this._renderAnnotation(record);

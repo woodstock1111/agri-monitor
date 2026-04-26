@@ -4834,6 +4834,7 @@ body::before {
 }
 
 .record-card-img {
+  position: relative;
   aspect-ratio: 4 / 3;
   overflow: hidden;
   background: var(--bg-base);
@@ -4904,23 +4905,69 @@ body::before {
   color: var(--success);
 }
 
+.record-card-actions {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  flex-wrap: nowrap;
+}
+
+.record-image-mark {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.9);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.16);
+  pointer-events: none;
+}
+
+.record-image-mark.done {
+  border-color: rgba(16, 185, 129, 0.24);
+  background: rgba(236, 253, 245, 0.92);
+  color: var(--success);
+}
+
 .record-ai-action {
   position: absolute;
   right: 12px;
   bottom: 12px;
   z-index: 2;
   min-height: 28px;
-  padding: 0 10px;
+  padding: 0 9px;
   border: 1px solid rgba(124, 58, 237, 0.24);
   border-radius: 999px;
   background: linear-gradient(90deg, rgba(37, 99, 235, 0.92), rgba(124, 58, 237, 0.92));
   color: #fff;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   display: inline-flex;
   align-items: center;
   gap: 5px;
   box-shadow: 0 6px 16px rgba(67, 56, 202, 0.22);
+}
+
+.record-card-actions .record-ai-action {
+  position: static;
+  right: auto;
+  bottom: auto;
+  white-space: nowrap;
 }
 
 .record-ai-action.done {
@@ -6119,6 +6166,25 @@ body::before {
   font-size: 11px !important;
 }
 
+.record-card-actions {
+  right: 8px !important;
+  bottom: 8px !important;
+}
+
+.record-card-actions .record-ai-action {
+  right: auto !important;
+  bottom: auto !important;
+}
+
+.record-image-mark {
+  top: 8px !important;
+  left: 8px !important;
+  min-height: 22px !important;
+  padding: 0 7px !important;
+  border-radius: 999px !important;
+  font-size: 10px !important;
+}
+
 /* Final consistency pass: keep toolbar controls on the same solid glass as cards */
 .page-toolbar,
 #page-realtime .page-toolbar,
@@ -6358,6 +6424,13 @@ body::before {
   font-size: 12px;
 }
 
+.label-subtitle {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .label-detail-fields {
   grid-template-columns: 1fr;
   gap: 10px;
@@ -6445,16 +6518,34 @@ body::before {
   font-size: 13px;
 }
 
+.region-list-row.new {
+  animation: regionRowAdded 1.2s ease;
+  border-color: var(--success, #10b981);
+}
+
 .region-list-row em {
   color: var(--text-muted);
   font-style: normal;
   font-size: 12px;
 }
 
+@keyframes regionRowAdded {
+  0% {
+    background: rgba(16, 185, 129, 0.24);
+    transform: translateY(-2px);
+  }
+  100% {
+    background: var(--bg-surface, #fff);
+    transform: translateY(0);
+  }
+}
+
 .annotation-label-popover {
   position: absolute;
   z-index: 5000;
-  width: min(280px, calc(100vw - 24px));
+  width: min(440px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow: auto;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -6473,4 +6564,42 @@ body::before {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.annotation-label-grid .label-subtitle,
+#label-visual-pills .label-subtitle {
+  width: 100%;
+  margin: 4px 0 0;
+}
+
+#label-visual-pills {
+  align-items: flex-start;
+}
+
+#label-visual-pills .label-pill-group,
+.annotation-label-grid .label-pill-group {
+  width: 100%;
+}
+
+.annotation-label-grid .label-pill-group {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.annotation-label-grid .label-pill {
+  justify-content: center;
+  min-width: 0;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+@media (min-width: 520px) {
+  .annotation-label-popover {
+    width: min(520px, calc(100vw - 24px));
+  }
+
+  .annotation-label-grid .label-pill-group {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
