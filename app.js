@@ -602,30 +602,6 @@ function demoAutomations() {
 }
 
 // ====================================================
-// PEST DB
-// ====================================================
-const PEST_DB = [
-  { id:'p1', type:'pest', name:'\u7a3b\u98de\u8671', latin:'Nilaparvata lugens', emoji:'\ud83e\udd97', severity:'high', crops:['\u6c34\u7a3b'], season:'5-10\u6708',
-    symptoms:'\u53f6\u7247\u51fa\u73b0\u9ec4\u767d\u8272\u6761\u6591\uff0c\u690d\u682a\u4e0b\u90e8\u67af\u9ec4\uff0c\u4e25\u91cd\u65f6\u6574\u682a\u5012\u4f0f\u3002', prevention:'\u53ca\u65f6\u6392\u6c34\u6652\u7530\uff0c\u51cf\u5c11\u6c2e\u80a5\uff0c\u9009\u7528\u6297\u6027\u54c1\u79cd\u3002',
-    control:'\u5421\u866b\u5549\u3001\u567b\u55ea\u916e\u7b49\u836f\u5242\u55b7\u96fe\uff0c\u6ce8\u610f\u5bf9\u51c6\u57fa\u90e8\u3002', threshold:'\u767e\u4e1b\u866b\u91cf\u8d85\u8fc71000\u5934\u65f6\u5373\u9700\u9632\u6cbb\u3002' },
-  { id:'p2', type:'disease', name:'\u6c34\u7a3b\u7eb9\u67af\u75c5', latin:'Rhizoctonia solani', emoji:'\ud83c\udf42', severity:'high', crops:['\u6c34\u7a3b'], season:'6-9\u6708',
-    symptoms:'\u53f6\u9798\u4e0a\u51fa\u73b0\u692d\u5706\u5f62\u4e91\u7eb9\u72b6\u75c5\u6591\uff0c\u9ad8\u6e29\u9ad8\u6e7f\u65f6\u5411\u4e0a\u8513\u5ef6\u3002', prevention:'\u5408\u7406\u5bc6\u690d\uff0c\u964d\u4f4e\u7530\u95f4\u6e7f\u5ea6\uff0c\u63a7\u5236\u6c2e\u80a5\u3002',
-    control:'\u82ef\u919a\u7532\u73af\u5511\u3001\u4e95\u5188\u9709\u7d20\u7b49\u55b7\u65bd\u830e\u57fa\u90e8\u3002', threshold:'\u4e1b\u53d1\u75c5\u7387\u8fbe\u523020%\u65f6\u5f00\u59cb\u9632\u6cbb\u3002' },
-  { id:'p3', type:'pest', name:'\u659c\u7eb9\u591c\u86fe', latin:'Spodoptera litura', emoji:'\ud83e\udd8b', severity:'medium', crops:['\u852c\u83dc','\u6c34\u7a3b','\u7389\u7c73'], season:'7-10\u6708',
-    symptoms:'\u5e7c\u866b\u53d6\u98df\u53f6\u7247\u6210\u7a7f\u5b54\u72b6\uff0c\u8001\u9f84\u5e7c\u866b\u663c\u4f0f\u591c\u51fa\u3002', prevention:'\u5b89\u88c5\u8bf1\u866b\u706f\uff0c\u63a8\u5e7f\u6027\u4fe1\u606f\u7d20\u8bf1\u6355\u3002',
-    control:'\u6c2f\u866b\u82ef\u7532\u9170\u80fa\u7b49\u55b7\u96fe\uff0c\u508d\u665a\u65bd\u836f\u6548\u679c\u6700\u4f73\u3002', threshold:'\u767e\u682a\u5375\u5757\u8fbe\u52303\u5757\u6216\u5e7c\u866b30\u5934\u65f6\u9632\u6cbb\u3002' },
-  { id:'p4', type:'disease', name:'\u852c\u83dc\u7070\u9709\u75c5', latin:'Botrytis cinerea', emoji:'\ud83c\udf2b\ufe0f', severity:'medium', crops:['\u852c\u83dc','\u756a\u8304'], season:'\u51ac-\u6625\u5b63',
-    symptoms:'\u75c5\u90e8\u51fa\u73b0\u6c34\u6d78\u72b6\u6591\u70b9\uff0c\u6269\u5927\u540e\u4ea7\u751f\u7070\u8910\u8272\u9709\u5c42\u3002', prevention:'\u52a0\u5f3a\u901a\u98ce\u900f\u5149\uff0c\u964d\u4f4e\u6e7f\u5ea6\uff0c\u6e05\u9664\u75c5\u6b8b\u4f53\u3002',
-    control:'\u8150\u9709\u5229\u3001\u5627\u9709\u80fa\u7b49\u8f6e\u6362\u4f7f\u7528\u907f\u514d\u6297\u6027\u3002', threshold:'\u53d1\u75c5\u521d\u671f\u5373\u5f00\u59cb\u65bd\u836f\u3002' },
-  { id:'p5', type:'pest', name:'\u869c\u866b\uff08\u83dc\u869c\uff09', latin:'Myzus persicae', emoji:'\ud83d\udc1c', severity:'medium', crops:['\u852c\u83dc','\u53f6\u83dc'], season:'\u5168\u5e74',
-    symptoms:'\u7fa4\u96c6\u53f6\u80cc\u523a\u5438\u6c41\u6db2\uff0c\u53f6\u7247\u5377\u66f2\u76b1\u7f29\uff0c\u53ef\u4f20\u64ad\u75c5\u6bd2\u75c5\u3002', prevention:'\u9ec4\u8272\u7c98\u866b\u677f\uff0c\u4fdd\u62a4\u74e2\u866b\u7b49\u5929\u654c\u3002',
-    control:'\u5421\u866b\u5549\u3001\u5576\u866b\u8112\u7b49\u55b7\u96fe\uff0c\u6ce8\u610f\u53f6\u80cc\u3002', threshold:'\u6bcf\u682a\u869c\u866b100\u5934\u65f6\u5f00\u59cb\u9632\u6cbb\u3002' },
-  { id:'p6', type:'disease', name:'\u9ec4\u74dc\u971c\u9709\u75c5', latin:'Pseudoperonospora cubensis', emoji:'\ud83e\udd52', severity:'high', crops:['\u9ec4\u74dc','\u846b\u82a6\u79d1'], season:'\u6625\u5b63',
-    symptoms:'\u53f6\u9762\u9ec4\u7eff\u8272\u89d2\u6591\uff0c\u80cc\u9762\u7d2b\u8910\u8272\u9709\u5c42\uff0c\u53d1\u5c55\u8fc5\u901f\u3002', prevention:'\u9009\u7528\u6297\u75c5\u54c1\u79cd\uff0c\u5927\u68da\u964d\u6e7f\u3002',
-    control:'\u70ef\u9170\u5417\u5549\u7b49\u55b7\u96fe\uff0c\u53d1\u75c5\u524d\u9884\u9632\u6700\u4f73\u3002', threshold:'\u53d1\u73b0\u4e2d\u5fc3\u75c5\u682a\u65f6\u7acb\u5373\u7528\u836f\u3002' },
-];
-
-// ====================================================
 // SENSOR ENGINE (supports both simulated & API data)
 // ====================================================
 const SensorEngine = {
@@ -807,6 +783,8 @@ const app = {
   _crops: [],
   _photoRecordCache: {},
   _photoImageUrls: {},
+  _pestLibraryCache: [],
+  _pestLibraryLoaded: false,
   _ftDate: null,
   _ftTasksCache: [],
   _ftCalendarMonth: null,
@@ -885,31 +863,13 @@ const app = {
       { key: '巡查', label: '巡查' },
       { key: '其他', label: '其他' },
     ],
-    pestTypes: [
-      { key: 'aphid', label: '蚜虫' },
-      { key: 'caterpillar', label: '鳞翅目幼虫/毛虫' },
-      { key: 'whitefly', label: '白粉虱' },
-      { key: 'leaf_miner', label: '潜叶蝇' },
-      { key: 'thrips', label: '蓟马' },
-      { key: 'mite', label: '红蜘蛛/螨虫' },
-      { key: 'beetle', label: '甲虫' },
-      { key: 'snail_slug', label: '蜗牛/蛞蝓' },
-      { key: 'unknown_pest', label: '未知害虫' },
-    ],
+    pestTypes: [],
     pestInfestation: [
       { key: 'scattered', label: '零星发现' },
       { key: 'moderate', label: '中等扩散' },
       { key: 'severe', label: '严重爆发' },
     ],
-    diseaseTypes: [
-      { key: 'anthracnose', label: '炭疽病' },
-      { key: 'leaf_spot', label: '叶斑病' },
-      { key: 'blight', label: '疫病' },
-      { key: 'powdery_mildew', label: '白粉病' },
-      { key: 'downy_mildew', label: '霜霉病' },
-      { key: 'rust', label: '锈病' },
-      { key: 'unknown_disease', label: '未知病害' },
-    ],
+    diseaseTypes: [],
   },
 
   //     BOOT    
@@ -2616,38 +2576,201 @@ const app = {
   },
 
   //     PEST DB    
-  renderPests(search='',type='all') {
-    const q = (document.getElementById('pest-search')?.value||search).trim().toLowerCase();
-    const t = document.getElementById('pest-type-filter')?.value||type;
-    const filtered = PEST_DB.filter(p => (!q||p.name.includes(q)||p.latin.toLowerCase().includes(q)) && (t==='all'||p.type===t));
-    document.getElementById('pest-grid').innerHTML = filtered.length===0
-      ? '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-magnifying-glass"></i><p>\u672a\u627e\u5230\u76f8\u5173\u8bb0\u5f55</p></div>'
-      : filtered.map(p=>`
-        <div class="pest-card" onclick="app.showPestDetail('${p.id}')">
-          <div class="pest-img">${p.emoji}</div>
-          <div class="pest-info"><div class="pest-name">${p.name}</div><div class="pest-latin">${p.latin}</div>
-          <div class="pest-tags"><span class="pest-tag">${p.type==='pest'?'\u866b\u5bb3':'\u75c5\u5bb3'}</span>
-          <span class="pest-tag ${p.severity==='high'?'danger-tag':''}">${p.severity==='high'?'\u9ad8\u98ce\u9669':'\u4e2d\u7b49'}</span>
-          ${p.crops.map(c=>`<span class="pest-tag">${c}</span>`).join('')}</div></div>
-        </div>`).join('');
+  async _pestLibraryRequest(path = '', options = {}) {
+    const res = await fetch('/api/v1/pest-library' + path, {
+      ...options,
+      headers: AuthService.authHeaders(options.headers || {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) throw new Error(data.msg || data.error || '请求失败');
+    return data;
   },
+
+  _refreshPestTaxonomy(entries = this._pestLibraryCache) {
+    const toLabel = item => ({ key: item.key, label: item.name });
+    this._labelTaxonomy.pestTypes = (entries || []).filter(item => item.type === 'pest').map(toLabel);
+    this._labelTaxonomy.diseaseTypes = (entries || []).filter(item => item.type === 'disease').map(toLabel);
+  },
+
+  async _loadPestLibrary(force = false) {
+    if (this._pestLibraryLoaded && !force) return this._pestLibraryCache;
+    const data = await this._pestLibraryRequest('');
+    this._pestLibraryCache = Array.isArray(data.entries) ? data.entries : [];
+    this._pestLibraryLoaded = true;
+    this._refreshPestTaxonomy();
+    return this._pestLibraryCache;
+  },
+
+  async renderPests(search = '', type = 'all') {
+    const grid = document.getElementById('pest-grid');
+    if (!grid) return;
+    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-spinner fa-spin"></i><p>正在加载病害虫库...</p></div>';
+    try {
+      const entries = await this._loadPestLibrary(true);
+      const q = (document.getElementById('pest-search')?.value || search).trim().toLowerCase();
+      const t = document.getElementById('pest-type-filter')?.value || type;
+      const filtered = entries.filter(p => {
+        const haystack = [p.name, p.key, p.symptoms, p.control].filter(Boolean).join(' ').toLowerCase();
+        return (!q || haystack.includes(q)) && (t === 'all' || p.type === t);
+      });
+      grid.innerHTML = filtered.length === 0
+        ? '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-magnifying-glass"></i><p>未找到相关记录</p></div>'
+        : filtered.map(p => `
+          <div class="pest-card" onclick="app.showPestDetail('${this.sanitize(p.id)}')">
+            <div class="pest-info">
+              <div class="pest-name">${this.sanitize(p.name)}</div>
+              <div class="pest-latin">${this.sanitize(p.key)}</div>
+              <div class="pest-tags"><span class="pest-tag">${p.type === 'pest' ? '虫害' : '病害'}</span></div>
+              ${p.symptoms ? `<div class="pest-card-text">${this.sanitize(String(p.symptoms)).slice(0, 70)}${String(p.symptoms).length > 70 ? '...' : ''}</div>` : ''}
+            </div>
+          </div>`).join('');
+    } catch (e) {
+      grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-triangle-exclamation"></i><p>加载失败：${this.sanitize(e.message)}</p></div>`;
+    }
+  },
+
   filterPests(v) { this.renderPests(v); },
-  showPestDetail(id) {
-    const p = PEST_DB.find(x=>x.id===id); if(!p) return;
-    document.getElementById('pest-modal-title').textContent = `${p.emoji} ${p.name}`;
+
+  openPestEditor(id = '') {
+    if (!AuthService.canManageUsers()) {
+      UI.toast('当前账号没有病害虫库编辑权限', 'warning');
+      return;
+    }
+    const entry = id ? this._pestLibraryCache.find(item => item.id === id) : null;
+    document.getElementById('pest-modal-title').textContent = entry ? '编辑病害虫条目' : '新增病害虫条目';
     document.getElementById('pest-modal-body').innerHTML = `
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px">
-        <div class="form-group"><label>\u5b66\u540d</label><div style="font-style:italic;color:var(--text-secondary)">${p.latin}</div></div>
-        <div class="form-group"><label>\u7c7b\u578b</label><div>${p.type==='pest'?'\u866b\u5bb3':'\u75c5\u5bb3'}</div></div>
-        <div class="form-group"><label>\u5371\u5bb3\u7b49\u7ea7</label><div style="color:${p.severity==='high'?'var(--danger)':'var(--warning)'}">\u25cf ${p.severity==='high'?'\u9ad8\u98ce\u9669':'\u4e2d\u7b49'}</div></div>
-        <div class="form-group"><label>\u9ad8\u53d1\u5b63\u8282</label><div>${p.season}</div></div>
-        <div class="form-group"><label>\u5371\u5bb3\u4f5c\u7269</label><div>${p.crops.join('\u3001')}</div></div>
-        <div class="form-group"><label>\u9632\u6cbb\u9608\u503c</label><div style="color:var(--warning)">${p.threshold}</div></div>
+      <div class="pest-edit-form">
+        <input type="hidden" id="pest-edit-id" value="${this.sanitize(entry?.id || '')}">
+        <div class="form-group"><label>类型 *</label>
+          <select class="select-input" id="pest-edit-type">
+            <option value="pest" ${entry?.type === 'pest' ? 'selected' : ''}>虫害</option>
+            <option value="disease" ${entry?.type === 'disease' ? 'selected' : ''}>病害</option>
+          </select>
+        </div>
+        <div class="form-group"><label>英文标识 *</label>
+          <input class="text-input" id="pest-edit-key" value="${this.sanitize(entry?.key || '')}" placeholder="如：aphid" ${entry ? 'disabled' : ''}>
+          <div class="field-hint">唯一标识符，创建后无法修改。</div>
+        </div>
+        <div class="form-group"><label>中文名 *</label>
+          <div class="pest-ai-fill-row">
+            <input class="text-input" id="pest-edit-name" value="${this.sanitize(entry?.name || '')}" placeholder="如：蚜虫（菜蚜）">
+            <button type="button" class="btn-ghost btn-sm" id="pest-ai-fill-btn" onclick="app.aiFillPestEntry()"><i class="fa-solid fa-wand-magic-sparkles"></i> AI 补齐</button>
+          </div>
+        </div>
+        <div class="form-group pest-edit-wide"><label>为害症状</label><textarea class="text-input" id="pest-edit-symptoms" rows="4" placeholder="可选">${this.sanitize(entry?.symptoms || '')}</textarea></div>
+        <div class="form-group pest-edit-wide"><label>药剂防治</label><textarea class="text-input" id="pest-edit-control" rows="4" placeholder="可选">${this.sanitize(entry?.control || '')}</textarea></div>
       </div>
-      <div class="form-group"><label>\u4e3a\u5bb3\u75c7\u72b6</label><div style="color:var(--text-secondary);line-height:1.7">${p.symptoms}</div></div>
-      <div class="form-group" style="margin-top:8px"><label>\u519c\u4e1a\u9632\u6cbb</label><div style="color:var(--text-secondary);line-height:1.7">${p.prevention}</div></div>
-      <div class="form-group" style="margin-top:8px"><label>\u836f\u5242\u9632\u6cbb</label><div style="color:var(--text-secondary);line-height:1.7">${p.control}</div></div>`;
+      <div class="modal-footer pest-edit-footer">
+        ${entry ? '<button class="btn-danger" onclick="app.deletePestEntry()">删除</button>' : '<span></span>'}
+        <button class="btn-primary" onclick="app.savePestEntry()">保存</button>
+      </div>`;
     this.openModal('pest');
+    setTimeout(() => document.getElementById('pest-edit-name')?.focus(), 50);
+  },
+
+  async aiFillPestEntry() {
+    const nameEl = document.getElementById('pest-edit-name');
+    const typeEl = document.getElementById('pest-edit-type');
+    const btn = document.getElementById('pest-ai-fill-btn');
+    const name = nameEl?.value.trim() || '';
+    const type = typeEl?.value || 'pest';
+    if (!name) {
+      UI.toast('请先输入中文名', 'warning');
+      return;
+    }
+    const originalHtml = btn?.innerHTML || '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 补齐中...';
+    }
+    try {
+      const data = await this._pestLibraryRequest('/ai-fill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, type }),
+      });
+      const suggestion = data.suggestion || {};
+      const fields = [
+        ['pest-edit-key', suggestion.key],
+        ['pest-edit-symptoms', suggestion.symptoms],
+        ['pest-edit-control', suggestion.control],
+      ];
+      fields.forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (el && !el.value.trim() && value) el.value = value;
+      });
+      UI.toast('AI 已补齐，请确认后保存', 'success');
+    } catch (e) {
+      UI.toast('AI 补齐失败：' + e.message, 'danger');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
+    }
+  },
+
+  showPestDetail(id) {
+    if (AuthService.canManageUsers()) {
+      this.openPestEditor(id);
+    } else {
+      this.openPestReadonly(id);
+    }
+  },
+
+  openPestReadonly(id) {
+    const entry = this._pestLibraryCache.find(item => item.id === id);
+    if (!entry) return;
+    document.getElementById('pest-modal-title').textContent = entry.name || '病害虫详情';
+    document.getElementById('pest-modal-body').innerHTML = `
+      <div class="pest-readonly">
+        <div class="pest-tags"><span class="pest-tag">${entry.type === 'pest' ? '虫害' : '病害'}</span><span class="pest-tag">${this.sanitize(entry.key || '')}</span></div>
+        <div class="form-group" style="margin-top:14px"><label>为害症状</label><div class="pest-readonly-text">${this.sanitize(entry.symptoms || '暂无')}</div></div>
+        <div class="form-group"><label>药剂防治</label><div class="pest-readonly-text">${this.sanitize(entry.control || '暂无')}</div></div>
+      </div>`;
+    this.openModal('pest');
+  },
+
+  async savePestEntry() {
+    const id = document.getElementById('pest-edit-id')?.value || '';
+    const payload = {
+      type: document.getElementById('pest-edit-type')?.value || 'pest',
+      key: document.getElementById('pest-edit-key')?.value.trim() || '',
+      name: document.getElementById('pest-edit-name')?.value.trim() || '',
+      symptoms: document.getElementById('pest-edit-symptoms')?.value.trim() || '',
+      control: document.getElementById('pest-edit-control')?.value.trim() || '',
+    };
+    if (!payload.key || !payload.name) {
+      UI.toast('请填写英文标识和中文名', 'warning');
+      return;
+    }
+    try {
+      await this._pestLibraryRequest(id ? '/' + encodeURIComponent(id) : '', {
+        method: id ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      this.closeModal('pest');
+      await this.renderPests();
+      this._renderLabelPills();
+      UI.toast('病害虫库已保存', 'success');
+    } catch (e) {
+      UI.toast('保存失败：' + e.message, 'danger');
+    }
+  },
+
+  async deletePestEntry() {
+    const id = document.getElementById('pest-edit-id')?.value || '';
+    if (!id || !await this.confirmAction('确定删除该病害虫条目吗？已有记录的历史标签不会被删除。')) return;
+    try {
+      await this._pestLibraryRequest('/' + encodeURIComponent(id), { method: 'DELETE' });
+      this.closeModal('pest');
+      await this.renderPests();
+      this._renderLabelPills();
+      UI.toast('条目已删除', 'success');
+    } catch (e) {
+      UI.toast('删除失败：' + e.message, 'danger');
+    }
   },
 
   // ====================================================
@@ -3740,6 +3863,7 @@ const app = {
     await Promise.all([
       this._loadPhotoConfigLabel(),
       this._loadCrops(),
+      this._loadPestLibrary().catch(() => []),
     ]);
   },
 
@@ -4168,9 +4292,10 @@ const app = {
       if (pestSection) pestSection.style.display = showPestDetail ? '' : 'none';
       if (showPestDetail) {
         if (pestTypeContainer) {
-          pestTypeContainer.innerHTML = this._labelTaxonomy.pestTypes.map(item =>
+          const pestTypes = this._labelTaxonomy.pestTypes || [];
+          pestTypeContainer.innerHTML = pestTypes.length ? pestTypes.map(item =>
             `<button type="button" class="label-pill ${this._selectedPestTypes.includes(item.key) ? 'active' : ''}" data-key="${item.key}" onclick="app._togglePestType('${item.key}')">${this.sanitize(item.label)}</button>`
-          ).join('');
+          ).join('') : '<span class="label-empty-hint">暂无虫害条目，可在病害虫数据库新增</span>';
         }
         if (pestInfestationContainer) {
           pestInfestationContainer.innerHTML = this._labelTaxonomy.pestInfestation.map(item =>
@@ -4188,9 +4313,10 @@ const app = {
       if (diseaseSection) diseaseSection.style.display = showDiseaseDetail ? '' : 'none';
       if (showDiseaseDetail) {
         if (diseaseTypeContainer) {
-          diseaseTypeContainer.innerHTML = this._labelTaxonomy.diseaseTypes.map(item =>
+          const diseaseTypes = this._labelTaxonomy.diseaseTypes || [];
+          diseaseTypeContainer.innerHTML = diseaseTypes.length ? diseaseTypes.map(item =>
             `<button type="button" class="label-pill ${this._selectedDiseaseTypes.includes(item.key) ? 'active' : ''}" data-key="${item.key}" onclick="app._toggleDiseaseType('${item.key}')">${this.sanitize(item.label)}</button>`
-          ).join('');
+          ).join('') : '<span class="label-empty-hint">暂无病害条目，可在病害虫数据库新增</span>';
         }
       } else {
         this._selectedDiseaseTypes = [];
@@ -4347,6 +4473,21 @@ const app = {
       return item ? item.label : String(key || '');
     },
 
+    _pestGuessName(pestGuess) {
+      if (!pestGuess || typeof pestGuess !== 'object') return '';
+      return String(pestGuess.name || pestGuess.speciesName || this._pestTypeText(pestGuess.species) || '').trim();
+    },
+
+    _pestGuessKey(pestGuess) {
+      if (!pestGuess || typeof pestGuess !== 'object') return '';
+      const entries = this._labelTaxonomy.pestTypes || [];
+      const explicit = String(pestGuess.key || pestGuess.species || '').trim();
+      if (explicit && entries.some(item => item.key === explicit)) return explicit;
+      const name = this._pestGuessName(pestGuess);
+      const matched = entries.find(item => item.label === name || item.key === name);
+      return matched?.key || '';
+    },
+
     _getRegionDetections(record) {
       const detections = record?.aiDetections?.detections;
       return Array.isArray(detections) ? detections : [];
@@ -4477,11 +4618,13 @@ const app = {
             const confirmed = this._isDetectionConfirmed(record, det);
             const pestGuess = det.pestGuess && typeof det.pestGuess === 'object' ? det.pestGuess : null;
             const pestConfirmed = pestGuess ? this._isPestGuessConfirmed(record, pestGuess) : false;
-            const pestName = pestGuess ? String(pestGuess.speciesName || this._pestTypeText(pestGuess.species) || '') : '';
+            const pestName = pestGuess ? this._pestGuessName(pestGuess) : '';
             const pestReasoning = pestGuess ? String(pestGuess.reasoning || '') : '';
+            const pestKnown = pestGuess ? !!this._pestGuessKey(pestGuess) : false;
             const pestGuessBlock = pestGuess ? `
               <div class="region-pest-guess">
                 <strong>${pestConfirmed ? '已确认虫种' : 'AI 推测虫种'}：${this.sanitize(pestName || '未知害虫')}</strong>
+                ${!pestKnown ? '<span>该虫种暂未匹配到病害虫库条目，可先去病害虫数据库新增后再确认。</span>' : ''}
                 ${pestReasoning ? `<span>${this.sanitize(pestReasoning)}</span>` : ''}
               </div>
             ` : '';
@@ -4659,7 +4802,7 @@ const app = {
     },
 
     _syncPestGuessFromDetection(record, pestGuess) {
-      const species = String(pestGuess?.species || '').trim();
+      const species = this._pestGuessKey(pestGuess);
       if (!record || !species) return;
       if (!record.labels || typeof record.labels !== 'object') record.labels = { visual: [] };
       if (!record.labels.pestDetail || typeof record.labels.pestDetail !== 'object') record.labels.pestDetail = {};
@@ -4670,7 +4813,7 @@ const app = {
     },
 
     _isPestGuessConfirmed(record, pestGuess) {
-      const species = String(pestGuess?.species || '').trim();
+      const species = this._pestGuessKey(pestGuess);
       const current = record?.labels?.pestDetail?.species;
       return !!species && Array.isArray(current) && current.includes(species);
     },
@@ -4745,11 +4888,16 @@ const app = {
       const detection = this._getRegionDetections(record)[index];
       const pestGuess = detection?.pestGuess && typeof detection.pestGuess === 'object' ? detection.pestGuess : null;
       if (!record || !pestGuess) return;
+      const species = this._pestGuessKey(pestGuess);
+      if (!species) {
+        UI.toast('该虫种还不在病害虫数据库中，请先新增条目后再确认', 'warning');
+        return;
+      }
       this._syncPestGuessFromDetection(record, pestGuess);
       this._renderRecordLabelDisplay(recordId);
       this._renderRegionAnnotationList(recordId);
       const saved = await this._saveRegionAnnotations(recordId);
-      if (saved) UI.toast('虫种已确认：' + this._pestTypeText(pestGuess.species), 'success');
+      if (saved) UI.toast('虫种已确认：' + this._pestTypeText(species), 'success');
     },
 
     async deleteConfirmedPest(recordId, species) {
@@ -4763,7 +4911,7 @@ const app = {
       }
       if (Array.isArray(record.annotations)) {
         record.annotations.forEach(item => {
-          if (item.pestGuess?.species === species) delete item.pestGuess;
+          if (this._pestGuessKey(item.pestGuess) === species) delete item.pestGuess;
         });
       }
       if (!record.labels.pestDetail.species.length && !record.labels.pestDetail.infestation) {
@@ -4934,7 +5082,7 @@ const app = {
     }
   },
 
-  openNewRecordModal() {
+  async openNewRecordModal() {
     if (!this._selectedCropId) { UI.toast('\u8bf7\u5148\u9009\u62e9\u519c\u4f5c\u7269', 'warning'); return; }
     this._photoCompressedBase64 = null;
     this._currentWeather = null;
@@ -4953,6 +5101,7 @@ const app = {
     this._selectedPestTypes = [];
     this._selectedPestInfestation = null;
     this._selectedDiseaseTypes = [];
+    await this._loadPestLibrary().catch(() => []);
     this._renderLabelPills();
     document.getElementById('weather-display').style.display = 'none';
     const now = new Date();

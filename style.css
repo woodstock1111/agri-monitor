@@ -1453,6 +1453,13 @@ textarea.text-input {
   margin-bottom: 8px;
 }
 
+.pest-card-text {
+  margin-top: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .pest-tags {
   display: flex;
   gap: 6px;
@@ -1472,6 +1479,44 @@ textarea.text-input {
   background: var(--danger-bg);
   color: var(--danger);
   border-color: rgba(239, 68, 68, 0.2);
+}
+
+.pest-edit-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.pest-edit-wide {
+  grid-column: 1 / -1;
+}
+
+.pest-edit-footer {
+  padding-left: 0;
+  padding-right: 0;
+  justify-content: space-between;
+}
+
+.pest-ai-fill-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.pest-readonly-text {
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+@media (max-width: 640px) {
+  .pest-edit-form {
+    grid-template-columns: 1fr;
+  }
+
+  .pest-ai-fill-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* =========== LOCATION GRID =========== */
@@ -6452,6 +6497,11 @@ body::before {
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 600;
+}
+
+.label-empty-hint {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .detail-image-annotator {

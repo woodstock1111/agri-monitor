@@ -9,6 +9,7 @@ const DATA_DIR = path.join(__dirname, 'server-data');
 const STATE_FILE = path.join(DATA_DIR, 'app-state.json');
 const PHOTO_RECORDS_FILE = path.join(DATA_DIR, 'photo-records.json');
 const FARM_TASKS_FILE = path.join(DATA_DIR, 'farm-tasks.json');
+const PEST_LIBRARY_FILE = path.join(DATA_DIR, 'pest-library.json');
 const PHOTOS_DIR = path.join(DATA_DIR, 'photos');
 const DEFAULT_TARGET_BASE = 'http://www.0531yun.com';
 const DEFAULT_TENANT_ID = 'tenant_default';
@@ -29,6 +30,7 @@ let signatureSet = new Set();
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(PHOTOS_DIR, { recursive: true });
 if (!fs.existsSync(PHOTO_RECORDS_FILE)) writePhotoRecords(readPhotoRecords());
+if (!fs.existsSync(PEST_LIBRARY_FILE)) writePestLibrary(readPestLibrary());
 
 function emptyState() {
     return {
@@ -252,6 +254,36 @@ function readFarmTasks() {
 
 function writeFarmTasks(data) {
     fs.writeFileSync(FARM_TASKS_FILE, JSON.stringify(data));
+}
+
+function defaultPestLibrary() {
+    const createdAt = '2026-04-26T00:00:00.000Z';
+    return {
+        entries: [
+            { id: 'pest_aphid', type: 'pest', key: 'aphid', name: '蚜虫（菜蚜）', symptoms: '群集叶背刺吸汁液，叶片卷曲皱缩', control: '吡虫啉、啶虫脒等喷雾，注意叶背', createdAt, tenantId: DEFAULT_TENANT_ID },
+            { id: 'pest_caterpillar', type: 'pest', key: 'caterpillar', name: '菜青虫/毛虫', symptoms: '幼虫啃食叶片，形成孔洞或缺刻', control: '氯虫苯甲酰胺、甲维盐等傍晚喷雾', createdAt, tenantId: DEFAULT_TENANT_ID },
+            { id: 'pest_whitefly', type: 'pest', key: 'whitefly', name: '白粉虱', symptoms: '成虫聚集叶背，受害叶片发黄并可诱发煤污', control: '啶虫脒、螺虫乙酯等轮换喷雾', createdAt, tenantId: DEFAULT_TENANT_ID },
+            { id: 'pest_mite', type: 'pest', key: 'mite', name: '红蜘蛛/螨虫', symptoms: '叶面出现失绿小斑点，严重时叶片发黄干枯', control: '阿维菌素、螺螨酯等喷雾', createdAt, tenantId: DEFAULT_TENANT_ID },
+            { id: 'disease_leaf_spot', type: 'disease', key: 'leaf_spot', name: '叶斑病', symptoms: '叶片出现圆形或不规则褐色病斑', control: '代森锰锌、苯醚甲环唑等喷雾', createdAt, tenantId: DEFAULT_TENANT_ID },
+            { id: 'disease_powdery_mildew', type: 'disease', key: 'powdery_mildew', name: '白粉病', symptoms: '叶面出现白色粉状霉层，影响光合作用', control: '醚菌酯、戊唑醇等喷雾', createdAt, tenantId: DEFAULT_TENANT_ID },
+            { id: 'disease_downy_mildew', type: 'disease', key: 'downy_mildew', name: '霜霉病', symptoms: '叶面黄斑，叶背可见灰紫色霉层', control: '烯酰吗啉、霜脲氰等喷雾并降低湿度', createdAt, tenantId: DEFAULT_TENANT_ID },
+        ],
+    };
+}
+
+function readPestLibrary() {
+    const data = fs.existsSync(PEST_LIBRARY_FILE)
+        ? JSON.parse(fs.readFileSync(PEST_LIBRARY_FILE, 'utf8'))
+        : defaultPestLibrary();
+    if (!Array.isArray(data.entries)) data.entries = [];
+    data.entries.forEach(item => {
+        if (item && !item.tenantId) item.tenantId = DEFAULT_TENANT_ID;
+    });
+    return data;
+}
+
+function writePestLibrary(data) {
+    fs.writeFileSync(PEST_LIBRARY_FILE, JSON.stringify(data));
 }
 
 function readPhotoRecords() {
@@ -1232,6 +1264,117 @@ const server = http.createServer(async (req, res) => {
             }
         }
 
+        if (pathname === '/api/v1/pest-library' && req.method === 'GET') {
+            const auth = requireAuth(); if (!auth) return;
+            const type = String(query.type || '').trim();
+            const pl = readPestLibrary();
+            let entries = pl.entries || [];
+            if (type === 'pest' || type === 'disease') entries = entries.filter(item => item.type === type);
+            entries = [...entries].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN'));
+            return sendJson(200, { ok: true, entries });
+        }
+
+        if (pathname === '/api/v1/pest-library/ai-fill' && req.method === 'POST') {
+            const auth = requireAuth(); if (!auth) return;
+            const body = await readBody(req).catch(() => ({}));
+            const name = String(body.name || '').trim();
+            const type = String(body.type || '').trim() === 'disease' ? 'disease' : 'pest';
+            if (!name) return sendJson(400, { ok: false, msg: 'name required' });
+
+            const pr = readPhotoRecords();
+            const visionApiKey = String(pr.config.visionApiKey || '').trim();
+            const textModel = String(pr.config.textModel || 'qwen-turbo').trim() || 'qwen-turbo';
+            if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
+
+            const userPrompt = type === 'disease'
+                ? `病害名称：${name}。请输出以下 JSON：{ "key": "英文标识（小写下划线格式）", "symptoms": "发病症状（1-2句中文描述）", "control": "药剂防治建议（1-2句中文描述）" }`
+                : `害虫名称：${name}。请输出以下 JSON：{ "key": "英文标识（小写下划线格式，如 striped_flea_beetle）", "symptoms": "为害症状（1-2句中文描述）", "control": "药剂防治建议（1-2句中文描述）" }`;
+            const requestBody = JSON.stringify({
+                model: textModel,
+                messages: [
+                    { role: 'system', content: '你是农业植保专家，根据用户提供的中文名称，输出该害虫或病害的结构化信息。只输出 JSON，不要任何其他文字。' },
+                    { role: 'user', content: userPrompt },
+                ],
+            });
+
+            try {
+                const result = await requestJson('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+                    method: 'POST',
+                    timeout: 60000,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${visionApiKey}`,
+                    },
+                }, requestBody);
+                if (result.status >= 400) throw new Error(apiErrorMessage(result, 'AI fill failed'));
+                const content = result.data?.choices?.[0]?.message?.content || '';
+                const parsed = JSON.parse(cleanAiJsonContent(content));
+                const suggestion = {
+                    key: String(parsed.key || '').trim(),
+                    symptoms: String(parsed.symptoms || '').trim(),
+                    control: String(parsed.control || '').trim(),
+                };
+                return sendJson(200, { ok: true, suggestion });
+            } catch (error) {
+                return sendJson(502, { ok: false, msg: error.message || 'AI fill failed' });
+            }
+        }
+
+        if (pathname === '/api/v1/pest-library' && req.method === 'POST') {
+            const auth = requireAuth(); if (!auth) return;
+            if (auth.user.role !== 'platform_admin') return sendJson(403, { ok: false, msg: 'admin only' });
+            const body = await readBody(req).catch(() => ({}));
+            const type = String(body.type || '').trim();
+            const key = String(body.key || '').trim();
+            const name = String(body.name || '').trim();
+            if (!['pest', 'disease'].includes(type) || !key || !name) {
+                return sendJson(400, { ok: false, msg: 'type, key and name required' });
+            }
+            const pl = readPestLibrary();
+            const entry = {
+                id: safeId(type === 'disease' ? 'disease' : 'pest'),
+                type,
+                key,
+                name,
+                symptoms: String(body.symptoms || ''),
+                control: String(body.control || ''),
+                createdAt: new Date().toISOString(),
+                tenantId: userTenantId(auth.user),
+            };
+            pl.entries.push(entry);
+            writePestLibrary(pl);
+            return sendJson(201, { ok: true, entry });
+        }
+
+        if (pathname.startsWith('/api/v1/pest-library/') && req.method === 'PUT') {
+            const auth = requireAuth(); if (!auth) return;
+            if (auth.user.role !== 'platform_admin') return sendJson(403, { ok: false, msg: 'admin only' });
+            const id = pathname.split('/')[4];
+            const body = await readBody(req).catch(() => ({}));
+            const pl = readPestLibrary();
+            const entry = (pl.entries || []).find(item => item.id === id);
+            if (!entry) return sendJson(404, { ok: false, msg: 'entry not found' });
+            if (body.type !== undefined && ['pest', 'disease'].includes(String(body.type))) entry.type = String(body.type);
+            if (body.name !== undefined) entry.name = String(body.name || '').trim();
+            if (body.symptoms !== undefined) entry.symptoms = String(body.symptoms || '');
+            if (body.control !== undefined) entry.control = String(body.control || '');
+            if (!entry.key || !entry.name) return sendJson(400, { ok: false, msg: 'key and name required' });
+            writePestLibrary(pl);
+            return sendJson(200, { ok: true, entry });
+        }
+
+        if (pathname.startsWith('/api/v1/pest-library/') && req.method === 'DELETE') {
+            const auth = requireAuth(); if (!auth) return;
+            if (auth.user.role !== 'platform_admin') return sendJson(403, { ok: false, msg: 'admin only' });
+            const id = pathname.split('/')[4];
+            const pl = readPestLibrary();
+            const entry = (pl.entries || []).find(item => item.id === id);
+            if (!entry) return sendJson(404, { ok: false, msg: 'entry not found' });
+            pl.entries = (pl.entries || []).filter(item => item.id !== id);
+            writePestLibrary(pl);
+            return sendJson(200, { ok: true });
+        }
+
         if (pathname === '/api/v1/farm-tasks/calendar' && req.method === 'GET') {
             const auth = requireAuth(); if (!auth) return;
             const year = Number(query.year);
@@ -1481,6 +1624,9 @@ const server = http.createServer(async (req, res) => {
             const severityTextMap = ['正常', '轻微', '中等', '严重'];
             const labelLines = [];
             const labels = record.labels || null;
+            const libraryEntries = readPestLibrary().entries || [];
+            const pestNameMap = Object.fromEntries(libraryEntries.filter(item => item.type === 'pest').map(item => [item.key, item.name]));
+            const diseaseNameMap = Object.fromEntries(libraryEntries.filter(item => item.type === 'disease').map(item => [item.key, item.name]));
             if (labels) {
                 if (Array.isArray(labels.visual) && labels.visual.length) {
                     labelLines.push(`用户观察标签：${labels.visual.join(', ')}`);
@@ -1501,17 +1647,6 @@ const server = http.createServer(async (req, res) => {
                     if (actionText) labelLines.push(`用户操作：${actionText}`);
                 }
                 if (labels.pestDetail) {
-                    const pestTypeMap = {
-                        aphid: '蚜虫',
-                        caterpillar: '鳞翅目幼虫/毛虫',
-                        whitefly: '白粉虱',
-                        leaf_miner: '潜叶蝇',
-                        thrips: '蓟马',
-                        mite: '红蜘蛛/螨虫',
-                        beetle: '甲虫',
-                        snail_slug: '蜗牛/蛞蝓',
-                        unknown_pest: '未知害虫',
-                    };
                     const infestationMap = {
                         scattered: '零星发现',
                         moderate: '中等扩散',
@@ -1519,7 +1654,7 @@ const server = http.createServer(async (req, res) => {
                     };
                     const pestParts = [];
                     if (Array.isArray(labels.pestDetail.species)) {
-                        pestParts.push(...labels.pestDetail.species.map(key => pestTypeMap[key] || key));
+                        pestParts.push(...labels.pestDetail.species.map(key => pestNameMap[key] || key));
                     }
                     if (labels.pestDetail.infestation) {
                         pestParts.push(infestationMap[labels.pestDetail.infestation] || labels.pestDetail.infestation);
@@ -1527,16 +1662,7 @@ const server = http.createServer(async (req, res) => {
                     if (pestParts.length) labelLines.push(`虫害详情：${pestParts.join('，')}`);
                 }
                 if (labels.diseaseDetail && Array.isArray(labels.diseaseDetail.types) && labels.diseaseDetail.types.length) {
-                    const diseaseTypeMap = {
-                        anthracnose: '炭疽病',
-                        leaf_spot: '叶斑病',
-                        blight: '疫病',
-                        powdery_mildew: '白粉病',
-                        downy_mildew: '霜霉病',
-                        rust: '锈病',
-                        unknown_disease: '未知病害',
-                    };
-                    labelLines.push(`病害详情：${labels.diseaseDetail.types.map(key => diseaseTypeMap[key] || key).join('，')}`);
+                    labelLines.push(`病害详情：${labels.diseaseDetail.types.map(key => diseaseNameMap[key] || key).join('，')}`);
                 }
             }
             const labelsLine = labelLines.length ? `\n${labelLines.join('\n')}` : '';
@@ -1612,10 +1738,6 @@ const server = http.createServer(async (req, res) => {
                 'leaf_browning', 'leaf_wilting', 'leaf_curling', 'disease_spot', 'white_powder',
                 'soil_crack', 'soil_too_wet', 'weed', 'stem_damage'
             ];
-            const pestLabels = [
-                'aphid', 'caterpillar', 'whitefly', 'leaf_miner', 'thrips',
-                'mite', 'beetle', 'snail_slug', 'unknown_pest'
-            ];
             const detectPrompt = `你是农业图像检测专家。请检测照片中所有可见异常区域，并只输出 JSON，不要任何解释文字。
 
 任务要求：
@@ -1632,14 +1754,14 @@ const server = http.createServer(async (req, res) => {
 - confidence 为 0 到 1 的数字。
 - note 为简短中文描述。
 - 当 label 为 insect_visible 或 insect_damage 时，额外输出 pestGuess 字段；其他 label 不要输出 pestGuess。
-- pestGuess.species 只能从以下词表中选择：${pestLabels.join(', ')}。
-- pestGuess.speciesName 为中文虫种名；pestGuess.reasoning 为 1-2 句中文简短判断依据。
-- 如果无法判断虫种，pestGuess.species 填 unknown_pest。
+- pestGuess 用于害虫种类推测，结构为 { "name": "中文虫种名", "reasoning": "判断依据" }。
+- pestGuess.name 请根据图像特征自由输出可能的害虫种类，不限于固定词表；无法判断时填 "未知害虫"。
+- pestGuess.reasoning 为 1-2 句中文简短判断依据。
 - 如果图片正常或无法确认异常，返回空 detections 数组。
 
 输出格式：
 { "detections": [
-  { "label": "insect_visible", "bbox": [x, y, w, h], "confidence": 0.86, "note": "简短描述", "pestGuess": { "species": "aphid", "speciesName": "蚜虫", "reasoning": "判断依据" } },
+  { "label": "insect_visible", "bbox": [x, y, w, h], "confidence": 0.86, "note": "简短描述", "pestGuess": { "name": "斜纹夜蛾", "reasoning": "判断依据" } },
   { "label": "leaf_holes", "bbox": [x, y, w, h], "confidence": 0.72, "note": "简短描述" }
 ] }`;
             const body = JSON.stringify({

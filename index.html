@@ -510,6 +510,7 @@
                         <div class="toolbar-group"><label>类型</label>
                             <select class="select-input" id="pest-type-filter" onchange="app.filterPests()"><option value="all">全部</option><option value="pest">虫害</option><option value="disease">病害</option></select>
                         </div>
+                        <button class="btn-primary admin-only" onclick="app.openPestEditor()"><i class="fa-solid fa-plus"></i> 新增</button>
                     </div>
                     <div class="pest-grid" id="pest-grid"></div>
                 </div>
