@@ -887,7 +887,7 @@ const app = {
     ],
     pestTypes: [
       { key: 'aphid', label: '蚜虫' },
-      { key: 'caterpillar', label: '菜青虫/毛虫' },
+      { key: 'caterpillar', label: '鳞翅目幼虫/毛虫' },
       { key: 'whitefly', label: '白粉虱' },
       { key: 'leaf_miner', label: '潜叶蝇' },
       { key: 'thrips', label: '蓟马' },
@@ -4021,7 +4021,7 @@ const app = {
         <div class="detail-section">
           <div class="detail-label">区域标注</div>
           <div class="region-annotation-toolbar">
-            <button class="btn-primary btn-sm" id="btn-detect-regions-${this.sanitize(r.id)}" onclick="app.detectRegions('${this.sanitize(r.id)}')">
+            <button type="button" class="btn-primary btn-sm" id="btn-detect-regions-${this.sanitize(r.id)}" onclick="event.stopPropagation(); app.detectRegions('${this.sanitize(r.id)}')">
               <i class="fa-solid fa-crosshairs"></i> AI 检测
             </button>
             <span class="region-annotation-hint">在图片上拖拽可手动画框</span>
@@ -4342,6 +4342,11 @@ const app = {
       return item ? item.label : String(key || '');
     },
 
+    _pestTypeText(key) {
+      const item = this._labelTaxonomy.pestTypes.find(v => v.key === key);
+      return item ? item.label : String(key || '');
+    },
+
     _getRegionDetections(record) {
       const detections = record?.aiDetections?.detections;
       return Array.isArray(detections) ? detections : [];
@@ -4462,6 +4467,7 @@ const app = {
       if (!record || !host) return;
       const detections = this._getRegionDetections(record);
       const annotations = Array.isArray(record.annotations) ? record.annotations : [];
+      const pestSpecies = Array.isArray(record.labels?.pestDetail?.species) ? record.labels.pestDetail.species : [];
       const aiBlock = detections.length ? `
         <div class="region-list-block">
           <div class="region-list-title">AI 检测结果</div>
@@ -4469,10 +4475,27 @@ const app = {
             const confidence = Number(det.confidence);
             const confidenceText = Number.isFinite(confidence) ? ` ${Math.round(confidence * 100)}%` : '';
             const confirmed = this._isDetectionConfirmed(record, det);
+            const pestGuess = det.pestGuess && typeof det.pestGuess === 'object' ? det.pestGuess : null;
+            const pestConfirmed = pestGuess ? this._isPestGuessConfirmed(record, pestGuess) : false;
+            const pestName = pestGuess ? String(pestGuess.speciesName || this._pestTypeText(pestGuess.species) || '') : '';
+            const pestReasoning = pestGuess ? String(pestGuess.reasoning || '') : '';
+            const pestGuessBlock = pestGuess ? `
+              <div class="region-pest-guess">
+                <strong>${pestConfirmed ? '已确认虫种' : 'AI 推测虫种'}：${this.sanitize(pestName || '未知害虫')}</strong>
+                ${pestReasoning ? `<span>${this.sanitize(pestReasoning)}</span>` : ''}
+              </div>
+            ` : '';
+            const actionButtons = `
+              <button class="btn-ghost btn-sm" ${confirmed ? 'disabled' : ''} onclick="app.confirmAiDetection('${this.sanitize(recordId)}', ${idx})">${confirmed ? '区域已确认' : '确认区域'}</button>
+              ${pestGuess ? `<button class="btn-ghost btn-sm" ${pestConfirmed ? 'disabled' : ''} onclick="app.confirmAiPestGuess('${this.sanitize(recordId)}', ${idx})">${pestConfirmed ? '虫种已确认' : '确认虫种'}</button>` : ''}
+            `;
             return `
               <div class="region-list-row">
-                <span>${this.sanitize(this._visualLabelText(det.label))}${confidenceText}</span>
-                <button class="btn-ghost btn-sm" ${confirmed ? 'disabled' : ''} onclick="app.confirmAiDetection('${this.sanitize(recordId)}', ${idx})">${confirmed ? '已确认' : '确认'}</button>
+                <div class="region-list-main">
+                  <span>${this.sanitize(this._visualLabelText(det.label))}${confidenceText}</span>
+                  ${pestGuessBlock}
+                </div>
+                <div class="region-list-actions">${actionButtons}</div>
               </div>
             `;
           }).join('')}
@@ -4489,11 +4512,23 @@ const app = {
           `).join('')}
         </div>
       ` : '';
+      const pestBlock = pestSpecies.length ? `
+        <div class="region-list-block">
+          <div class="region-list-title">已确认虫种</div>
+          ${pestSpecies.map(species => `
+            <div class="region-list-row">
+              <span><i class="fa-solid fa-bug"></i> ${this.sanitize(this._pestTypeText(species))}</span>
+              <button class="btn-ghost btn-sm" onclick="app.deleteConfirmedPest('${this.sanitize(recordId)}', '${this.sanitize(species)}')">删除</button>
+            </div>
+          `).join('')}
+        </div>
+      ` : '';
       if (typeof record.aiDetections === 'string') {
-        host.innerHTML = `<div class="detail-notes">${this.sanitize(record.aiDetections)}</div>${humanBlock}`;
+        host.innerHTML = `<div class="detail-notes">${this.sanitize(record.aiDetections)}</div>${humanBlock}${pestBlock}`;
         return;
       }
-      host.innerHTML = aiBlock || humanBlock ? aiBlock + humanBlock : '<div class="region-empty">暂无标注</div>';
+      const emptyText = record.aiDetections ? 'AI 未检测到区域，可手动画框标注' : '暂无标注';
+      host.innerHTML = aiBlock || humanBlock || pestBlock ? aiBlock + humanBlock + pestBlock : `<div class="region-empty">${emptyText}</div>`;
     },
 
     _renderRecordLabelDisplay(recordId) {
@@ -4623,6 +4658,46 @@ const app = {
       if (!record.labels.visual.includes(label)) record.labels.visual.push(label);
     },
 
+    _syncPestGuessFromDetection(record, pestGuess) {
+      const species = String(pestGuess?.species || '').trim();
+      if (!record || !species) return;
+      if (!record.labels || typeof record.labels !== 'object') record.labels = { visual: [] };
+      if (!record.labels.pestDetail || typeof record.labels.pestDetail !== 'object') record.labels.pestDetail = {};
+      if (!Array.isArray(record.labels.pestDetail.species)) record.labels.pestDetail.species = [];
+      if (!record.labels.pestDetail.species.includes(species)) record.labels.pestDetail.species.push(species);
+      if (!Array.isArray(record.labels.pestDetail.aiConfirmedSpecies)) record.labels.pestDetail.aiConfirmedSpecies = [];
+      if (!record.labels.pestDetail.aiConfirmedSpecies.includes(species)) record.labels.pestDetail.aiConfirmedSpecies.push(species);
+    },
+
+    _isPestGuessConfirmed(record, pestGuess) {
+      const species = String(pestGuess?.species || '').trim();
+      const current = record?.labels?.pestDetail?.species;
+      return !!species && Array.isArray(current) && current.includes(species);
+    },
+
+    _clearAiRegionConfirmations(record) {
+      if (!record) return false;
+      let changed = false;
+      if (Array.isArray(record.annotations)) {
+        const kept = record.annotations.filter(item => item.source !== 'ai_confirmed');
+        changed = changed || kept.length !== record.annotations.length;
+        record.annotations = kept;
+      }
+      const pestDetail = record.labels?.pestDetail;
+      if (pestDetail && Array.isArray(pestDetail.aiConfirmedSpecies) && pestDetail.aiConfirmedSpecies.length) {
+        const aiSpecies = new Set(pestDetail.aiConfirmedSpecies);
+        if (Array.isArray(pestDetail.species)) {
+          const keptSpecies = pestDetail.species.filter(item => !aiSpecies.has(item));
+          changed = changed || keptSpecies.length !== pestDetail.species.length;
+          pestDetail.species = keptSpecies;
+        }
+        delete pestDetail.aiConfirmedSpecies;
+        changed = true;
+        if (!pestDetail.species?.length && !pestDetail.infestation) delete record.labels.pestDetail;
+      }
+      return changed;
+    },
+
     async _saveRegionAnnotations(recordId) {
       const record = this._photoRecordCache[recordId];
       if (!record) return;
@@ -4635,10 +4710,12 @@ const app = {
             labels: record.labels || null,
           }),
         });
+        this._refreshRecordImageMark(recordId);
+        return true;
       } catch (e) {
         UI.toast('保存区域标注失败：' + e.message, 'danger');
+        return false;
       }
-      this._refreshRecordImageMark(recordId);
     },
 
     async confirmAiDetection(recordId, index) {
@@ -4657,11 +4734,45 @@ const app = {
       };
       record.annotations.push(annotation);
       this._recentAnnotationId = annotation.id;
-      this._syncVisualLabelFromAnnotation(record, detection.label);
       this._renderRecordLabelDisplay(recordId);
       this._renderRegionAnnotations(recordId);
       await this._saveRegionAnnotations(recordId);
       UI.toast('标注已添加：' + this._visualLabelText(detection.label), 'success');
+    },
+
+    async confirmAiPestGuess(recordId, index) {
+      const record = this._photoRecordCache[recordId];
+      const detection = this._getRegionDetections(record)[index];
+      const pestGuess = detection?.pestGuess && typeof detection.pestGuess === 'object' ? detection.pestGuess : null;
+      if (!record || !pestGuess) return;
+      this._syncPestGuessFromDetection(record, pestGuess);
+      this._renderRecordLabelDisplay(recordId);
+      this._renderRegionAnnotationList(recordId);
+      const saved = await this._saveRegionAnnotations(recordId);
+      if (saved) UI.toast('虫种已确认：' + this._pestTypeText(pestGuess.species), 'success');
+    },
+
+    async deleteConfirmedPest(recordId, species) {
+      const record = this._photoRecordCache[recordId];
+      const current = record?.labels?.pestDetail?.species;
+      if (!record || !Array.isArray(current)) return;
+      record.labels.pestDetail.species = current.filter(item => item !== species);
+      if (Array.isArray(record.labels.pestDetail.aiConfirmedSpecies)) {
+        record.labels.pestDetail.aiConfirmedSpecies = record.labels.pestDetail.aiConfirmedSpecies.filter(item => item !== species);
+        if (!record.labels.pestDetail.aiConfirmedSpecies.length) delete record.labels.pestDetail.aiConfirmedSpecies;
+      }
+      if (Array.isArray(record.annotations)) {
+        record.annotations.forEach(item => {
+          if (item.pestGuess?.species === species) delete item.pestGuess;
+        });
+      }
+      if (!record.labels.pestDetail.species.length && !record.labels.pestDetail.infestation) {
+        delete record.labels.pestDetail;
+      }
+      this._renderRecordLabelDisplay(recordId);
+      this._renderRegionAnnotationList(recordId);
+      const saved = await this._saveRegionAnnotations(recordId);
+      if (saved) UI.toast('虫种已删除：' + this._pestTypeText(species), 'success');
     },
 
     async deleteRegionAnnotation(recordId, annotationId) {
@@ -4673,21 +4784,34 @@ const app = {
     },
 
     async detectRegions(recordId) {
-      const record = this._photoRecordCache[recordId];
-      if (!record) return;
       const btn = document.getElementById('btn-detect-regions-' + recordId);
+      const record = this._photoRecordCache[recordId];
+      if (!record) {
+        UI.toast('未找到当前记录，请关闭详情后重新打开', 'warning');
+        console.warn('[detectRegions] record not found in cache', recordId);
+        return;
+      }
       if (btn) {
         btn.disabled = true;
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 检测中...';
       }
+      const listHost = document.getElementById('region-annotation-list');
+      if (listHost) listHost.innerHTML = '<div class="region-empty"><i class="fa-solid fa-spinner fa-spin"></i> AI 正在检测区域...</div>';
+      UI.toast('AI 区域检测已开始', 'info');
       try {
         const data = await this._photoRequest('/records/' + encodeURIComponent(recordId) + '/detect-regions', { method: 'POST' });
+        const cleared = this._clearAiRegionConfirmations(record);
         record.aiDetections = data.aiDetections;
         this._photoRecordCache[recordId] = record;
         this._renderRegionAnnotations(recordId);
         this._refreshRecordImageMark(recordId);
+        if (cleared) await this._saveRegionAnnotations(recordId);
+        const count = this._getRegionDetections(record).length;
+        UI.toast(count ? `AI 检测完成：${count} 个区域` : 'AI 未检测到区域，可手动画框标注', count ? 'success' : 'warning');
       } catch (e) {
+        console.warn('[detectRegions]', e);
         UI.toast('AI 检测失败：' + e.message, 'danger');
+        this._renderRegionAnnotationList(recordId);
       } finally {
         if (btn) {
           btn.disabled = false;
@@ -5016,7 +5140,7 @@ const app = {
       const data = await this._photoRequest('/config');
       if (data.ok) {
         document.getElementById('cfg-amap-key').placeholder = data.config.amapKey ? '\u5df2\u914d\u7f6e\uff08\u8f93\u5165\u65b0\u503c\u53ef\u66f4\u65b0\uff09' : '\u672a\u914d\u7f6e';
-        document.getElementById('cfg-vision-model').value = data.config.visionModel || 'qwen-vl-plus';
+        document.getElementById('cfg-vision-model').value = data.config.visionModel || 'qwen3-vl-flash';
         document.getElementById('cfg-text-model').value = data.config.textModel || 'qwen-turbo';
         this._updatePhotoModelLabel(data.config.textModel || 'qwen-turbo');
       }

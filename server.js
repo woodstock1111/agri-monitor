@@ -259,7 +259,7 @@ function readPhotoRecords() {
     if (!fs.existsSync(PHOTO_RECORDS_FILE)) {
         return { crops: [], records: [], config: {
             amapKey: '',
-            visionApiKey: '', visionModel: 'qwen-vl-plus', textModel: 'qwen-turbo' }};
+            visionApiKey: '', visionModel: 'qwen3-vl-flash', textModel: 'qwen-turbo' }};
     }
     const data = JSON.parse(fs.readFileSync(PHOTO_RECORDS_FILE, 'utf8'));
     if (!Array.isArray(data.crops)) data.crops = [];
@@ -267,7 +267,7 @@ function readPhotoRecords() {
     data.config = {
         amapKey: '',
         visionApiKey: '',
-        visionModel: 'qwen-vl-plus',
+        visionModel: 'qwen3-vl-flash',
         textModel: 'qwen-turbo',
         ...(data.config || {}),
     };
@@ -456,7 +456,7 @@ function readBody(req, limit = 1024 * 1024) {
 function requestJson(targetUrl, options, bodyStr = null) {
     return new Promise((resolve, reject) => {
         const client = targetUrl.startsWith('https') ? https : http;
-        const req = client.request(targetUrl, { ...options, timeout: 15000 }, (res) => {
+        const req = client.request(targetUrl, { ...options, timeout: options.timeout || 15000 }, (res) => {
             res.setEncoding('utf8');
             let data = '';
             res.on('data', chunk => data += chunk);
@@ -479,6 +479,15 @@ function cleanAiJsonContent(value) {
     let text = String(value || '').trim();
     text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     return text;
+}
+
+function apiErrorMessage(result, fallback = 'Request failed') {
+    const data = result?.data || {};
+    const error = data.error && typeof data.error === 'object' ? data.error : null;
+    const message = error?.message || data.message || data.msg || (typeof data.error === 'string' ? data.error : '') || fallback;
+    const code = error?.code || data.code || data.error_code || '';
+    const requestId = data.request_id || data.requestId || '';
+    return [code, message, requestId ? `request_id=${requestId}` : ''].filter(Boolean).join(' | ');
 }
 
 async function getCloudToken(loginName, password, apiUrl) {
@@ -1494,7 +1503,7 @@ const server = http.createServer(async (req, res) => {
                 if (labels.pestDetail) {
                     const pestTypeMap = {
                         aphid: '蚜虫',
-                        caterpillar: '菜青虫/毛虫',
+                        caterpillar: '鳞翅目幼虫/毛虫',
                         whitefly: '白粉虱',
                         leaf_miner: '潜叶蝇',
                         thrips: '蓟马',
@@ -1564,6 +1573,7 @@ const server = http.createServer(async (req, res) => {
             try {
                 const result = await requestJson('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
                     method: 'POST',
+                    timeout: 60000,
                     headers: {
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${visionApiKey}`,
@@ -1590,8 +1600,9 @@ const server = http.createServer(async (req, res) => {
             const record = pr.records.find(r => r.id === id && canAccessTenantItem(auth.user, r));
             if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
             const visionApiKey = String(pr.config.visionApiKey || '').trim();
-            const visionModel = String(pr.config.visionModel || 'qwen-vl-plus').trim() || 'qwen-vl-plus';
+            const visionModel = String(pr.config.visionModel || 'qwen3-vl-flash').trim() || 'qwen3-vl-flash';
             if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
+            console.log(`[Detect Regions] record=${id} model=${visionModel}`);
 
             const imgPath = path.join(__dirname, record.imagePath || '');
             if (!fs.existsSync(imgPath)) return sendJson(404, { ok: false, msg: 'file missing' });
@@ -1601,17 +1612,36 @@ const server = http.createServer(async (req, res) => {
                 'leaf_browning', 'leaf_wilting', 'leaf_curling', 'disease_spot', 'white_powder',
                 'soil_crack', 'soil_too_wet', 'weed', 'stem_damage'
             ];
+            const pestLabels = [
+                'aphid', 'caterpillar', 'whitefly', 'leaf_miner', 'thrips',
+                'mite', 'beetle', 'snail_slug', 'unknown_pest'
+            ];
             const detectPrompt = `你是农业图像检测专家。请检测照片中所有可见异常区域，并只输出 JSON，不要任何解释文字。
 
 任务要求：
 - 输出每个异常区域的 bbox 矩形框坐标 [x, y, width, height]，坐标基于原始图片像素尺寸。
 - label 只能从以下标签中选择：${allowedLabels.join(', ')}
+- bbox 必须是目标的最小外接矩形，紧贴可见边缘，四周留白尽量小于目标宽高的 5%。
+- 只框可直接看见的证据，不要框整片叶子、整株作物、整块田地或推测性的影响范围。
+- 如果同一张叶片上有多个分散异常，请输出多个小 bbox，不要用一个大 bbox 包住它们。
+- 对于 insect_visible：bbox 只包住虫体本身；如果有多只虫，每只虫单独一个框；不要包含被虫咬过的叶片面积。
+- 对于 insect_damage：bbox 只包住清晰可见的咬痕、孔洞边缘或啃食缺口；不要框完整叶片，也不要把多个相距较远的咬痕合并成一个大框。
+- 对于 leaf_holes/disease_spot/white_powder：只框可见孔洞、病斑或白粉覆盖区域，避免包含正常叶面。
+- 一个区域只标一个最具体的标签，不要对同一位置重复标多个标签。
+- 如果无法确定目标边界，请宁可不输出该 detection，也不要输出很大的粗略框。
 - confidence 为 0 到 1 的数字。
 - note 为简短中文描述。
+- 当 label 为 insect_visible 或 insect_damage 时，额外输出 pestGuess 字段；其他 label 不要输出 pestGuess。
+- pestGuess.species 只能从以下词表中选择：${pestLabels.join(', ')}。
+- pestGuess.speciesName 为中文虫种名；pestGuess.reasoning 为 1-2 句中文简短判断依据。
+- 如果无法判断虫种，pestGuess.species 填 unknown_pest。
 - 如果图片正常或无法确认异常，返回空 detections 数组。
 
 输出格式：
-{ "detections": [{ "label": "leaf_yellowing", "bbox": [x, y, w, h], "confidence": 0.86, "note": "简短描述" }] }`;
+{ "detections": [
+  { "label": "insect_visible", "bbox": [x, y, w, h], "confidence": 0.86, "note": "简短描述", "pestGuess": { "species": "aphid", "speciesName": "蚜虫", "reasoning": "判断依据" } },
+  { "label": "leaf_holes", "bbox": [x, y, w, h], "confidence": 0.72, "note": "简短描述" }
+] }`;
             const body = JSON.stringify({
                 model: visionModel,
                 messages: [
@@ -1632,7 +1662,7 @@ const server = http.createServer(async (req, res) => {
                         'Authorization': `Bearer ${visionApiKey}`,
                     },
                 }, body);
-                if (result.status >= 400) throw new Error(result.data?.message || 'Region detection failed');
+                if (result.status >= 400) throw new Error(apiErrorMessage(result, 'Region detection failed'));
                 const content = result.data?.choices?.[0]?.message?.content || '';
                 const cleanedContent = cleanAiJsonContent(content);
                 try {
@@ -1640,9 +1670,12 @@ const server = http.createServer(async (req, res) => {
                 } catch {
                     record.aiDetections = content;
                 }
+                const detectionCount = Array.isArray(record.aiDetections?.detections) ? record.aiDetections.detections.length : 0;
+                console.log(`[Detect Regions] parsed detections=${detectionCount}`);
                 writePhotoRecords(pr);
                 return sendJson(200, { ok: true, aiDetections: record.aiDetections });
             } catch (error) {
+                console.warn(`[Detect Regions] failed record=${id}:`, error.message || error);
                 return sendJson(502, { ok: false, msg: error.message || 'Region detection failed' });
             }
         }
@@ -1708,7 +1741,7 @@ const server = http.createServer(async (req, res) => {
                 return sendJson(200, { ok: true, config: {
                     amapKey: (pr.config.amapKey || pr.config.qweatherKey) ? '***' : '',
                     visionApiKey: pr.config.visionApiKey ? '***' : '',
-                    visionModel: pr.config.visionModel || 'qwen-vl-plus',
+                    visionModel: pr.config.visionModel || 'qwen3-vl-flash',
                     textModel: pr.config.textModel || 'qwen-turbo'
                 }});
             }

@@ -6518,6 +6518,34 @@ body::before {
   font-size: 13px;
 }
 
+.region-list-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.region-list-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.region-pest-guess {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.region-pest-guess strong {
+  color: var(--success);
+  font-size: 12px;
+}
+
 .region-list-row.new {
   animation: regionRowAdded 1.2s ease;
   border-color: var(--success, #10b981);
