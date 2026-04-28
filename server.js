@@ -1599,8 +1599,10 @@ const server = http.createServer(async (req, res) => {
             const imgBuffer = Buffer.from(
                 body.imageBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64'
             );
-            const now = body.createdAt ? new Date(body.createdAt) : new Date();
-            const yearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+            const uploadedAt = new Date();
+            const observedAt = body.createdAt ? new Date(body.createdAt) : null;
+            const storageDate = observedAt || uploadedAt;
+            const yearMonth = `${storageDate.getFullYear()}-${String(storageDate.getMonth() + 1).padStart(2, '0')}`;
             const dir = path.join(PHOTOS_DIR, yearMonth);
             fs.mkdirSync(dir, { recursive: true });
             const id = safeId('photo');
@@ -1611,7 +1613,8 @@ const server = http.createServer(async (req, res) => {
                 id,
                 cropId: body.cropId,
                 cropName: String(crop.name || ''),
-                createdAt: now.toISOString(),
+                uploadedAt: uploadedAt.toISOString(),
+                createdAt: observedAt ? observedAt.toISOString() : null,
                 imagePath: `server-data/photos/${yearMonth}/${id}.jpg`,
                 imageUrl: `/api/v1/photos/records/${id}/image`,
                 gps: body.gps || null,
@@ -1636,7 +1639,7 @@ const server = http.createServer(async (req, res) => {
             const pr = readPhotoRecords();
             let records = scopedTenantRows(auth.user, pr.records || []);
             if (query.cropId) records = records.filter(r => r.cropId === query.cropId);
-            records = [...records].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+            records = [...records].sort((a, b) => String(b.createdAt || b.uploadedAt || '').localeCompare(String(a.createdAt || a.uploadedAt || '')));
             return sendJson(200, { ok: true, records });
         }
 
@@ -1720,6 +1723,7 @@ const server = http.createServer(async (req, res) => {
             const libraryEntries = readPestLibrary().entries || [];
             const pestNameMap = Object.fromEntries(libraryEntries.filter(item => item.type === 'pest').map(item => [item.key, item.name]));
             const diseaseNameMap = Object.fromEntries(libraryEntries.filter(item => item.type === 'disease').map(item => [item.key, item.name]));
+            const labelList = value => Array.isArray(value) ? value.filter(Boolean) : (value ? [value] : []);
             if (labels) {
                 if (Array.isArray(labels.visual) && labels.visual.length) {
                     labelLines.push(`用户观察标签：${labels.visual.join(', ')}`);
@@ -1746,16 +1750,15 @@ const server = http.createServer(async (req, res) => {
                         severe: '严重爆发',
                     };
                     const pestParts = [];
-                    if (Array.isArray(labels.pestDetail.species)) {
-                        pestParts.push(...labels.pestDetail.species.map(key => pestNameMap[key] || key));
-                    }
+                    pestParts.push(...labelList(labels.pestDetail.species).map(key => pestNameMap[key] || key));
                     if (labels.pestDetail.infestation) {
                         pestParts.push(infestationMap[labels.pestDetail.infestation] || labels.pestDetail.infestation);
                     }
                     if (pestParts.length) labelLines.push(`虫害详情：${pestParts.join('，')}`);
                 }
-                if (labels.diseaseDetail && Array.isArray(labels.diseaseDetail.types) && labels.diseaseDetail.types.length) {
-                    labelLines.push(`病害详情：${labels.diseaseDetail.types.map(key => diseaseNameMap[key] || key).join('，')}`);
+                const diseaseTypes = labelList(labels.diseaseDetail?.types);
+                if (diseaseTypes.length) {
+                    labelLines.push(`病害详情：${diseaseTypes.map(key => diseaseNameMap[key] || key).join('，')}`);
                 }
             }
             const labelsLine = labelLines.length ? `\n${labelLines.join('\n')}` : '';
@@ -1766,7 +1769,7 @@ const server = http.createServer(async (req, res) => {
                 return `${det.label || 'unknown'}${confidenceText}`;
             }).join(', ')}` : '';
             const userPrompt = `作物：${record.cropName || crop.name || '未知作物'}（品种：${crop.variety || '未知'}）
-拍摄时间：${record.createdAt}
+拍摄时间：${record.createdAt || record.uploadedAt || '无'}
 天气：${weatherText}
 传感器摘要：${sensorSummary}
 农户备注：${record.userNotes || '无'}${farmNotesLine}${labelsLine}${detectionLine}

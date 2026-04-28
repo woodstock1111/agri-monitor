@@ -800,9 +800,9 @@ const app = {
   _selectedSeverity: null,
   _selectedActions: [],
   _actionDetails: {},
-  _selectedPestTypes: [],
+  _selectedPestTypes: null,
   _selectedPestInfestation: null,
-  _selectedDiseaseTypes: [],
+  _selectedDiseaseTypes: null,
   _labelTaxonomy: {
     visual: [
       {
@@ -881,7 +881,7 @@ const app = {
     }
     AuthService.showApp();
     if (this._initialized) {
-      this.navigate(this.currentPage || 'dashboard');
+      this.navigate(sessionStorage.getItem('agri_current_page') || this.currentPage || 'dashboard');
       return;
     }
     this._initialized = true;
@@ -895,7 +895,7 @@ const app = {
     this.bindDeviceTypeChange();
     this.updateSidebarStatus();
     this.renderAlerts();
-    this.navigate('dashboard');
+    this.navigate(sessionStorage.getItem('agri_current_page') || this.currentPage || 'dashboard');
     this.startClock();
     this.startAutoEngine();
     this.startBackendHealthPolling();
@@ -955,6 +955,7 @@ const app = {
 
   navigate(page) {
     this.currentPage = page;
+    sessionStorage.setItem('agri_current_page', page);
     document.querySelectorAll('.nav-link').forEach(l => l.classList.toggle('active', l.dataset.page === page));
     const titles = {
       dashboard:'\u7cfb\u7edf\u603b\u89c8', realtime:'\u5b9e\u65f6\u6570\u636e', video:'\u89c6\u9891\u76d1\u63a7', history:'\u66f2\u7ebf\u56fe\u8868',
@@ -3997,8 +3998,11 @@ const app = {
       return;
     }
     grid.innerHTML = records.map(r => {
-      const d = new Date(r.createdAt);
-      const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+      const timeValue = r.createdAt || r.uploadedAt;
+      const d = timeValue ? new Date(timeValue) : null;
+      const dateStr = d && !Number.isNaN(d.getTime())
+        ? `${r.createdAt ? '' : '上传于 '}${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+        : '时间未记录';
       const weatherBit = r.weather ? `<span class="record-tag"><i class="fa-solid fa-cloud-sun"></i> ${this.sanitize(String(r.weather.temp))}\u2103 ${this.sanitize(r.weather.condition || '')}</span>` : '';
       const sensorBit = Array.isArray(r.linkedSensors) && r.linkedSensors.length ? `<span class="record-tag"><i class="fa-solid fa-microchip"></i> ${r.linkedSensors.length} \u4e2a\u4f20\u611f\u5668</span>` : '';
       const notes = String(r.userNotes || '');
@@ -4066,7 +4070,11 @@ const app = {
   openRecordDetail(recordId) {
     const r = this._photoRecordCache[recordId];
     if (!r) return;
-    const d = new Date(r.createdAt);
+    const timeValue = r.createdAt || r.uploadedAt;
+    const d = timeValue ? new Date(timeValue) : null;
+    const timeText = d && !Number.isNaN(d.getTime())
+      ? (r.createdAt ? d.toLocaleString('zh-CN') : `上传于 ${d.toLocaleString('zh-CN')}`)
+      : '时间未记录';
     let html = `
       <div class="detail-image-annotator">
         <img data-detail-photo-id="${this.sanitize(r.id)}" class="detail-img" alt="">
@@ -4078,7 +4086,7 @@ const app = {
       </div>
       <div class="detail-section">
         <div class="detail-label">\u65f6\u95f4</div>
-        <div>${d.toLocaleString('zh-CN')}</div>
+        <div>${this.sanitize(timeText)}</div>
       </div>
     `;
     if (r.gps) html += `
@@ -4134,7 +4142,16 @@ const app = {
         </div>
       `;
       const labelDisplayHtml = this._buildRecordLabelDisplay(r.labels);
-      html += `<div class="detail-section" id="record-label-section" style="${labelDisplayHtml ? '' : 'display:none'}"><div class="detail-label">标注标签</div><div id="record-label-display" class="label-display-group">${labelDisplayHtml}</div></div>`;
+      html += `
+        <div class="detail-section" id="record-label-section">
+          <div class="detail-label">标注标签</div>
+          <div id="record-label-display" class="label-display-group">${labelDisplayHtml || '<span class="label-empty-hint">暂无标签</span>'}</div>
+          <button type="button" class="btn-ghost btn-sm" style="margin-top:10px" onclick="app.openRecordLabelEditor('${this.sanitize(r.id)}')">
+            <i class="fa-solid fa-pen"></i> 编辑标签
+          </button>
+          <div id="record-label-editor" class="record-label-editor" style="display:none"></div>
+        </div>
+      `;
       html += `
         <div class="detail-section">
           <div class="detail-label">\u519c\u4e8b\u8bb0\u5f55</div>
@@ -4171,6 +4188,96 @@ const app = {
     }).catch(() => {});
     this._renderRegionAnnotations(r.id);
   },
+
+    _firstLabelValue(value) {
+      if (Array.isArray(value)) return value[0] || null;
+      return value || null;
+    },
+
+    _normalizeLabelList(value) {
+      if (Array.isArray(value)) return value.filter(Boolean);
+      return value ? [value] : [];
+    },
+
+    _resetLabelStateFromLabels(labels = null) {
+      this._selectedVisualLabels = Array.isArray(labels?.visual) ? [...labels.visual] : [];
+      this._selectedGrowthStage = labels?.growthStage || null;
+      this._selectedSeverity = labels?.severity ?? null;
+      this._selectedActions = Array.isArray(labels?.actions) ? labels.actions.map(item => item.type).filter(Boolean) : [];
+      this._actionDetails = {};
+      if (Array.isArray(labels?.actions)) {
+        labels.actions.forEach(action => {
+          if (!action?.type) return;
+          const detail = {};
+          if (action.name) detail.name = action.name;
+          if (action.dosage) detail.dosage = action.dosage;
+          if (Object.keys(detail).length) this._actionDetails[action.type] = detail;
+        });
+      }
+      this._selectedPestTypes = this._firstLabelValue(labels?.pestDetail?.species);
+      this._selectedPestInfestation = labels?.pestDetail?.infestation || null;
+      this._selectedDiseaseTypes = this._firstLabelValue(labels?.diseaseDetail?.types);
+    },
+
+    async openRecordLabelEditor(recordId) {
+      const record = this._photoRecordCache[recordId];
+      const host = document.getElementById('record-label-editor');
+      if (!record || !host) return;
+      await this._loadPestLibrary().catch(() => []);
+      this._resetLabelStateFromLabels(record.labels);
+      host.style.display = 'block';
+      host.innerHTML = `
+        <div class="form-section-title">观察标签</div>
+        <div class="form-group"><div id="label-visual-pills" class="label-pill-group"></div></div>
+        <div class="form-section-title">生长阶段</div>
+        <div class="form-group"><div id="label-growth-pills" class="label-pill-group"></div></div>
+        <div class="form-section-title">严重程度</div>
+        <div class="form-group"><div id="label-severity-pills" class="label-pill-group"></div></div>
+        <div class="form-section-title">操作记录</div>
+        <div class="form-group"><div id="label-action-pills" class="label-pill-group"></div></div>
+        <div id="action-detail-fields" class="label-detail-fields" style="display:none"></div>
+        <div id="pest-detail-section" style="display:none">
+          <div class="form-section-title">虫害详情</div>
+          <div class="form-group">
+            <div class="label-subtitle">虫害类型</div>
+            <div id="label-pest-type-pills" class="label-pill-group"></div>
+          </div>
+          <div class="form-group">
+            <div class="label-subtitle">虫害程度</div>
+            <div id="label-pest-infestation-pills" class="label-pill-group"></div>
+          </div>
+        </div>
+        <div id="disease-detail-section" style="display:none">
+          <div class="form-section-title">病害详情</div>
+          <div class="form-group"><div id="label-disease-type-pills" class="label-pill-group"></div></div>
+        </div>
+        <div class="record-label-editor-actions">
+          <button type="button" class="btn-primary btn-sm" onclick="app.saveRecordLabels('${this.sanitize(recordId)}')">保存标签</button>
+        </div>
+      `;
+      this._renderLabelPills();
+    },
+
+    async saveRecordLabels(recordId) {
+      const record = this._photoRecordCache[recordId];
+      if (!record) return;
+      const labels = this._collectLabels();
+      try {
+        const data = await this._photoRequest('/records/' + encodeURIComponent(recordId), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ labels }),
+        });
+        record.labels = data.record?.labels ?? labels;
+        this._photoRecordCache[recordId] = record;
+        this._renderRecordLabelDisplay(recordId);
+        const editor = document.getElementById('record-label-editor');
+        if (editor) editor.style.display = 'none';
+        UI.toast('标签已保存', 'success');
+      } catch (e) {
+        UI.toast('保存标签失败：' + e.message, 'danger');
+      }
+    },
 
     _renderAnnotation(record) {
       const analysis = record?.aiAnalysis;
@@ -4294,7 +4401,7 @@ const app = {
         if (pestTypeContainer) {
           const pestTypes = this._labelTaxonomy.pestTypes || [];
           pestTypeContainer.innerHTML = pestTypes.length ? pestTypes.map(item =>
-            `<button type="button" class="label-pill ${this._selectedPestTypes.includes(item.key) ? 'active' : ''}" data-key="${item.key}" onclick="app._togglePestType('${item.key}')">${this.sanitize(item.label)}</button>`
+            `<button type="button" class="label-pill ${this._selectedPestTypes === item.key ? 'active' : ''}" data-key="${item.key}" onclick="app._togglePestType('${item.key}')">${this.sanitize(item.label)}</button>`
           ).join('') : '<span class="label-empty-hint">暂无虫害条目，可在病害虫数据库新增</span>';
         }
         if (pestInfestationContainer) {
@@ -4303,7 +4410,7 @@ const app = {
           ).join('');
         }
       } else {
-        this._selectedPestTypes = [];
+        this._selectedPestTypes = null;
         this._selectedPestInfestation = null;
         if (pestTypeContainer) pestTypeContainer.innerHTML = '';
         if (pestInfestationContainer) pestInfestationContainer.innerHTML = '';
@@ -4315,11 +4422,11 @@ const app = {
         if (diseaseTypeContainer) {
           const diseaseTypes = this._labelTaxonomy.diseaseTypes || [];
           diseaseTypeContainer.innerHTML = diseaseTypes.length ? diseaseTypes.map(item =>
-            `<button type="button" class="label-pill ${this._selectedDiseaseTypes.includes(item.key) ? 'active' : ''}" data-key="${item.key}" onclick="app._toggleDiseaseType('${item.key}')">${this.sanitize(item.label)}</button>`
+            `<button type="button" class="label-pill ${this._selectedDiseaseTypes === item.key ? 'active' : ''}" data-key="${item.key}" onclick="app._toggleDiseaseType('${item.key}')">${this.sanitize(item.label)}</button>`
           ).join('') : '<span class="label-empty-hint">暂无病害条目，可在病害虫数据库新增</span>';
         }
       } else {
-        this._selectedDiseaseTypes = [];
+        this._selectedDiseaseTypes = null;
         if (diseaseTypeContainer) diseaseTypeContainer.innerHTML = '';
       }
     },
@@ -4363,9 +4470,7 @@ const app = {
     },
 
     _togglePestType(key) {
-      const idx = this._selectedPestTypes.indexOf(key);
-      if (idx >= 0) this._selectedPestTypes.splice(idx, 1);
-      else this._selectedPestTypes.push(key);
+      this._selectedPestTypes = this._selectedPestTypes === key ? null : key;
       this._renderLabelPills();
     },
 
@@ -4375,9 +4480,7 @@ const app = {
     },
 
     _toggleDiseaseType(key) {
-      const idx = this._selectedDiseaseTypes.indexOf(key);
-      if (idx >= 0) this._selectedDiseaseTypes.splice(idx, 1);
-      else this._selectedDiseaseTypes.push(key);
+      this._selectedDiseaseTypes = this._selectedDiseaseTypes === key ? null : key;
       this._renderLabelPills();
     },
 
@@ -4395,9 +4498,9 @@ const app = {
         return action;
       });
       const pestDetail = {};
-      if (this._selectedPestTypes.length) pestDetail.species = [...this._selectedPestTypes];
+      if (this._selectedPestTypes) pestDetail.species = this._selectedPestTypes;
       if (this._selectedPestInfestation) pestDetail.infestation = this._selectedPestInfestation;
-      const diseaseDetail = this._selectedDiseaseTypes.length ? { types: [...this._selectedDiseaseTypes] } : null;
+      const diseaseDetail = this._selectedDiseaseTypes ? { types: this._selectedDiseaseTypes } : null;
       const hasPestDetail = Object.keys(pestDetail).length > 0;
       if (!visual.length && !growthStage && severity === null && !actions.length && !hasPestDetail && !diseaseDetail) return null;
       const labels = { visual, growthStage, severity: severity !== null ? severity : null };
@@ -4433,7 +4536,7 @@ const app = {
         });
       }
       if (labels.pestDetail) {
-        const species = Array.isArray(labels.pestDetail.species) ? labels.pestDetail.species : [];
+        const species = this._normalizeLabelList(labels.pestDetail.species);
         species.forEach(key => {
           const item = taxonomy.pestTypes.find(p => p.key === key);
           html += `<span class="label-display-pill">${this.sanitize(item ? item.label : key)}</span>`;
@@ -4443,8 +4546,8 @@ const app = {
           html += `<span class="label-display-pill">${this.sanitize(item ? item.label : labels.pestDetail.infestation)}</span>`;
         }
       }
-      if (labels.diseaseDetail && Array.isArray(labels.diseaseDetail.types)) {
-        labels.diseaseDetail.types.forEach(key => {
+      if (labels.diseaseDetail) {
+        this._normalizeLabelList(labels.diseaseDetail.types).forEach(key => {
           const item = taxonomy.diseaseTypes.find(d => d.key === key);
           html += `<span class="label-display-pill">${this.sanitize(item ? item.label : key)}</span>`;
         });
@@ -4608,7 +4711,7 @@ const app = {
       if (!record || !host) return;
       const detections = this._getRegionDetections(record);
       const annotations = Array.isArray(record.annotations) ? record.annotations : [];
-      const pestSpecies = Array.isArray(record.labels?.pestDetail?.species) ? record.labels.pestDetail.species : [];
+      const pestSpecies = this._normalizeLabelList(record.labels?.pestDetail?.species);
       const aiBlock = detections.length ? `
         <div class="region-list-block">
           <div class="region-list-title">AI 检测结果</div>
@@ -4679,9 +4782,9 @@ const app = {
       const host = document.getElementById('record-label-display');
       if (!record || !host) return;
       const html = this._buildRecordLabelDisplay(record.labels);
-      host.innerHTML = html;
+      host.innerHTML = html || '<span class="label-empty-hint">暂无标签</span>';
       const section = document.getElementById('record-label-section') || host.closest('.detail-section');
-      if (section) section.style.display = html ? '' : 'none';
+      if (section) section.style.display = '';
     },
 
     _annotationCanvasMouseDown(event, recordId) {
@@ -4806,8 +4909,7 @@ const app = {
       if (!record || !species) return;
       if (!record.labels || typeof record.labels !== 'object') record.labels = { visual: [] };
       if (!record.labels.pestDetail || typeof record.labels.pestDetail !== 'object') record.labels.pestDetail = {};
-      if (!Array.isArray(record.labels.pestDetail.species)) record.labels.pestDetail.species = [];
-      if (!record.labels.pestDetail.species.includes(species)) record.labels.pestDetail.species.push(species);
+      record.labels.pestDetail.species = species;
       if (!Array.isArray(record.labels.pestDetail.aiConfirmedSpecies)) record.labels.pestDetail.aiConfirmedSpecies = [];
       if (!record.labels.pestDetail.aiConfirmedSpecies.includes(species)) record.labels.pestDetail.aiConfirmedSpecies.push(species);
     },
@@ -4815,7 +4917,7 @@ const app = {
     _isPestGuessConfirmed(record, pestGuess) {
       const species = this._pestGuessKey(pestGuess);
       const current = record?.labels?.pestDetail?.species;
-      return !!species && Array.isArray(current) && current.includes(species);
+      return !!species && this._normalizeLabelList(current).includes(species);
     },
 
     _clearAiRegionConfirmations(record) {
@@ -4829,14 +4931,15 @@ const app = {
       const pestDetail = record.labels?.pestDetail;
       if (pestDetail && Array.isArray(pestDetail.aiConfirmedSpecies) && pestDetail.aiConfirmedSpecies.length) {
         const aiSpecies = new Set(pestDetail.aiConfirmedSpecies);
-        if (Array.isArray(pestDetail.species)) {
-          const keptSpecies = pestDetail.species.filter(item => !aiSpecies.has(item));
-          changed = changed || keptSpecies.length !== pestDetail.species.length;
-          pestDetail.species = keptSpecies;
+        const currentSpecies = this._normalizeLabelList(pestDetail.species);
+        if (currentSpecies.length) {
+          const keptSpecies = currentSpecies.filter(item => !aiSpecies.has(item));
+          changed = changed || keptSpecies.length !== currentSpecies.length;
+          pestDetail.species = keptSpecies[0] || null;
         }
         delete pestDetail.aiConfirmedSpecies;
         changed = true;
-        if (!pestDetail.species?.length && !pestDetail.infestation) delete record.labels.pestDetail;
+        if (!pestDetail.species && !pestDetail.infestation) delete record.labels.pestDetail;
       }
       return changed;
     },
@@ -4902,9 +5005,9 @@ const app = {
 
     async deleteConfirmedPest(recordId, species) {
       const record = this._photoRecordCache[recordId];
-      const current = record?.labels?.pestDetail?.species;
-      if (!record || !Array.isArray(current)) return;
-      record.labels.pestDetail.species = current.filter(item => item !== species);
+      const current = this._normalizeLabelList(record?.labels?.pestDetail?.species);
+      if (!record || !current.length) return;
+      record.labels.pestDetail.species = current.filter(item => item !== species)[0] || null;
       if (Array.isArray(record.labels.pestDetail.aiConfirmedSpecies)) {
         record.labels.pestDetail.aiConfirmedSpecies = record.labels.pestDetail.aiConfirmedSpecies.filter(item => item !== species);
         if (!record.labels.pestDetail.aiConfirmedSpecies.length) delete record.labels.pestDetail.aiConfirmedSpecies;
@@ -4914,7 +5017,7 @@ const app = {
           if (this._pestGuessKey(item.pestGuess) === species) delete item.pestGuess;
         });
       }
-      if (!record.labels.pestDetail.species.length && !record.labels.pestDetail.infestation) {
+      if (!record.labels.pestDetail.species && !record.labels.pestDetail.infestation) {
         delete record.labels.pestDetail;
       }
       this._renderRecordLabelDisplay(recordId);
@@ -5092,17 +5195,9 @@ const app = {
     document.getElementById('record-lat').value = '';
     document.getElementById('record-lng').value = '';
     document.getElementById('record-notes').value = '';
-    document.getElementById('record-farm-notes').value = '';
-    this._selectedVisualLabels = [];
-    this._selectedGrowthStage = null;
-    this._selectedSeverity = null;
-    this._selectedActions = [];
-    this._actionDetails = {};
-    this._selectedPestTypes = [];
-    this._selectedPestInfestation = null;
-    this._selectedDiseaseTypes = [];
-    await this._loadPestLibrary().catch(() => []);
-    this._renderLabelPills();
+    const envToggle = document.getElementById('record-env-enabled');
+    if (envToggle) envToggle.checked = true;
+    this.toggleRecordEnvironment(true);
     document.getElementById('weather-display').style.display = 'none';
     const now = new Date();
     document.getElementById('record-datetime').value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -5113,10 +5208,20 @@ const app = {
     if (Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0)) {
       document.getElementById('record-lat').value = lat.toFixed(6);
       document.getElementById('record-lng').value = lng.toFixed(6);
-      this._fetchWeather(lat, lng);
+      if (document.getElementById('record-env-enabled')?.checked !== false) this._fetchWeather(lat, lng);
     }
     this._renderSensorSelectList();
     this.openModal('modal-new-record');
+  },
+
+  toggleRecordEnvironment(enabled) {
+    const section = document.getElementById('record-env-section');
+    if (section) section.style.display = enabled ? '' : 'none';
+    if (!enabled) {
+      this._currentWeather = null;
+      const weather = document.getElementById('weather-display');
+      if (weather) weather.style.display = 'none';
+    }
   },
 
   _renderSensorSelectList() {
@@ -5208,6 +5313,7 @@ const app = {
   async _fetchWeather(lat, lng) {
     try {
       const data = await this._photoRequest('/weather?lat=' + encodeURIComponent(lat) + '&lng=' + encodeURIComponent(lng));
+      if (document.getElementById('record-env-enabled')?.checked === false) return;
       this._currentWeather = data.weather;
       const wd = document.getElementById('weather-display');
       wd.style.display = 'flex';
@@ -5256,19 +5362,18 @@ const app = {
       const lat = parseFloat(document.getElementById('record-lat').value);
       const lng = parseFloat(document.getElementById('record-lng').value);
       const dtVal = document.getElementById('record-datetime').value;
+      const includeEnvironment = document.getElementById('record-env-enabled')?.checked !== false;
       const data = await this._photoRequest('/records', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           cropId: this._selectedCropId,
           imageBase64: this._photoCompressedBase64,
-          createdAt: dtVal ? new Date(dtVal).toISOString() : new Date().toISOString(),
-          gps: (!Number.isNaN(lat) && !Number.isNaN(lng)) ? { lat, lng, accuracy: null, source: 'location' } : null,
-          weather: this._currentWeather || null,
+          ...(includeEnvironment && dtVal ? { createdAt: new Date(dtVal).toISOString() } : {}),
+          gps: includeEnvironment && !Number.isNaN(lat) && !Number.isNaN(lng) ? { lat, lng, accuracy: null, source: 'location' } : null,
+          weather: includeEnvironment ? (this._currentWeather || null) : null,
           linkedSensors,
           userNotes: document.getElementById('record-notes').value.trim(),
-          farmNotes: document.getElementById('record-farm-notes').value.trim(),
-          labels: this._collectLabels(),
         }),
       });
       this.closeModal('modal-new-record');
@@ -5276,6 +5381,7 @@ const app = {
       this._photoCompressedBase64 = null;
       UI.toast('\u8bb0\u5f55\u5df2\u4fdd\u5b58', 'success');
       await this._loadRecords(this._selectedCropId);
+      this.openRecordDetail(data.record.id);
     } catch(e) {
       UI.toast('\u4fdd\u5b58\u5931\u8d25\uff1a' + e.message, 'danger');
     } finally {

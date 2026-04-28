@@ -11,31 +11,37 @@
 </head>
 <body class="auth-pending">
     <section class="login-screen" id="login-screen">
-        <div class="login-visual">
-            <img src="logo.jpg" alt="Smart Agriculture" class="login-logo">
-            <div>
-                <div class="login-kicker">Agri Data Platform</div>
-                <h1>智慧农业监测平台</h1>
+        <div class="login-stage">
+            <form class="login-panel" id="login-form">
+                <div class="login-panel-head">
+                    <div class="login-brand-lockup">
+                        <img src="assets/agent-sweet-potato.png" alt="AI 智慧农业 Agent" class="login-brand-logo">
+                        <div>
+                            <span>欢迎使用</span>
+                            <strong>AI 智慧农业 Agent</strong>
+                        </div>
+                    </div>
+                    <p>登录后继续管理农田数据、图像标注和智能分析。</p>
+                </div>
+                <label class="login-field">
+                    <span>账号</span>
+                    <input class="text-input" id="login-account" type="text" autocomplete="username" value="admin">
+                </label>
+                <label class="login-field">
+                    <span>密码</span>
+                    <input class="text-input" id="login-password" type="password" autocomplete="current-password" placeholder="请输入密码">
+                </label>
+                <div class="login-error" id="login-error"></div>
+                <button class="btn-primary login-submit" id="login-submit" type="submit">
+                    <i class="fa-solid fa-arrow-right-to-bracket"></i> 登录
+                </button>
+            </form>
+            <div class="login-visual" aria-hidden="true">
+                <div class="login-agent-card">
+                    <img src="logo.jpg" alt="" class="login-agent">
+                </div>
             </div>
         </div>
-        <form class="login-panel" id="login-form">
-            <div class="login-panel-head">
-                <span>欢迎使用</span>
-                <strong>AI 智慧农业 Agent</strong>
-            </div>
-            <label class="login-field">
-                <span>账号</span>
-                <input class="text-input" id="login-account" type="text" autocomplete="username" value="admin">
-            </label>
-            <label class="login-field">
-                <span>密码</span>
-                <input class="text-input" id="login-password" type="password" autocomplete="current-password" placeholder="请输入密码">
-            </label>
-            <div class="login-error" id="login-error"></div>
-            <button class="btn-primary login-submit" id="login-submit" type="submit">
-                <i class="fa-solid fa-arrow-right-to-bracket"></i> 登录
-            </button>
-        </form>
     </section>
 
     <div class="app-shell" id="app-shell" style="display:none">
@@ -43,10 +49,9 @@
         <!-- SIDEBAR -->
         <aside class="sidebar" id="sidebar">
             <div class="sidebar-brand">
-                <img src="logo.jpg" alt="Logo" class="brand-logo">
+                <img src="assets/agent-sweet-potato.png" alt="Logo" class="brand-logo">
                 <div class="brand-text">
-                    <span class="brand-name">智慧农业</span>
-                    <span class="brand-sub">监测平台</span>
+                    <span class="brand-name">智慧农业AI</span>
                 </div>
             </div>
             <nav class="sidebar-nav">
@@ -366,26 +371,34 @@
                                     <span id="photo-size-info" class="photo-size-hint"></span>
                                 </div>
 
-                                <!-- 时间 -->
-                                <div class="form-section-title">时间</div>
-                                <div class="form-group">
-                                    <label>记录时间</label>
-                                    <input class="text-input" type="datetime-local" id="record-datetime">
-                                </div>
+                                <!-- 环境记录 -->
+                                <label class="toggle-row">
+                                    <input type="checkbox" id="record-env-enabled" checked onchange="app.toggleRecordEnvironment(this.checked)">
+                                    <span>记录环境数据（时间/位置/天气）</span>
+                                </label>
 
-                                <!-- GPS + 天气 -->
-                                <div class="form-section-title">位置与天气</div>
-                                <div class="form-row form-row-inline">
-                                    <div>
-                                        <label>纬度</label>
-                                        <input class="text-input" type="number" id="record-lat" placeholder="自动获取" step="0.000001">
+                                <div id="record-env-section">
+                                    <!-- 时间 -->
+                                    <div class="form-section-title">时间</div>
+                                    <div class="form-group">
+                                        <label>记录时间</label>
+                                        <input class="text-input" type="datetime-local" id="record-datetime">
                                     </div>
-                                    <div>
-                                        <label>经度</label>
-                                        <input class="text-input" type="number" id="record-lng" placeholder="自动获取" step="0.000001">
+
+                                    <!-- GPS + 天气 -->
+                                    <div class="form-section-title">位置与天气</div>
+                                    <div class="form-row form-row-inline">
+                                        <div>
+                                            <label>纬度</label>
+                                            <input class="text-input" type="number" id="record-lat" placeholder="自动获取" step="0.000001">
+                                        </div>
+                                        <div>
+                                            <label>经度</label>
+                                            <input class="text-input" type="number" id="record-lng" placeholder="自动获取" step="0.000001">
+                                        </div>
                                     </div>
+                                    <div id="weather-display" class="weather-chip" style="display:none"></div>
                                 </div>
-                                <div id="weather-display" class="weather-chip" style="display:none"></div>
 
                                 <!-- 传感器关联 -->
                                 <div class="form-section-title">关联传感器数据（可选）</div>
@@ -395,58 +408,6 @@
                                 <div class="form-section-title">备注</div>
                                 <div class="form-group">
                                     <textarea class="text-input" id="record-notes" rows="3" placeholder="描述观察情况、疑似问题等..." maxlength="500"></textarea>
-                                </div>
-
-                                <!-- 农事记录 -->
-                                <div class="form-section-title">农事记录</div>
-                                <div class="form-group">
-                                    <textarea class="text-input" id="record-farm-notes" rows="3" placeholder="记录本次观察前后的农事操作..." maxlength="500"></textarea>
-                                </div>
-
-                                <!-- 观察标签 -->
-                                <div class="form-section-title">观察标签（可选）</div>
-                                <div class="form-group">
-                                    <div id="label-visual-pills" class="label-pill-group"></div>
-                                </div>
-
-                                <!-- 生长阶段 -->
-                                <div class="form-section-title">生长阶段（可选）</div>
-                                <div class="form-group">
-                                    <div id="label-growth-pills" class="label-pill-group"></div>
-                                </div>
-
-                                <!-- 严重程度 -->
-                                <div class="form-section-title">严重程度（可选）</div>
-                                <div class="form-group">
-                                    <div id="label-severity-pills" class="label-pill-group"></div>
-                                </div>
-
-                                <!-- 操作标签 -->
-                                <div class="form-section-title">操作记录（可选）</div>
-                                <div class="form-group">
-                                    <div id="label-action-pills" class="label-pill-group"></div>
-                                </div>
-                                <div id="action-detail-fields" class="label-detail-fields" style="display:none"></div>
-
-                                <!-- 虫害详情 -->
-                                <div id="pest-detail-section" style="display:none">
-                                    <div class="form-section-title">虫害详情</div>
-                                    <div class="form-group">
-                                        <div class="label-subtitle">虫害类型</div>
-                                        <div id="label-pest-type-pills" class="label-pill-group"></div>
-                                    </div>
-                                    <div class="form-group">
-                                        <div class="label-subtitle">虫害程度</div>
-                                        <div id="label-pest-infestation-pills" class="label-pill-group"></div>
-                                    </div>
-                                </div>
-
-                                <!-- 病害详情 -->
-                                <div id="disease-detail-section" style="display:none">
-                                    <div class="form-section-title">病害详情</div>
-                                    <div class="form-group">
-                                        <div id="label-disease-type-pills" class="label-pill-group"></div>
-                                    </div>
                                 </div>
                             </div>
                             <div class="modal-footer">
