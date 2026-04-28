@@ -2610,7 +2610,7 @@ const app = {
       const q = (document.getElementById('pest-search')?.value || search).trim().toLowerCase();
       const t = document.getElementById('pest-type-filter')?.value || type;
       const filtered = entries.filter(p => {
-        const haystack = [p.name, p.key, p.symptoms, p.control].filter(Boolean).join(' ').toLowerCase();
+        const haystack = (p.name || '').toLowerCase();
         return (!q || haystack.includes(q)) && (t === 'all' || p.type === t);
       });
       grid.innerHTML = filtered.length === 0

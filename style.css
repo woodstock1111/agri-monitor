@@ -124,7 +124,7 @@ textarea {
   grid-template-columns: minmax(0, 1.1fr) minmax(360px, 460px);
   background:
     linear-gradient(115deg, rgba(13, 25, 48, 0.84), rgba(13, 25, 48, 0.62)),
-    url('logo.jpg') center/320px no-repeat,
+    url('logo.jpg') center/420px no-repeat,
     #0f1f35;
   color: #fff;
   overflow: hidden;
@@ -139,8 +139,8 @@ textarea {
 }
 
 .login-logo {
-  width: 72px;
-  height: 72px;
+  width: 360px;
+  height: 360px;
   border-radius: 14px;
   background: #fff;
   object-fit: contain;
@@ -211,7 +211,7 @@ textarea {
 }
 
 .login-panel-head strong {
-  font-size: 24px;
+  font-size: 20px;
   line-height: 1.1;
 }
 
@@ -287,8 +287,8 @@ textarea {
   }
 
   .login-logo {
-    width: 54px;
-    height: 54px;
+    width: 264px;
+    height: 264px;
   }
 
   .login-panel {

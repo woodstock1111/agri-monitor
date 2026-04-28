@@ -1294,12 +1294,12 @@ const server = http.createServer(async (req, res) => {
 
             const pr = readPhotoRecords();
             const visionApiKey = String(pr.config.visionApiKey || '').trim();
-            const textModel = String(pr.config.textModel || 'qwen-turbo').trim() || 'qwen-turbo';
+            const textModel = String(pr.config.textModel || 'qwen3-fast').trim() || 'qwen3-fast';
             if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
 
             const userPrompt = type === 'disease'
-                ? `病害名称：${name}。请输出以下 JSON：{ "key": "英文标识（小写下划线格式）", "symptoms": "发病症状（1-2句中文描述）", "control": "药剂防治建议（1-2句中文描述）" }`
-                : `害虫名称：${name}。请输出以下 JSON：{ "key": "英文标识（小写下划线格式，如 striped_flea_beetle）", "symptoms": "为害症状（1-2句中文描述）", "control": "药剂防治建议（1-2句中文描述）" }`;
+                ? `病害名称：${name}。请输出以下 JSON：{ "key": "英文标识（kebab-case 格式，如 brown-spot）", "symptoms": "发病症状（1-2句中文描述）", "control": "药剂防治建议（1-2句中文描述）" }`
+                : `害虫名称：${name}。请输出以下 JSON：{ "key": "英文标识（kebab-case 格式，如 striped-flea-beetle）", "symptoms": "为害症状（1-2句中文描述）", "control": "药剂防治建议（1-2句中文描述）" }`;
             const requestBody = JSON.stringify({
                 model: textModel,
                 messages: [
@@ -1357,6 +1357,7 @@ const server = http.createServer(async (req, res) => {
             return sendJson(201, { ok: true, entry });
         }
 
+        /*
         if (pathname === '/api/v1/pest-library/migrate-keys' && req.method === 'POST') {
             const auth = requireAuth(); if (!auth) return;
             if (auth.user.role !== 'platform_admin') return sendJson(403, { ok: false, msg: 'admin only' });
@@ -1436,6 +1437,7 @@ const server = http.createServer(async (req, res) => {
                 totalEntries: pl.entries.length,
             });
         }
+        */
 
         if (pathname.startsWith('/api/v1/pest-library/') && req.method === 'PUT') {
             const auth = requireAuth(); if (!auth) return;
@@ -2026,6 +2028,10 @@ const server = http.createServer(async (req, res) => {
             return;
         }
 
+        if (pathname === '/server-data' || pathname.startsWith('/server-data/')) {
+            res.writeHead(403);
+            return res.end();
+        }
         const requested = pathname === '' ? 'index.html' : pathname.replace(/^\/+/, '');
         const resolved = path.resolve(__dirname, requested);
         if (!resolved.startsWith(path.resolve(__dirname))) {
