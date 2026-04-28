@@ -4578,7 +4578,9 @@ const app = {
 
     _pestGuessName(pestGuess) {
       if (!pestGuess || typeof pestGuess !== 'object') return '';
-      return String(pestGuess.name || pestGuess.speciesName || this._pestTypeText(pestGuess.species) || '').trim();
+      const matchedKey = this._pestGuessKey(pestGuess);
+      if (matchedKey) return this._pestTypeText(matchedKey);
+      return String(pestGuess.name || pestGuess.speciesName || '').trim();
     },
 
     _pestGuessKey(pestGuess) {
@@ -4586,7 +4588,7 @@ const app = {
       const entries = this._labelTaxonomy.pestTypes || [];
       const explicit = String(pestGuess.key || pestGuess.species || '').trim();
       if (explicit && entries.some(item => item.key === explicit)) return explicit;
-      const name = this._pestGuessName(pestGuess);
+      const name = String(pestGuess.name || pestGuess.speciesName || '').trim();
       const matched = entries.find(item => item.label === name || item.key === name);
       return matched?.key || '';
     },

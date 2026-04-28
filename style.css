@@ -4862,6 +4862,7 @@ body::before {
   border: 1px solid var(--border);
   cursor: pointer;
   overflow: hidden;
+  min-height: 220px;
   transition: transform .15s, box-shadow .15s;
 }
 
@@ -6164,6 +6165,7 @@ body::before {
 
 .record-card {
   width: 150px;
+  min-height: 220px;
   border-radius: 9px !important;
 }
 
