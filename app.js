@@ -803,6 +803,9 @@ const app = {
   _selectedPestTypes: null,
   _selectedPestInfestation: null,
   _selectedDiseaseTypes: null,
+  _editingLabelRecordId: null,
+  _labelEditorBaseline: '',
+  _labelEditorDirty: false,
   _labelTaxonomy: {
     visual: [
       {
@@ -3062,6 +3065,10 @@ const app = {
       this._closeAnnotationPopover();
       this._annotationDraft = null;
       this._pendingAnnotation = null;
+      this._editingLabelRecordId = null;
+      this._labelEditorBaseline = '';
+      this._labelEditorDirty = false;
+      this._updateRecordSaveCloseButton(false);
     }
     if (t === 'location') this._destroyPickerMap('loc');
     if (t === 'device') this._destroyPickerMap('dev');
@@ -4177,6 +4184,10 @@ const app = {
       </div>
     `;
     document.getElementById('record-detail-body').innerHTML = html;
+    this._editingLabelRecordId = null;
+    this._labelEditorBaseline = '';
+    this._labelEditorDirty = false;
+    this._updateRecordSaveCloseButton(false);
     this.openModal('modal-record-detail');
     this._loadPhotoImage(r).then(src => {
       const img = document.querySelector(`img[data-detail-photo-id="${CSS.escape(r.id)}"]`);
@@ -4219,12 +4230,31 @@ const app = {
       this._selectedDiseaseTypes = this._firstLabelValue(labels?.diseaseDetail?.types);
     },
 
+    _labelSnapshot(labels) {
+      return JSON.stringify(labels || null);
+    },
+
+    _updateRecordSaveCloseButton(show = this._labelEditorDirty) {
+      const btn = document.getElementById('record-save-close-btn');
+      if (btn) btn.style.display = show ? '' : 'none';
+    },
+
+    _markRecordLabelsDirty() {
+      if (!this._editingLabelRecordId) return;
+      this._labelEditorDirty = this._labelSnapshot(this._collectLabels()) !== this._labelEditorBaseline;
+      this._updateRecordSaveCloseButton();
+    },
+
     async openRecordLabelEditor(recordId) {
       const record = this._photoRecordCache[recordId];
       const host = document.getElementById('record-label-editor');
       if (!record || !host) return;
       await this._loadPestLibrary().catch(() => []);
       this._resetLabelStateFromLabels(record.labels);
+      this._editingLabelRecordId = recordId;
+      this._labelEditorBaseline = this._labelSnapshot(this._collectLabels());
+      this._labelEditorDirty = false;
+      this._updateRecordSaveCloseButton(false);
       host.style.display = 'block';
       host.innerHTML = `
         <div class="form-section-title">观察标签</div>
@@ -4251,14 +4281,11 @@ const app = {
           <div class="form-section-title">病害详情</div>
           <div class="form-group"><div id="label-disease-type-pills" class="label-pill-group"></div></div>
         </div>
-        <div class="record-label-editor-actions">
-          <button type="button" class="btn-primary btn-sm" onclick="app.saveRecordLabels('${this.sanitize(recordId)}')">保存标签</button>
-        </div>
       `;
       this._renderLabelPills();
     },
 
-    async saveRecordLabels(recordId) {
+    async saveRecordLabels(recordId, options = {}) {
       const record = this._photoRecordCache[recordId];
       if (!record) return;
       const labels = this._collectLabels();
@@ -4273,10 +4300,20 @@ const app = {
         this._renderRecordLabelDisplay(recordId);
         const editor = document.getElementById('record-label-editor');
         if (editor) editor.style.display = 'none';
+        this._labelEditorBaseline = this._labelSnapshot(record.labels);
+        this._labelEditorDirty = false;
+        this._updateRecordSaveCloseButton(false);
         UI.toast('标签已保存', 'success');
+        if (options.closeDetail) this.closeModal('modal-record-detail');
       } catch (e) {
         UI.toast('保存标签失败：' + e.message, 'danger');
+        throw e;
       }
+    },
+
+    async saveRecordLabelsAndClose() {
+      if (!this._editingLabelRecordId) return this.closeModal('modal-record-detail');
+      await this.saveRecordLabels(this._editingLabelRecordId, { closeDetail: true });
     },
 
     _renderAnnotation(record) {
@@ -4441,16 +4478,19 @@ const app = {
         else this._selectedVisualLabels.push(key);
       }
       this._renderLabelPills();
+      this._markRecordLabelsDirty();
     },
 
     _selectGrowthStage(key) {
       this._selectedGrowthStage = this._selectedGrowthStage === key ? null : key;
       this._renderLabelPills();
+      this._markRecordLabelsDirty();
     },
 
     _selectSeverity(level) {
       this._selectedSeverity = this._selectedSeverity === level ? null : level;
       this._renderLabelPills();
+      this._markRecordLabelsDirty();
     },
 
     _toggleActionLabel(key) {
@@ -4462,26 +4502,31 @@ const app = {
         this._selectedActions.push(key);
       }
       this._renderLabelPills();
+      this._markRecordLabelsDirty();
     },
 
     _updateActionDetail(actionType, field, value) {
       if (!this._actionDetails[actionType]) this._actionDetails[actionType] = {};
       this._actionDetails[actionType][field] = value;
+      this._markRecordLabelsDirty();
     },
 
     _togglePestType(key) {
       this._selectedPestTypes = this._selectedPestTypes === key ? null : key;
       this._renderLabelPills();
+      this._markRecordLabelsDirty();
     },
 
     _selectPestInfestation(key) {
       this._selectedPestInfestation = this._selectedPestInfestation === key ? null : key;
       this._renderLabelPills();
+      this._markRecordLabelsDirty();
     },
 
     _toggleDiseaseType(key) {
       this._selectedDiseaseTypes = this._selectedDiseaseTypes === key ? null : key;
       this._renderLabelPills();
+      this._markRecordLabelsDirty();
     },
 
     _collectLabels() {

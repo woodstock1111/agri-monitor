@@ -1883,6 +1883,12 @@ input:checked+.toggle-slider:before {
   color: var(--text-primary);
 }
 
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .modal-close {
   background: none;
   border: none;
