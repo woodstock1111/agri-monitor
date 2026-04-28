@@ -286,6 +286,17 @@ function writePestLibrary(data) {
     fs.writeFileSync(PEST_LIBRARY_FILE, JSON.stringify(data));
 }
 
+function normalizePestLibraryKey(key) {
+    let text = String(key || '').trim().toLowerCase();
+    text = text.replace(/_/g, '-');
+    text = text.replace(/\s*[\(（][^()（）]*[\)）]\s*/g, ' ');
+    text = text.split('、')[0];
+    text = text.replace(/\s+/g, '-');
+    text = text.replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+    if (text === 'phaneroptera-sinensis-uvarov') text = 'phaneroptera-sinensis';
+    return text;
+}
+
 function readPhotoRecords() {
     // Return the initial photo records structure when the file does not exist.
     if (!fs.existsSync(PHOTO_RECORDS_FILE)) {
@@ -1344,6 +1355,86 @@ const server = http.createServer(async (req, res) => {
             pl.entries.push(entry);
             writePestLibrary(pl);
             return sendJson(201, { ok: true, entry });
+        }
+
+        if (pathname === '/api/v1/pest-library/migrate-keys' && req.method === 'POST') {
+            const auth = requireAuth(); if (!auth) return;
+            if (auth.user.role !== 'platform_admin') return sendJson(403, { ok: false, msg: 'admin only' });
+
+            const pl = readPestLibrary();
+            const oldToNew = {};
+            const migrated = [];
+            const duplicatesRemoved = [];
+            const seenKeys = new Set();
+            const nextEntries = [];
+
+            (pl.entries || []).forEach(entry => {
+                if (!entry) return;
+                const oldKey = String(entry.key || '').trim();
+                const newKey = normalizePestLibraryKey(oldKey);
+                if (oldKey && newKey && oldKey !== newKey) {
+                    oldToNew[oldKey] = newKey;
+                    migrated.push({ oldKey, newKey });
+                    entry.key = newKey;
+                }
+                const finalKey = String(entry.key || '').trim();
+                if (seenKeys.has(finalKey)) {
+                    duplicatesRemoved.push({ id: entry.id, key: finalKey });
+                    return;
+                }
+                seenKeys.add(finalKey);
+                nextEntries.push(entry);
+            });
+
+            pl.entries = nextEntries;
+            if (migrated.length || duplicatesRemoved.length) writePestLibrary(pl);
+
+            const pr = readPhotoRecords();
+            let recordsUpdated = 0;
+            const replaceKeys = list => {
+                if (!Array.isArray(list)) return { list, changed: false };
+                let changed = false;
+                const next = [];
+                const seen = new Set();
+                list.forEach(value => {
+                    const key = String(value || '').trim();
+                    const mapped = oldToNew[key] || key;
+                    if (mapped !== key) changed = true;
+                    if (!seen.has(mapped)) {
+                        seen.add(mapped);
+                        next.push(mapped);
+                    } else {
+                        changed = true;
+                    }
+                });
+                return { list: next, changed };
+            };
+
+            (pr.records || []).forEach(record => {
+                let changed = false;
+                const pestDetail = record?.labels?.pestDetail;
+                if (pestDetail && Array.isArray(pestDetail.species)) {
+                    const result = replaceKeys(pestDetail.species);
+                    pestDetail.species = result.list;
+                    changed = changed || result.changed;
+                }
+                const diseaseDetail = record?.labels?.diseaseDetail;
+                if (diseaseDetail && Array.isArray(diseaseDetail.types)) {
+                    const result = replaceKeys(diseaseDetail.types);
+                    diseaseDetail.types = result.list;
+                    changed = changed || result.changed;
+                }
+                if (changed) recordsUpdated += 1;
+            });
+            if (recordsUpdated) writePhotoRecords(pr);
+
+            return sendJson(200, {
+                ok: true,
+                migrated,
+                duplicatesRemoved,
+                recordsUpdated,
+                totalEntries: pl.entries.length,
+            });
         }
 
         if (pathname.startsWith('/api/v1/pest-library/') && req.method === 'PUT') {
