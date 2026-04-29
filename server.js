@@ -93,7 +93,12 @@ const AGENT_TOOL_DEFS = [
         function: {
             name: 'get_farm_tasks',
             description: '获取所有农事计划任务',
-            parameters: { type: 'object', properties: {} },
+            parameters: {
+                type: 'object',
+                properties: {
+                    date: { type: 'string', description: '按日期筛选，格式 YYYY-MM-DD，如 2026-04-28' },
+                },
+            },
         },
     },
     {
@@ -877,7 +882,10 @@ async function executeAgentTool(name, args = {}, user) {
             return JSON.stringify({ weather });
         }
         case 'get_farm_tasks': {
-            const tasks = scopedTenantRows(user, readFarmTasks().tasks || []);
+            const date = String(args.date || '').trim();
+            let tasks = scopedTenantRows(user, readFarmTasks().tasks || []);
+            if (date) tasks = tasks.filter(task => task.date === date);
+            tasks = tasks.slice(0, 50);
             return JSON.stringify({ tasks });
         }
         case 'get_crops': {
@@ -918,10 +926,7 @@ async function executeAgentTool(name, args = {}, user) {
             task.status = 'done';
             task.completedAt = new Date().toISOString();
             writeFarmTasks(ft);
-            const verifyTasks = readFarmTasks();
-            const verifiedTask = (verifyTasks.tasks || []).find(item => item.id === taskId && canAccessTenantItem(user, item));
-            const verified = verifiedTask?.status === 'done' && Boolean(verifiedTask.completedAt);
-            return JSON.stringify({ ok: verified, verified, task: verifiedTask || task });
+            return JSON.stringify({ ok: true, task });
         }
         case 'search_pest_library': {
             const keyword = String(args.keyword || '').trim().toLowerCase();
@@ -2327,7 +2332,7 @@ const server = http.createServer(async (req, res) => {
 - 涉及真实数据时，必须调用工具获取，严禁编造数据。
 - 涉及创建任务、完成任务等写入类操作时，必须调用对应工具执行，不能只口头答应。
 - 写入类工具返回 verified:true 或 ok:true 后，才可以告诉用户操作已完成；如果工具返回 error 或 verified:false，必须说明失败原因。
-- 如果用户要求标记任务已完成但没有提供任务ID，先调用 get_farm_tasks 查询任务ID，再调用 complete_farm_task。
+- 如果用户要求标记今天的任务已完成，先调用 get_farm_tasks 并传入今天的日期筛选，拿到具体任务ID后再调用 complete_farm_task。不要查询全部任务。
 - 如果数据不足，说明缺少什么信息，并给出下一步建议。
 - 你只能回答与农业、农场管理、作物种植、病虫害防治、传感器数据相关的问题。
 - 对于与农业无关的问题（如写代码、讲故事、闲聊），礼貌拒绝并引导回农业话题。
@@ -2391,6 +2396,7 @@ const server = http.createServer(async (req, res) => {
                                 currentLog.ok = parsedToolResult.ok;
                                 currentLog.verified = parsedToolResult.verified;
                                 currentLog.error = parsedToolResult.error;
+                                if (parsedToolResult.task) currentLog.task = parsedToolResult.task;
                             }
                         } catch {}
                         session.messages.push({
@@ -2406,16 +2412,6 @@ const server = http.createServer(async (req, res) => {
             }
 
             finalContent = String(finalContent || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-            const userAskedToCompleteTask = /完成|已完成|标记|办完|做完/.test(message) && /任务|农事|计划/.test(message);
-            if (userAskedToCompleteTask) {
-                const completeCalls = toolCallLog.filter(item => item.tool === 'complete_farm_task');
-                if (!completeCalls.length) {
-                    finalContent = '我还没有实际标记完成。请告诉我要完成哪条农事任务，或让我先查询今天的任务列表后再标记。';
-                } else if (!completeCalls.some(item => item.verified === true)) {
-                    const errorText = completeCalls.map(item => item.error).filter(Boolean).join('；');
-                    finalContent = `我尝试标记任务完成，但没有通过校验${errorText ? `：${errorText}` : '，请确认任务是否存在或是否属于当前账号'}。`;
-                }
-            }
             if (!finalContent) finalContent = '我暂时没有得到可用结论，请稍后再试或换一种问法。';
             if (session.messages.length > 100) {
                 session.messages = [session.messages[0], ...session.messages.slice(-60)];

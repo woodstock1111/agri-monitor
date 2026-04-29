@@ -327,11 +327,27 @@ const AgentChat = {
     const tools = new Set(toolCalls.map(item => item?.tool).filter(Boolean));
     const touchedFarmTasks = tools.has('create_farm_task') || tools.has('complete_farm_task');
     if (!touchedFarmTasks) return;
-    if (globalThis.app?.currentPage === 'farmtasks') {
-      await globalThis.app._loadFtTasks?.();
+    const appRef = globalThis.app;
+    if (!appRef) return;
+    const touchedDates = toolCalls
+      .filter(item => item?.tool === 'create_farm_task' || item?.tool === 'complete_farm_task')
+      .map(item => item?.task?.date || item?.args?.date)
+      .map(date => String(date || '').trim())
+      .filter(Boolean);
+    const targetDate = touchedDates[0];
+    document.dispatchEvent(new CustomEvent('agri:data-updated', {
+      detail: { scope: 'farmtasks', tools: Array.from(tools), dates: touchedDates },
+    }));
+    if (appRef.currentPage === 'farmtasks') {
+      if (targetDate && targetDate !== appRef._ftDate) {
+        appRef._ftDate = targetDate;
+        await appRef.initFarmTasks?.();
+      } else {
+        await appRef._loadFtTasks?.();
+      }
     }
-    if (globalThis.app?.currentPage === 'dashboard') {
-      await globalThis.app._renderDashboardFarmTasks?.();
+    if (appRef.currentPage === 'dashboard') {
+      await appRef._renderDashboardFarmTasks?.();
     }
   },
 
