@@ -100,19 +100,28 @@ const AuthService = {
     document.body.classList.remove('auth-pending');
     const shell = document.getElementById('app-shell');
     const login = document.getElementById('login-screen');
+    const chatFab = document.getElementById('agent-chat-fab');
+    const chatPanel = document.getElementById('agent-chat-panel');
     if (shell) shell.style.display = 'none';
     if (login) login.style.display = '';
+    if (chatFab) chatFab.style.display = 'none';
+    if (chatPanel) chatPanel.style.display = 'none';
   },
 
   showApp() {
     document.body.classList.remove('auth-pending');
     const shell = document.getElementById('app-shell');
     const login = document.getElementById('login-screen');
+    const chatFab = document.getElementById('agent-chat-fab');
     if (shell) shell.style.display = '';
     if (login) login.style.display = 'none';
+    if (chatFab) chatFab.style.display = '';
   },
 
   logout(reload = true) {
+    const chatFab = document.getElementById('agent-chat-fab');
+    if (chatFab) chatFab.style.display = 'none';
+    AgentChat.clear();
     localStorage.removeItem(this.TOKEN_KEY);
     localStorage.removeItem(this.USER_KEY);
     this.currentUser = null;
@@ -137,6 +146,213 @@ const AuthService = {
     }
   },
 };
+
+const AgentChat = {
+  _sessionId: null,
+  _sending: false,
+
+  init() {
+    this._sessionId = sessionStorage.getItem('agri_chat_session') || null;
+    this._bindEvents();
+    this._ensureClearButton();
+  },
+
+  _bindEvents() {
+    const fab = document.getElementById('agent-chat-fab');
+    const close = document.getElementById('agent-chat-close');
+    const send = document.getElementById('agent-chat-send');
+    const input = document.getElementById('agent-chat-input');
+    if (fab && fab.dataset.bound !== '1') {
+      fab.dataset.bound = '1';
+      fab.addEventListener('click', () => this.toggle());
+    }
+    if (close && close.dataset.bound !== '1') {
+      close.dataset.bound = '1';
+      close.addEventListener('click', () => this.close());
+    }
+    if (send && send.dataset.bound !== '1') {
+      send.dataset.bound = '1';
+      send.addEventListener('click', () => this._handleSend());
+    }
+    if (input && input.dataset.bound !== '1') {
+      input.dataset.bound = '1';
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          this._handleSend();
+        }
+      });
+    }
+  },
+
+  _ensureClearButton() {
+    const header = document.getElementById('agent-chat-header') || document.querySelector('.agent-chat-header, [data-agent-chat-header]');
+    if (!header || header.querySelector('[data-agent-chat-clear]')) return;
+    const closeBtn = header.querySelector('.agent-chat-close, .modal-close, .chat-close, [data-agent-chat-close]');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'agent-chat-clear';
+    btn.dataset.agentChatClear = '1';
+    btn.title = '清除对话';
+    btn.innerHTML = '<i class="fa-solid fa-trash"></i>';
+    btn.addEventListener('click', () => this.clear());
+    if (closeBtn) header.insertBefore(btn, closeBtn);
+    else header.appendChild(btn);
+  },
+
+  _messagesEl() {
+    return document.getElementById('agent-chat-messages') || document.querySelector('.agent-chat-messages, [data-agent-chat-messages]');
+  },
+
+  toggle() {
+    const panel = document.getElementById('agent-chat-panel');
+    if (!panel || panel.style.display === 'none') this.open();
+    else this.close();
+  },
+
+  open() {
+    const panel = document.getElementById('agent-chat-panel');
+    const input = document.getElementById('agent-chat-input');
+    if (panel) panel.style.display = 'flex';
+    if (input) setTimeout(() => input.focus(), 50);
+  },
+
+  close() {
+    const panel = document.getElementById('agent-chat-panel');
+    if (panel) panel.style.display = 'none';
+  },
+
+  appendMessage(role, content) {
+    const el = this._messagesEl();
+    if (!el) return null;
+    const welcome = el.querySelector('.agent-chat-welcome');
+    if (welcome) welcome.remove();
+    const msg = document.createElement('div');
+    msg.className = `agent-msg agent-msg-${role}`;
+    msg.textContent = String(content || '');
+    el.appendChild(msg);
+    el.scrollTop = el.scrollHeight;
+    return msg;
+  },
+
+  showThinking() {
+    const el = this._messagesEl();
+    if (!el || document.getElementById('agent-thinking')) return;
+    const welcome = el.querySelector('.agent-chat-welcome');
+    if (welcome) welcome.remove();
+    const msg = document.createElement('div');
+    msg.id = 'agent-thinking';
+    msg.className = 'agent-msg agent-msg-assistant agent-msg-thinking';
+    msg.innerHTML = '小薯正在思考<span class="thinking-dots"><span>.</span><span>.</span><span>.</span></span>';
+    el.appendChild(msg);
+    el.scrollTop = el.scrollHeight;
+  },
+
+  removeThinking() {
+    document.getElementById('agent-thinking')?.remove();
+  },
+
+  _renderWelcome() {
+    const el = this._messagesEl();
+    if (!el) return;
+    el.innerHTML = `
+      <div class="agent-chat-welcome">
+        <img src="assets/agent-sweet-potato.png" alt="" class="agent-welcome-avatar">
+        <p>你好！我是小薯，你的智慧农业AI助手。</p>
+        <p>你可以问我关于传感器数据、作物状况、病虫害防治等问题。</p>
+      </div>
+    `;
+  },
+
+  async _chatRequest(path, options = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 70000);
+    const headers = AuthService.authHeaders(options.headers || {});
+    try {
+      const res = await fetch('/api/v1' + path, { ...options, headers, signal: controller.signal });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) throw new Error(data.msg || data.message || '请求失败');
+      return data;
+    } catch (error) {
+      if (error.name === 'AbortError') throw new Error('请求超时，小薯这次想太久了');
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+
+  async send(message) {
+    const text = String(message || '').trim();
+    if (!text) return null;
+    const data = await this._chatRequest('/agent/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, sessionId: this._sessionId }),
+    });
+    if (data.sessionId) {
+      this._sessionId = data.sessionId;
+      sessionStorage.setItem('agri_chat_session', data.sessionId);
+    }
+    return data;
+  },
+
+  async _handleSend() {
+    if (this._sending) return;
+    const input = document.getElementById('agent-chat-input');
+    const sendBtn = document.getElementById('agent-chat-send');
+    const text = String(input?.value || '').trim();
+    if (!text) return;
+    if (input) input.value = '';
+    this.appendMessage('user', text);
+    this.showThinking();
+    this._sending = true;
+    if (sendBtn) sendBtn.disabled = true;
+    try {
+      const data = await this.send(text);
+      this.removeThinking();
+      await this._refreshAfterToolCalls(data?.toolCalls || []);
+      this.appendMessage('assistant', data?.reply || '我暂时没有得到可用回答。');
+    } catch (error) {
+      this.removeThinking();
+      this.appendMessage('assistant', '抱歉，出现了错误：' + (error.message || '请求失败'));
+    } finally {
+      this._sending = false;
+      if (sendBtn) sendBtn.disabled = false;
+      input?.focus();
+    }
+  },
+
+  async _refreshAfterToolCalls(toolCalls = []) {
+    if (!Array.isArray(toolCalls) || !toolCalls.length) return;
+    const tools = new Set(toolCalls.map(item => item?.tool).filter(Boolean));
+    const touchedFarmTasks = tools.has('create_farm_task') || tools.has('complete_farm_task');
+    if (!touchedFarmTasks) return;
+    if (globalThis.app?.currentPage === 'farmtasks') {
+      await globalThis.app._loadFtTasks?.();
+    }
+    if (globalThis.app?.currentPage === 'dashboard') {
+      await globalThis.app._renderDashboardFarmTasks?.();
+    }
+  },
+
+  async clear() {
+    const sessionId = this._sessionId || sessionStorage.getItem('agri_chat_session') || '';
+    this._sessionId = null;
+    sessionStorage.removeItem('agri_chat_session');
+    this._renderWelcome();
+    if (!sessionId) return;
+    try {
+      await this._chatRequest('/agent/chat', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+    } catch (error) {
+      console.warn('[AgentChat clear]', error.message);
+    }
+  },
+};
+globalThis.AgentChat = AgentChat;
 
 const Store = {
   _get(key, fb) { try { return JSON.parse(localStorage.getItem('agri_' + key)) || fb; } catch { return fb; } },
@@ -1494,6 +1710,20 @@ const app = {
     this._ftLongPressTimer = null;
   },
 
+  _applyFtCardStatus(id, status) {
+    const card = document.querySelector(`.ft-card[data-task-id="${CSS.escape(id)}"]`);
+    if (!card) return;
+    const done = status === 'done';
+    card.classList.toggle('done', done);
+    const sw = card.querySelector('.ft-switch');
+    if (sw) {
+      sw.classList.toggle('done', done);
+      sw.classList.toggle('pending', !done);
+    }
+    const label = card.querySelector('.ft-switch-label');
+    if (label) label.textContent = done ? '已完成' : '未完成';
+  },
+
   async _setFtStatus(id, status, completedAt, cls, card) {
     try {
       if (card && cls) card.classList.add(cls);
@@ -1507,7 +1737,8 @@ const app = {
         task.status = status;
         task.completedAt = completedAt;
       }
-      this._renderFtUserSection();
+      this._applyFtCardStatus(id, status);
+      if (!task || task.type !== 'ai') this._renderFtUserSection();
     } catch (e) {
       UI.toast('更新任务失败：' + e.message, 'danger');
       await this._loadFtTasks();
@@ -5758,6 +5989,7 @@ const app = {
 //     INIT    
 document.addEventListener('DOMContentLoaded', () => {
   AuthService.bindLoginForm();
+  AgentChat.init();
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
     overlay.addEventListener('click', e => {
       if (e.target === overlay) {

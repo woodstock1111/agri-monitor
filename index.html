@@ -720,6 +720,34 @@
 
     <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
 
+    <button class="agent-chat-fab" id="agent-chat-fab" title="AI 农业助手" style="display:none">
+        <img src="assets/agent-sweet-potato.png" alt="AI助手" class="agent-chat-fab-img">
+    </button>
+
+    <div class="agent-chat-panel" id="agent-chat-panel" style="display:none">
+        <div class="agent-chat-header" id="agent-chat-header">
+            <img src="assets/agent-sweet-potato.png" alt="" class="agent-chat-avatar">
+            <span class="agent-chat-title">小薯 · AI 农业助手</span>
+            <button class="agent-chat-close" id="agent-chat-close" title="关闭">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+        <div class="agent-chat-messages" id="agent-chat-messages">
+            <div class="agent-chat-welcome">
+                <img src="assets/agent-sweet-potato.png" alt="" class="agent-welcome-avatar">
+                <p>你好！我是小薯，你的智慧农业AI助手。</p>
+                <p>你可以问我关于传感器数据、作物状况、病虫害防治等问题。</p>
+            </div>
+        </div>
+        <div class="agent-chat-input-row">
+            <input type="text" class="agent-chat-input" id="agent-chat-input"
+                   placeholder="输入你的问题..." autocomplete="off">
+            <button class="agent-chat-send" id="agent-chat-send" title="发送">
+                <i class="fa-solid fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="app.js"></script>
