@@ -7175,6 +7175,110 @@ body::before {
   cursor: not-allowed;
 }
 
+.agent-debug-block {
+  align-self: stretch;
+  border-left: 3px solid #d1d5db;
+  padding-left: 12px;
+  margin: 8px 0;
+  font-size: 12px;
+  color: #888;
+}
+
+.agent-debug-summary {
+  display: block;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: #777;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.agent-debug-summary::before {
+  content: "▶";
+  display: inline-block;
+  width: 16px;
+  color: #9ca3af;
+}
+
+.agent-debug-block.open .agent-debug-summary::before {
+  content: "▼";
+}
+
+.agent-debug-summary:hover {
+  color: #374151;
+}
+
+.agent-debug-detail {
+  display: none;
+  padding: 6px 0 2px;
+}
+
+.agent-debug-block.open .agent-debug-detail {
+  display: block;
+}
+
+.agent-debug-round {
+  margin-top: 8px;
+}
+
+.agent-debug-thinking {
+  margin: 4px 0 6px;
+  color: #8a8f98;
+  font-style: italic;
+  white-space: pre-wrap;
+}
+
+.agent-debug-tool {
+  margin-top: 6px;
+}
+
+.agent-debug-tool b {
+  color: #4b5563;
+}
+
+.agent-debug-tool pre {
+  margin: 4px 0;
+  padding: 8px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.agent-debug-empty {
+  margin-top: 4px;
+  color: #9ca3af;
+}
+
+.agent-write-verification {
+  align-self: stretch;
+  margin: 4px 8px 8px;
+  font-size: 12px;
+}
+
+.agent-write-item {
+  padding: 5px 10px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+
+.agent-write-ok {
+  color: #16a34a;
+  background: #f0fdf4;
+}
+
+.agent-write-fail {
+  color: #dc2626;
+  background: #fef2f2;
+}
+
 @media (max-width: 480px) {
   .agent-chat-panel {
     width: calc(100vw - 16px);

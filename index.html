@@ -713,6 +713,10 @@
                     <div class="form-group"><label>状态</label><select class="select-input" id="account-status"><option value="active">启用</option><option value="disabled">停用</option></select></div>
                 </div>
                 <div class="form-group"><label>密码</label><input class="text-input" type="password" id="account-password" autocomplete="new-password" placeholder="输入新密码"><span class="field-hint" id="account-password-hint">新账号必须设置初始密码</span></div>
+                <div class="form-group">
+                    <label class="checkbox-row"><input type="checkbox" id="account-agent-debug"> Agent 调试模式</label>
+                    <span class="field-hint">开启后聊天面板显示 AI 思考过程和工具调用详情</span>
+                </div>
             </div>
             <div class="modal-footer"><button class="btn-ghost" onclick="app.closeModal('account')">取消</button><button class="btn-primary" onclick="app.saveAccount()">保存账号</button></div>
         </div>

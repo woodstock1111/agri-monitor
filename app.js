@@ -235,6 +235,92 @@ const AgentChat = {
     return msg;
   },
 
+  appendWriteVerification(writeResults = []) {
+    const el = this._messagesEl();
+    if (!el || !Array.isArray(writeResults) || !writeResults.length) return null;
+    const welcome = el.querySelector('.agent-chat-welcome');
+    if (welcome) welcome.remove();
+    const block = document.createElement('div');
+    block.className = 'agent-write-verification';
+    writeResults.forEach(result => {
+      const item = document.createElement('div');
+      item.className = 'agent-write-item ' + (result.ok ? 'agent-write-ok' : 'agent-write-fail');
+      const icon = result.ok ? '✓' : '✗';
+      let toolLabel = result.tool;
+      if (result.tool === 'complete_farm_task') toolLabel = result.completed === false ? '标记未完成' : '标记完成';
+      if (result.tool === 'create_farm_task') toolLabel = '创建任务';
+      const title = result.title ? `「${result.title}」` : '';
+      item.textContent = `${icon} ${toolLabel}${title ? ' ' + title : ''} - ${result.ok ? '已执行' : '失败'}`;
+      block.appendChild(item);
+    });
+    el.appendChild(block);
+    el.scrollTop = el.scrollHeight;
+    return block;
+  },
+
+  appendDebugLog(debugLog = []) {
+    const el = this._messagesEl();
+    if (!el || !Array.isArray(debugLog) || !debugLog.length) return null;
+    const welcome = el.querySelector('.agent-chat-welcome');
+    if (welcome) welcome.remove();
+    const toolNames = debugLog
+      .flatMap(item => Array.isArray(item.toolCalls) ? item.toolCalls : [])
+      .map(call => call?.name)
+      .filter(Boolean);
+    const block = document.createElement('div');
+    block.className = 'agent-debug-block';
+    const summary = document.createElement('button');
+    summary.type = 'button';
+    summary.className = 'agent-debug-summary';
+    summary.textContent = `调试：${debugLog.length} 轮迭代${toolNames.length ? '，调用了 ' + toolNames.join(' → ') : '，未调用工具'}`;
+    const detail = document.createElement('div');
+    detail.className = 'agent-debug-detail';
+    debugLog.forEach(item => {
+      const round = document.createElement('div');
+      round.className = 'agent-debug-round';
+      const title = document.createElement('strong');
+      title.textContent = `第 ${item.iteration || '-'} 轮`;
+      round.appendChild(title);
+      if (item.thinking) {
+        const thinking = document.createElement('div');
+        thinking.className = 'agent-debug-thinking';
+        thinking.textContent = item.thinking;
+        round.appendChild(thinking);
+      }
+      const calls = Array.isArray(item.toolCalls) ? item.toolCalls : [];
+      if (calls.length) {
+        calls.forEach(call => {
+          const tool = document.createElement('div');
+          tool.className = 'agent-debug-tool';
+          const name = document.createElement('b');
+          name.textContent = call.name || 'unknown_tool';
+          tool.appendChild(name);
+          const args = document.createElement('pre');
+          args.textContent = JSON.stringify(call.args || {}, null, 2);
+          tool.appendChild(args);
+          if (call.result) {
+            const result = document.createElement('pre');
+            result.textContent = String(call.result || '');
+            tool.appendChild(result);
+          }
+          round.appendChild(tool);
+        });
+      } else {
+        const empty = document.createElement('div');
+        empty.className = 'agent-debug-empty';
+        empty.textContent = '本轮没有工具调用';
+        round.appendChild(empty);
+      }
+      detail.appendChild(round);
+    });
+    summary.addEventListener('click', () => block.classList.toggle('open'));
+    block.appendChild(summary);
+    block.appendChild(detail);
+    el.appendChild(block);
+    el.scrollTop = el.scrollHeight;
+    return block;
+  },
+
   showThinking() {
     const el = this._messagesEl();
     if (!el || document.getElementById('agent-thinking')) return;
@@ -310,7 +396,11 @@ const AgentChat = {
     try {
       const data = await this.send(text);
       this.removeThinking();
-      await this._refreshAfterToolCalls(data?.toolCalls || []);
+      const refreshed = await this._refreshAfterToolCalls(data?.toolCalls || []);
+      const writeRefreshed = refreshed ? true : await this._refreshAfterWriteResults(data?.writeResults || []);
+      if (!writeRefreshed) await this._refreshVisibleFarmTaskViews();
+      if (Array.isArray(data?.debugLog) && data.debugLog.length) this.appendDebugLog(data.debugLog);
+      this.appendWriteVerification(data?.writeResults || []);
       this.appendMessage('assistant', data?.reply || '我暂时没有得到可用回答。');
     } catch (error) {
       this.removeThinking();
@@ -323,32 +413,69 @@ const AgentChat = {
   },
 
   async _refreshAfterToolCalls(toolCalls = []) {
-    if (!Array.isArray(toolCalls) || !toolCalls.length) return;
+    if (!Array.isArray(toolCalls) || !toolCalls.length) return false;
     const tools = new Set(toolCalls.map(item => item?.tool).filter(Boolean));
     const touchedFarmTasks = tools.has('create_farm_task') || tools.has('complete_farm_task');
-    if (!touchedFarmTasks) return;
+    if (!touchedFarmTasks) return false;
     const appRef = globalThis.app;
-    if (!appRef) return;
+    if (!appRef) return false;
+    appRef._farmTasksDirty = true;
     const touchedDates = toolCalls
       .filter(item => item?.tool === 'create_farm_task' || item?.tool === 'complete_farm_task')
       .map(item => item?.task?.date || item?.args?.date)
       .map(date => String(date || '').trim())
       .filter(Boolean);
     const targetDate = touchedDates[0];
+    toolCalls
+      .filter(item => item?.tool === 'complete_farm_task' && item?.task?.id)
+      .forEach(item => appRef._applyFtCardStatus?.(item.task.id, item.task.status));
     document.dispatchEvent(new CustomEvent('agri:data-updated', {
       detail: { scope: 'farmtasks', tools: Array.from(tools), dates: touchedDates },
     }));
-    if (appRef.currentPage === 'farmtasks') {
+    const refreshed = await this._refreshVisibleFarmTaskViews(targetDate);
+    if (refreshed) appRef._farmTasksDirty = false;
+    return refreshed;
+  },
+
+  async _refreshAfterWriteResults(writeResults = []) {
+    if (!Array.isArray(writeResults) || !writeResults.length) return false;
+    const touchedFarmTasks = writeResults.some(item => item?.tool === 'create_farm_task' || item?.tool === 'complete_farm_task');
+    if (!touchedFarmTasks) return false;
+    const appRef = globalThis.app;
+    if (!appRef) return false;
+    appRef._farmTasksDirty = true;
+    const targetDate = writeResults
+      .map(item => item?.date)
+      .map(date => String(date || '').trim())
+      .find(Boolean) || '';
+    writeResults
+      .filter(item => item?.tool === 'complete_farm_task' && item?.taskId)
+      .forEach(item => appRef._applyFtCardStatus?.(item.taskId, item.status || (item.completed === false ? 'pending' : 'done')));
+    const refreshed = await this._refreshVisibleFarmTaskViews(targetDate);
+    if (refreshed) appRef._farmTasksDirty = false;
+    return refreshed;
+  },
+
+  async _refreshVisibleFarmTaskViews(targetDate = '') {
+    const appRef = globalThis.app;
+    if (!appRef) return false;
+    let refreshed = false;
+    const farmTasksVisible = appRef.currentPage === 'farmtasks' || document.getElementById('page-farmtasks')?.classList.contains('active');
+    const dashboardVisible = appRef.currentPage === 'dashboard' || document.getElementById('page-dashboard')?.classList.contains('active');
+    if (farmTasksVisible) {
       if (targetDate && targetDate !== appRef._ftDate) {
         appRef._ftDate = targetDate;
         await appRef.initFarmTasks?.();
       } else {
         await appRef._loadFtTasks?.();
       }
+      refreshed = true;
     }
-    if (appRef.currentPage === 'dashboard') {
+    if (dashboardVisible) {
       await appRef._renderDashboardFarmTasks?.();
+      refreshed = true;
     }
+    return refreshed;
   },
 
   async clear() {
@@ -1017,6 +1144,7 @@ const app = {
   _photoImageUrls: {},
   _pestLibraryCache: [],
   _pestLibraryLoaded: false,
+  _farmTasksDirty: false,
   _ftDate: null,
   _ftTasksCache: [],
   _ftCalendarMonth: null,
@@ -1212,7 +1340,18 @@ const app = {
     }
     this.stopLive();
     const init = {
-      dashboard: () => this.initDashboard(), farmtasks: () => this.initFarmTasks(), realtime: () => this.initRealtime(),
+      dashboard: () => {
+        this.initDashboard();
+        if (this._farmTasksDirty) {
+          this._renderDashboardFarmTasks();
+          this._farmTasksDirty = false;
+        }
+      },
+      farmtasks: async () => {
+        await this.initFarmTasks();
+        this._farmTasksDirty = false;
+      },
+      realtime: () => this.initRealtime(),
       video: () => this.renderVideo(), history: () => this.initHistory(), cloudsync: () => this.initCloudSync(),
       pestdb: () => this.renderPests(), photos: () => this.renderPhotos(), automation: () => this.renderAutomation(),
       locations: () => this.renderLocations(), devices: () => this.renderDevices(), accounts: () => this.renderAccounts(),
@@ -1503,7 +1642,7 @@ const app = {
 
   async _loadFtTasks() {
     try {
-      const data = await this._ftRequest('?date=' + encodeURIComponent(this._ftDate));
+      const data = await this._ftRequest('?date=' + encodeURIComponent(this._ftDate) + '&_=' + Date.now());
       this._ftTasksCache = data.tasks || [];
       this._renderFtAiSection();
       this._renderFtUserSection();
@@ -2093,7 +2232,7 @@ const app = {
     }
     try {
       const today = this._ftToday();
-      const data = await this._ftRequest('?date=' + encodeURIComponent(today));
+      const data = await this._ftRequest('?date=' + encodeURIComponent(today) + '&_=' + Date.now());
       const tasks = data.tasks || [];
       const pending = tasks.filter(task => task.status !== 'done');
       block.innerHTML = `
@@ -3719,6 +3858,7 @@ const app = {
     document.getElementById('account-role').value = user?.role || 'tenant_admin';
     document.getElementById('account-status').value = user?.status || 'active';
     document.getElementById('account-password').value = '';
+    document.getElementById('account-agent-debug').checked = user?.agentDebug === true;
     document.getElementById('modal-account-title').textContent = user ? '\u7f16\u8f91\u8d26\u53f7' : '\u65b0\u5efa\u8d26\u53f7';
     document.getElementById('account-password-hint').textContent = user ? '\u7559\u7a7a\u5219\u4e0d\u4fee\u6539\u5bc6\u7801' : '\u65b0\u8d26\u53f7\u5fc5\u987b\u8bbe\u7f6e\u521d\u59cb\u5bc6\u7801';
     this.openModal('account');
@@ -3732,6 +3872,7 @@ const app = {
       role: document.getElementById('account-role').value,
       status: document.getElementById('account-status').value,
       password: document.getElementById('account-password').value,
+      agentDebug: document.getElementById('account-agent-debug').checked,
     };
     if (!payload.account) return UI.toast('\u8bf7\u586b\u5199\u8d26\u53f7', 'warning');
     if (!id && !payload.password) return UI.toast('\u8bf7\u8bbe\u7f6e\u521d\u59cb\u5bc6\u7801', 'warning');
@@ -6001,6 +6142,7 @@ const app = {
     }
   },
 };
+globalThis.app = app;
 
 //     INIT    
 document.addEventListener('DOMContentLoaded', () => {
