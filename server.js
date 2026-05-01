@@ -899,7 +899,7 @@ async function executeAgentTool(name, args = {}, user) {
             return JSON.stringify(result);
         }
         case 'create_farm_task': {
-            const title = String(args.title || '').trim();
+            const title = String(args.title || '').trim().slice(0, 200);
             const date = String(args.date || '').trim();
             if (!title || !date) return JSON.stringify({ error: 'title and date required' });
             const ft = readFarmTasks();
@@ -907,7 +907,7 @@ async function executeAgentTool(name, args = {}, user) {
             const task = {
                 id: safeId('task'),
                 title,
-                category: String(args.category || '').trim(),
+                category: String(args.category || '').trim().slice(0, 50),
                 type: 'ai',
                 date,
                 status: 'pending',
