@@ -1,0 +1,48 @@
+@import url('../colors_and_type.css');
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  background:
+    radial-gradient(circle at 18% 22%, rgba(132,182,255,0.35), transparent 38%),
+    radial-gradient(circle at 82% 78%, rgba(194,232,221,0.35), transparent 38%),
+    linear-gradient(130deg, #edf4ff 0%, #e9f3ff 50%, #e8f6ef 100%);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  padding: 20px 24px;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.glass {
+  background: rgba(255,255,255,0.92);
+  border-radius: 20px;
+  box-shadow:
+    inset  1px  1px 0 rgba(255,255,255,0.92),
+    inset -1px -1px 0 rgba(0,0,0,0.08),
+    0 8px 32px rgba(0,0,0,0.08);
+}
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.row { display: flex; gap: 12px; align-items: center; }
+.col { display: flex; flex-direction: column; }
+.grow { flex: 1 1 auto; }
+.gap-8 { gap: 8px; }
+.gap-12 { gap: 12px; }
+.gap-16 { gap: 16px; }
+.gap-20 { gap: 20px; }
+.wrap { flex-wrap: wrap; }
+.tnum { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--font-mono); }

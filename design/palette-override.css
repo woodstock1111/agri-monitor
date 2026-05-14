@@ -1,0 +1,274 @@
+/* ============================================================
+   Agri Monitor — Restrained Palette Override (v2 · full coverage)
+   ------------------------------------------------------------
+   Drop-in patch matched against the ACTUAL class names in
+   woodstock1111/agri-monitor/index.html.
+
+   Usage (load AFTER style.css):
+     <link rel="stylesheet" href="style.css">
+     <link rel="stylesheet" href="palette-override.css">
+
+   ============================================================ */
+
+/* -------- 1. Token swap (cascades to anything using vars) -- */
+:root,
+:root.theme-light,
+:root.theme-dark {
+  --accent:        #4a7bc1 !important;
+  --accent-light:  #eef4fc !important;
+  --accent-2:      #5c9a6f !important;
+  --accent-3:      #8b7ab8 !important;
+  --accent-4:      #d98a5b !important;
+  --accent-glow:   rgba(74,123,193,0.10) !important;
+
+  --success:       #5c9a6f !important;
+  --success-bg:    #eef5ee !important;
+  --warning:       #d98a5b !important;
+  --warning-bg:    #fbf2eb !important;
+  --danger:        #c97268 !important;
+  --danger-bg:     #fbeeec !important;
+  --info:          #7e92c4 !important;
+  --info-bg:       #f0f4f9 !important;
+
+  --bg-app:
+    radial-gradient(circle at 12% 18%, rgba(184,197,232,0.34), transparent 36%),
+    radial-gradient(circle at 82% 16%, rgba(199,184,220,0.30), transparent 36%),
+    radial-gradient(circle at 64% 82%, rgba(196,216,202,0.34), transparent 38%),
+    linear-gradient(130deg, #f3f6fb 0%, #f1f4fa 50%, #f1f6f2 100%) !important;
+}
+
+body { background: var(--bg-app) !important; background-attachment: fixed !important; }
+
+/* -------- 2. Sidebar (navy → light glass) ------------------ */
+.sidebar {
+  background: rgba(255,255,255,0.78) !important;
+  color: rgba(22,26,38,0.94) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  box-shadow:
+    inset  1px  1px 0 rgba(255,255,255,0.95),
+    inset -1px -1px 0 rgba(15,23,42,0.06),
+    0 12px 40px rgba(30,41,59,0.10) !important;
+}
+.sidebar .nav-group-label {
+  color: rgba(28,33,45,0.50) !important;
+}
+.sidebar .nav-link,
+.sidebar .nav-link span {
+  color: rgba(28,33,45,0.78) !important;
+}
+.sidebar .nav-link i,
+.sidebar .nav-link svg {
+  color: rgba(28,33,45,0.55) !important;
+}
+.sidebar .nav-link:hover {
+  background: rgba(74,123,193,0.06) !important;
+  color: rgba(22,26,38,0.94) !important;
+}
+.sidebar .nav-link.active,
+.sidebar .nav-link.active span {
+  background: rgba(74,123,193,0.10) !important;
+  color: var(--accent) !important;
+  font-weight: 600 !important;
+}
+.sidebar .nav-link.active i,
+.sidebar .nav-link.active svg {
+  color: var(--accent) !important;
+}
+.sidebar .nav-link.active::before {
+  background: var(--accent-2) !important;
+}
+.sidebar-brand .brand-name {
+  background: linear-gradient(90deg,#4a7bc1,#7e92c4,#5fa8b8) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+}
+.sidebar-status,
+.sidebar-status * {
+  color: rgba(28,33,45,0.62) !important;
+}
+
+/* nav LIVE badge */
+.nav-badge.live,
+.nav-badge {
+  background: var(--accent-2) !important;
+  color: #fff !important;
+}
+
+/* -------- 3. Topbar ---------------------------------------- */
+.topbar {
+  background: rgba(255,255,255,0.92) !important;
+  box-shadow:
+    inset  1px  1px 0 rgba(255,255,255,0.92),
+    inset -1px -1px 0 rgba(0,0,0,0.06),
+    0 8px 32px rgba(0,0,0,0.05) !important;
+}
+.topbar-location i,
+.topbar-weather i { color: var(--accent) !important; }
+.alert-btn .alert-count {
+  background: var(--danger) !important;
+  color: #fff !important;
+}
+
+/* -------- 4. Buttons --------------------------------------- */
+.btn-primary {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border: none !important;
+}
+.btn-primary:hover { background: #3d6aa8 !important; }
+
+.btn-cloud,
+button.btn-cloud {
+  background: linear-gradient(135deg, #b8c5e8, #c7b8dc) !important;
+  color: rgba(22,26,38,0.94) !important;
+  box-shadow: 0 1px 3px rgba(15,23,42,0.08) !important;
+  border: none !important;
+}
+.btn-cloud:hover { filter: brightness(0.97); }
+
+.btn-danger {
+  background: var(--danger) !important;
+  color: #fff !important;
+}
+.btn-ghost { color: rgba(28,33,45,0.72) !important; }
+.btn-ghost:hover { color: var(--accent) !important; background: rgba(74,123,193,0.06) !important; }
+
+.panel-btn:hover { color: var(--accent) !important; border-color: var(--accent) !important; }
+
+/* -------- 5. Glass panels & cards -------------------------- */
+.glass-panel {
+  background: rgba(255,255,255,0.92) !important;
+  border: none !important;
+  box-shadow:
+    inset  1px  1px 0 rgba(255,255,255,0.92),
+    inset -1px -1px 0 rgba(0,0,0,0.06),
+    0 8px 32px rgba(0,0,0,0.06) !important;
+}
+.panel-title i { color: var(--accent) !important; }
+
+/* -------- 6. KPI cards ------------------------------------- */
+.kpi-card .kpi-icon {
+  /* recolor any saturated KPI icon backgrounds */
+  filter: saturate(0.78);
+}
+.kpi-card.up   .kpi-delta { color: #2f7a48 !important; }
+.kpi-card.down .kpi-delta { color: #8b3b34 !important; }
+
+/* -------- 7. Status pills, badges, chips ------------------- */
+.status-success, .pill-success, .badge-success,
+.tag-success { background: var(--success-bg) !important; color: #2f7a48 !important; }
+.status-warning, .pill-warning, .badge-warning,
+.tag-warning { background: var(--warning-bg) !important; color: #8f5024 !important; }
+.status-danger, .pill-danger, .badge-danger,
+.tag-danger,  .status-error
+              { background: var(--danger-bg) !important; color: #8b3b34 !important; }
+.status-info, .pill-info, .badge-info, .tag-info
+              { background: var(--info-bg) !important; color: #455d96 !important; }
+
+/* live-badge in realtime page */
+.live-badge {
+  background: var(--accent-2) !important;
+  color: #fff !important;
+}
+.live-badge .pulse-dot { background: #fff !important; }
+
+/* cloud-related tags / banners */
+.cloud-factor,
+.tag-cloud,
+.cloud-connected-banner {
+  background: linear-gradient(135deg, rgba(184,197,232,0.50), rgba(199,184,220,0.50)) !important;
+  color: rgba(22,26,38,0.94) !important;
+  border: 1px solid rgba(126,146,196,0.20) !important;
+}
+.cloud-connected-info i { color: var(--accent-2) !important; }
+
+/* -------- 8. Inputs ---------------------------------------- */
+.text-input:focus,
+.select-input:focus,
+input:focus, textarea:focus, select:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-glow) !important;
+  outline: none !important;
+}
+
+/* -------- 9. Modals ---------------------------------------- */
+.modal-overlay {
+  background: rgba(28,40,64,0.50) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+}
+.modal-box {
+  background: rgba(255,255,255,0.96) !important;
+  box-shadow:
+    inset  1px  1px 0 rgba(255,255,255,0.92),
+    inset -1px -1px 0 rgba(0,0,0,0.06),
+    0 24px 60px rgba(15,23,42,0.18) !important;
+}
+
+/* -------- 10. Login screen --------------------------------- */
+.login-screen {
+  background: var(--bg-app) !important;
+}
+.login-screen::before,
+.login-screen .login-overlay {
+  background: linear-gradient(115deg, rgba(28,40,64,0.30), rgba(28,40,64,0.10)) !important;
+}
+.login-brand-lockup strong {
+  background: linear-gradient(90deg,#4a7bc1,#7e92c4,#5fa8b8) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  color: transparent !important;
+}
+
+/* -------- 11. Map markers (desaturate iOS hues) ------------ */
+.leaflet-marker-icon { filter: saturate(0.78) !important; }
+
+/* -------- 12. Icons — global tone shift -------------------- */
+/* Bring all Font Awesome accent icons into the muted palette */
+.fa-solid, .fa-regular, .fa-brands { /* default unchanged */ }
+.panel-title .fa-solid,
+.toolbar-group .fa-solid,
+.btn-primary .fa-solid,
+.btn-cloud .fa-solid,
+.nav-link .fa-solid {
+  /* let containers' colors win — already handled above */
+}
+/* Specifically: alert / warning / info icons stay status-tinted */
+.fa-circle-info        { color: var(--info) !important; }
+.fa-triangle-exclamation { color: var(--warning) !important; }
+.fa-circle-check       { color: var(--success) !important; }
+.fa-circle-xmark,
+.fa-plug-circle-xmark  { color: var(--danger) !important; }
+
+/* -------- 13. Toast ---------------------------------------- */
+.toast-stack .toast.success { background: var(--success) !important; color: #fff !important; }
+.toast-stack .toast.warning { background: var(--warning) !important; color: #fff !important; }
+.toast-stack .toast.error,
+.toast-stack .toast.danger  { background: var(--danger)  !important; color: #fff !important; }
+.toast-stack .toast.info    { background: var(--info)    !important; color: #fff !important; }
+
+/* -------- 14. Agent chat FAB ------------------------------- */
+.agent-chat-fab {
+  background: linear-gradient(135deg, var(--accent), var(--accent-3)) !important;
+  box-shadow: 0 10px 28px rgba(74,123,193,0.35) !important;
+}
+.agent-chat-panel {
+  background: rgba(255,255,255,0.96) !important;
+  box-shadow:
+    inset  1px  1px 0 rgba(255,255,255,0.92),
+    inset -1px -1px 0 rgba(0,0,0,0.06),
+    0 16px 48px rgba(15,23,42,0.18) !important;
+}
+.agent-chat-header {
+  background: linear-gradient(90deg, rgba(74,123,193,0.08), rgba(139,122,184,0.08)) !important;
+  color: rgba(22,26,38,0.94) !important;
+}
+.agent-chat-send { background: var(--accent) !important; color: #fff !important; }
+.agent-chat-messages .msg-user .msg-bubble {
+  background: var(--accent) !important;
+  color: #fff !important;
+}

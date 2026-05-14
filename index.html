@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="palette-override.css">
 </head>
 <body class="auth-pending">
     <section class="login-screen" id="login-screen">
@@ -57,46 +58,106 @@
             <nav class="sidebar-nav">
                 <div class="nav-group-label">数据展示</div>
                 <a class="nav-link active" data-page="dashboard">
-                    <i class="fa-solid fa-gauge-high"></i><span>系统总览</span>
+                    <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="6" y="9" width="12" height="9" rx="2"/>
+                        <path d="M9 9V6a3 3 0 0 1 6 0v3"/>
+                        <circle cx="12" cy="13" r="1.2" class="fill"/>
+                        <path d="M12 4V2.5M5 6l-1-1M19 6l1-1"/>
+                    </svg><span>系统总览</span>
                 </a>
                 <a class="nav-link" data-page="farmtasks">
-                    <i class="fa-solid fa-seedling"></i><span>农事计划</span>
+                    <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle cx="12" cy="10" r="4"/>
+                        <path d="M12 6 V14 M8 10 H16" stroke-width="1.2"/>
+                        <path d="M12 14 V19"/>
+                        <path d="M9 21 Q 10 19 11 21 Q 12 19 13 21 Q 14 19 15 21" class="stroke-peach"/>
+                    </svg><span>农事计划</span>
                 </a>
                 <a class="nav-link" data-page="realtime">
-                    <i class="fa-solid fa-wave-square"></i><span>实时数据</span>
+                    <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle cx="12" cy="14" r="1.6" class="fill"/>
+                        <path d="M8.5 14a3.5 3.5 0 0 1 7 0M5.5 14a6.5 6.5 0 0 1 13 0M2.5 14a9.5 9.5 0 0 1 19 0"/>
+                    </svg><span>实时数据</span>
                     <span class="nav-badge live">LIVE</span>
                 </a>
                 <a class="nav-link" data-page="video">
-                    <i class="fa-solid fa-video"></i><span>视频监控</span>
+                    <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle cx="12" cy="12" r="7"/>
+                        <path d="M12 5 L15 11 H9 Z" class="fill-tint"/>
+                        <path d="M19 12 L13 15 V9 Z" class="fill-tint"/>
+                        <path d="M12 19 L9 13 H15 Z" class="fill-tint"/>
+                        <path d="M5 12 L11 9 V15 Z" class="fill-tint"/>
+                        <circle cx="12" cy="12" r="1.6" class="fill"/>
+                    </svg><span>视频监控</span>
                 </a>
                 <a class="nav-link" data-page="history">
-                    <i class="fa-solid fa-chart-line"></i><span>曲线图表</span>
+                    <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M2 12 H5 L7 6 L9 18 L11 9 L13 15 L15 11 L17 13 H22"/>
+                        <circle cx="22" cy="13" r="1.2" class="fill-sage"/>
+                    </svg><span>曲线图表</span>
                 </a>
                 <a class="nav-link" data-page="cloudsync">
-                    <i class="fa-solid fa-list-ul"></i><span>历史记录</span>
+                    <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M7 16 a4 4 0 0 1 0.5 -7.9 A5 5 0 0 1 17 9 a3.5 3.5 0 0 1 0.5 7" class="stroke-lav"/>
+                        <path d="M9 19 l3 -2 l3 2" class="stroke-lav"/>
+                        <path d="M12 13 v6" class="stroke-lav"/>
+                    </svg><span>历史记录</span>
                 </a>
 
                 <a class="nav-link" data-page="pestdb">
-                    <i class="fa-solid fa-bug"></i><span>病害虫数据库</span>
+                    <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <ellipse cx="12" cy="13" rx="4" ry="5"/>
+                        <path d="M8 13 H4M16 13 H20M8 9 L4.5 6.5M16 9 L19.5 6.5M8 17 L4.5 19M16 17 L19.5 19"/>
+                        <path d="M10 6 Q 10 4 9 3.5M14 6 Q 14 4 15 3.5"/>
+                        <circle cx="10.5" cy="11.5" r="0.6" class="fill"/>
+                        <circle cx="13.5" cy="11.5" r="0.6" class="fill"/>
+                    </svg><span>病害虫数据库</span>
                 </a>
                 <a class="nav-link" data-page="photos">
-                    <i class="fa-solid fa-camera"></i><span>AI记录</span>
+                    <svg class="agri-nav-icon agri-nav-icon-ai" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M5 13 C 4 9 8 5 13 6 C 19 7 21 11 19 15 C 17 19 12 20 9 18 C 6 17 5.5 15 5 13z" class="fill-peach"/>
+                        <path d="M5 13 C 4 9 8 5 13 6 C 19 7 21 11 19 15 C 17 19 12 20 9 18 C 6 17 5.5 15 5 13z" class="stroke-peach-dark"/>
+                        <circle cx="10" cy="11.5" r="0.7" class="fill-white"/>
+                        <circle cx="15" cy="12.5" r="0.7" class="fill-white"/>
+                        <path d="M11 14.5 Q 12.5 15.5 14 14.5" class="stroke-white" stroke-width="1.2"/>
+                        <path d="M8 7 Q 9 4 11 4" class="stroke-sage"/>
+                    </svg><span>AI记录</span>
                 </a>
 
                 <div class="nav-group-label">智能控制</div>
                 <a class="nav-link" data-page="automation">
-                    <i class="fa-solid fa-wand-magic-sparkles"></i><span>自动化流程</span>
+                    <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="3" y="6" width="7" height="5" rx="1.2"/>
+                        <rect x="14" y="13" width="7" height="5" rx="1.2"/>
+                        <path d="M10 8.5 H12.5 a1.5 1.5 0 0 1 1.5 1.5 V13"/>
+                        <path d="M13 12 L14 13 L13 14"/>
+                        <path d="M5 9 h3" stroke-width="1.2" class="stroke-peach"/>
+                        <path d="M16 16 h3" stroke-width="1.2" class="stroke-sage"/>
+                    </svg><span>自动化流程</span>
                 </a>
 
                 <div class="nav-group-label">系统管理</div>
                 <a class="nav-link" data-page="locations">
-                    <i class="fa-solid fa-map-marked-alt"></i><span>地块管理</span>
+                    <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M3 6 L12 3 L21 6 L21 18 L12 21 L3 18 Z"/>
+                        <path d="M12 3 V21M3 6 L21 18 M21 6 L3 18" stroke-opacity="0.4"/>
+                        <circle cx="12" cy="12" r="1.4" class="fill-sage"/>
+                    </svg><span>地块管理</span>
                 </a>
                 <a class="nav-link" data-page="devices">
-                    <i class="fa-solid fa-microchip"></i><span>设备管理</span>
+                    <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="6" y="9" width="12" height="9" rx="2"/>
+                        <path d="M9 9V6a3 3 0 0 1 6 0v3"/>
+                        <circle cx="12" cy="13" r="1.2" class="fill"/>
+                        <path d="M12 4V2.5M5 6l-1-1M19 6l1-1"/>
+                    </svg><span>设备管理</span>
                 </a>
                 <a class="nav-link admin-only" data-page="accounts">
-                    <i class="fa-solid fa-users-gear"></i><span>账号管理</span>
+                    <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M6 16 V11 a6 6 0 0 1 12 0 V16 L19.5 17.5 H4.5 L6 16z" class="stroke-peach"/>
+                        <path d="M10.5 20 a1.5 1.5 0 0 0 3 0" class="stroke-peach"/>
+                        <circle cx="18" cy="6.5" r="2" class="fill-alert"/>
+                    </svg><span>账号管理</span>
                 </a>
             </nav>
             <div class="sidebar-status" id="sidebar-status">
@@ -472,7 +533,7 @@
                     <div class="page-toolbar">
                         <div class="toolbar-group"><label>搜索</label><input class="text-input" type="text" id="pest-search" placeholder="搜索病害虫名称..." oninput="app.filterPests(this.value)"></div>
                         <div class="toolbar-group"><label>类型</label>
-                            <select class="select-input" id="pest-type-filter" onchange="app.filterPests()"><option value="all">全部</option><option value="pest">虫害</option><option value="disease">病害</option></select>
+                            <select class="select-input" id="pest-type-filter" onchange="app.filterPests()"><option value="all">全部</option><option value="pest">虫害</option><option value="disease">病害</option><option value="weed">杂草</option></select>
                         </div>
                         <button class="btn-primary admin-only" onclick="app.openPestEditor()"><i class="fa-solid fa-plus"></i> 新增</button>
                     </div>
@@ -574,7 +635,7 @@
                 <div class="form-group"><label>设备名称 *</label><input class="text-input" type="text" id="dev-name" placeholder="例如：温湿度传感器-A1"></div>
                 <div class="form-row">
                     <div class="form-group"><label>设备类型</label><select class="select-input" id="dev-type">
-                        <option value="sensor_env">环境传感器 (LoRa)</option><option value="sensor_soil">土壤传感器 (LoRa)</option><option value="sensor_soil_api">🔗 在线传感器</option><option value="sensor_pest">虫情监测仪</option><option value="camera">摄像头</option>
+                        <option value="sensor_env">环境传感器 (LoRa)</option><option value="sensor_soil">土壤传感器 (LoRa)</option><option value="sensor_soil_api">在线传感器</option><option value="sensor_pest">虫情监测仪</option><option value="camera">摄像头</option>
                         <option value="controller_water">灌溉控制器</option><option value="controller_light">补光灯控制器</option><option value="controller_fan">风机控制器</option>
                     </select></div>
                     <div class="form-group"><label>所属地块</label><select class="select-input" id="dev-location" onchange="app.onDevLocChange()"></select></div>

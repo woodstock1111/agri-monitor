@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="_shared.css"><title>Shadow & glass</title>
+<style>
+  body { padding: 22px 24px; background:
+    radial-gradient(circle at 30% 30%, rgba(132,182,255,0.4), transparent 38%),
+    radial-gradient(circle at 70% 80%, rgba(194,232,221,0.4), transparent 38%),
+    linear-gradient(130deg,#edf4ff,#e9f3ff,#e8f6ef);
+  }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .card { padding: 14px 16px; border-radius: 18px; background: #fff; }
+  .lbl { font-weight: 600; font-size: 13px; }
+  .px { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); margin-top: 4px; line-height: 1.5; }
+  .sm  { box-shadow: 0 1px 2px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+  .md  { box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
+  .lg  { box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
+  .glass2 { background: rgba(255,255,255,0.92); box-shadow: inset 1px 1px 0 rgba(255,255,255,0.92), inset -1px -1px 0 rgba(0,0,0,0.08), 0 8px 32px rgba(0,0,0,0.08); }
+</style></head>
+<body>
+<div class="eyebrow" style="margin-bottom:8px">Shadow + glass</div>
+<div class="grid">
+  <div class="card sm"><div class="lbl">Era 1 · flat</div><div class="px">1px #E2E8F0 + sm shadow</div></div>
+  <div class="card md"><div class="lbl">Era 1 · raised</div><div class="px">0 4px 12px rgba(0,0,0,0.06)</div></div>
+  <div class="card glass2"><div class="lbl">Era 2 · liquid glass</div><div class="px">inset bezel + 0 8px 32px rgba(0,0,0,0.08)</div></div>
+</div>
+</body></html>

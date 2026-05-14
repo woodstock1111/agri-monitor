@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"><link rel="stylesheet" href="_shared.css"><title>Sidebar nav</title>
+<style>
+  body { padding: 16px; background:
+    radial-gradient(circle at 12% 18%, rgba(184,197,232,0.34), transparent 36%),
+    radial-gradient(circle at 82% 16%, rgba(199,184,220,0.30), transparent 36%),
+    radial-gradient(circle at 64% 82%, rgba(196,216,202,0.34), transparent 38%),
+    linear-gradient(130deg, #f3f6fb 0%, #f1f4fa 50%, #f1f6f2 100%);
+  }
+  .sb {
+    width: 240px;
+    background: rgba(255,255,255,0.78);
+    border-radius: 24px;
+    padding: 14px 0;
+    color: rgba(22,26,38,0.94);
+    box-shadow:
+      inset  1px  1px 0 rgba(255,255,255,0.92),
+      inset -1px -1px 0 rgba(15,23,42,0.06),
+      0 12px 40px rgba(30,41,59,0.10);
+    backdrop-filter: blur(10px);
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 16px 14px;
+    border-bottom: 1px solid rgba(15,23,42,0.06);
+    margin-bottom: 8px;
+  }
+  .brand img { width: 36px; height: 36px; image-rendering: pixelated; border-radius: 8px; background: rgba(74,123,193,0.06); padding: 2px; }
+  .brand-name {
+    font-weight: 700; font-size: 15px;
+    background: linear-gradient(90deg,#4a7bc1,#7e92c4,#5fa8b8);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+  }
+  .brand-sub {
+    font-size: 11px; color: rgba(28,33,45,0.50);
+    margin-top: 2px; font-family: var(--font-mono);
+  }
+  .group {
+    font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: rgba(28,33,45,0.50);
+    padding: 10px 18px 6px;
+  }
+  .item-wrap { padding: 0 8px; }
+  .item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 9px 12px;
+    border-radius: 12px;
+    font-size: 13px;
+    color: rgba(28,33,45,0.78);
+    position: relative; cursor: pointer;
+    transition: background 0.18s ease, color 0.18s ease;
+    /* explicitly NO text-shadow / filter — kills the ghosting */
+    text-shadow: none;
+    filter: none;
+  }
+  .item i {
+    width: 16px; text-align: center; font-size: 13px;
+    color: rgba(28,33,45,0.55);
+    text-shadow: none;
+  }
+  .item:hover {
+    background: rgba(74,123,193,0.06);
+    color: rgba(22,26,38,0.94);
+  }
+  .item.active {
+    background: rgba(74,123,193,0.10);
+    color: #4a7bc1;
+    font-weight: 600;
+  }
+  .item.active i { color: #4a7bc1; }
+  .item.active::before {
+    content:''; position: absolute; left: -8px; top: 8px; bottom: 8px;
+    width: 3px; background: #5c9a6f; border-radius: 0 2px 2px 0;
+  }
+</style></head>
+<body>
+<div class="sb">
+  <div class="brand">
+    <img src="../assets/agent-sweet-potato.png" alt="">
+    <div>
+      <div class="brand-name">智慧农业 · 小薯</div>
+      <div class="brand-sub">v0.531 · 1958</div>
+    </div>
+  </div>
+  <div class="group">数据展示</div>
+  <div class="item-wrap"><div class="item active"><i class="fa-solid fa-gauge-high"></i>系统总览</div></div>
+  <div class="item-wrap"><div class="item"><i class="fa-solid fa-seedling"></i>农事计划</div></div>
+  <div class="item-wrap"><div class="item"><i class="fa-solid fa-wave-square"></i>实时数据</div></div>
+  <div class="item-wrap"><div class="item"><i class="fa-solid fa-video"></i>视频监控</div></div>
+  <div class="item-wrap"><div class="item"><i class="fa-solid fa-chart-line"></i>曲线图表</div></div>
+  <div class="group">智能控制</div>
+  <div class="item-wrap"><div class="item"><i class="fa-solid fa-wand-magic-sparkles"></i>自动化流程</div></div>
+  <div class="item-wrap"><div class="item"><i class="fa-solid fa-bug"></i>病害虫数据库</div></div>
+</div>
+</body></html>

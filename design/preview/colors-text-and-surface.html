@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="_shared.css"><title>Text + surfaces</title>
+<style>
+  body { padding: 18px 22px; }
+  .wrap { display: grid; grid-template-columns: 1.05fr 1fr; gap: 14px; }
+  .panel { border-radius: 16px; padding: 14px 16px; }
+  .row2 { display: flex; align-items: baseline; gap: 10px; padding: 6px 0; }
+  .swatch-line { width: 28px; height: 22px; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.08); }
+  .label { font-weight: 600; font-size: 13px; min-width: 90px; }
+  .hex { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
+  .role { font-size: 12px; color: var(--text-muted); margin-left: auto; }
+  .stack { background: rgba(255,255,255,0.92); border-radius: 16px; padding: 10px 14px; box-shadow: inset 1px 1px 0 rgba(255,255,255,0.92), inset -1px -1px 0 rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.05); }
+  .navy { background: #1b2a4a; color: #fff; padding: 14px 16px; border-radius: 16px; }
+  .navy .label { color: #fff; }
+  .navy .hex { color: rgba(255,255,255,0.7); }
+</style></head>
+<body>
+<div class="wrap">
+  <div>
+    <div class="eyebrow" style="margin-bottom:6px">Text on light · rgba(22,26,38, α)</div>
+    <div class="stack">
+      <div class="row2"><div class="swatch-line" style="background:rgba(22,26,38,0.94)"></div><div class="label" style="color:rgba(22,26,38,0.94)">fg / 94%</div><div class="hex">--text-primary</div><div class="role">headers, body</div></div>
+      <div class="row2"><div class="swatch-line" style="background:rgba(28,33,45,0.72)"></div><div class="label" style="color:rgba(28,33,45,0.72)">fg2 / 72%</div><div class="hex">--text-secondary</div><div class="role">meta, captions</div></div>
+      <div class="row2"><div class="swatch-line" style="background:rgba(28,33,45,0.50)"></div><div class="label" style="color:rgba(28,33,45,0.50)">fg3 / 50%</div><div class="hex">--text-muted</div><div class="role">eyebrow, hints</div></div>
+    </div>
+  </div>
+  <div>
+    <div class="eyebrow" style="margin-bottom:6px">Surfaces</div>
+    <div class="navy">
+      <div class="row2"><div class="swatch-line" style="background:#1b2a4a;box-shadow:inset 0 0 0 1px rgba(255,255,255,0.2)"></div><div class="label">Sidebar</div><div class="hex">#1B2A4A</div></div>
+      <div class="row2"><div class="swatch-line" style="background:#cbd5e1"></div><div class="label" style="color:#cbd5e1">on-dark 2</div><div class="hex">#CBD5E1</div></div>
+    </div>
+    <div class="stack" style="margin-top:8px">
+      <div class="row2"><div class="swatch-line" style="background:#e8edf3"></div><div class="label">App base</div><div class="hex">#E8EDF3</div></div>
+      <div class="row2"><div class="swatch-line" style="background:rgba(255,255,255,0.92);box-shadow:inset 0 0 0 1px rgba(0,0,0,0.08)"></div><div class="label">Glass</div><div class="hex">rgba(255,255,255,0.92)</div></div>
+    </div>
+  </div>
+</div>
+</body></html>

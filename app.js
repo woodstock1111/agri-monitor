@@ -1163,6 +1163,7 @@ const app = {
   _selectedPestTypes: null,
   _selectedPestInfestation: null,
   _selectedDiseaseTypes: null,
+  _selectedWeedTypes: null,
   _editingLabelRecordId: null,
   _labelEditorBaseline: '',
   _labelEditorDirty: false,
@@ -1233,6 +1234,7 @@ const app = {
       { key: 'severe', label: '严重爆发' },
     ],
     diseaseTypes: [],
+    weedTypes: [],
   },
 
   //     BOOT    
@@ -2254,9 +2256,6 @@ const app = {
     const devices = DataRepository.listDevices();
     const locs = DataRepository.listLocations();
     const online = devices.filter(d => d.online).length;
-    const envDevs = devices.filter(d => d.type === 'sensor_env' && d.online);
-    let avgT = 0; envDevs.forEach(d => avgT += SensorEngine.get(d.id).temp);
-    if (envDevs.length) avgT /= envDevs.length;
     const alerts = this.getAlerts();
 
     document.getElementById('kpi-row').innerHTML = `
@@ -2266,12 +2265,9 @@ const app = {
     <div class="kpi-card ${alerts.length ? 'danger' : 'success'}" onclick="document.getElementById('alertToggle').click()" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u8b66\u62a5\u8be6\u60c5">
       <div class="kpi-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
       <div><div class="kpi-label">\u5f53\u524d\u8b66\u62a5</div><div class="kpi-value">${alerts.length}<span class="kpi-unit">\u6761</span></div><div class="kpi-sub">${alerts.length?'\u70b9\u51fb\u67e5\u770b\u8be6\u60c5 \u2192':'\u6240\u6709\u6307\u6807\u6b63\u5e38 \u2713'}</div></div></div>
-    <div class="kpi-card warning" onclick="app.navigate('realtime')" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u5b9e\u65f6\u6570\u636e">
-      <div class="kpi-icon"><i class="fa-solid fa-temperature-half"></i></div>
-      <div><div class="kpi-label">\u5e73\u5747\u6c14\u6e29</div><div class="kpi-value">${avgT.toFixed(1)}<span class="kpi-unit">\u00b0C</span></div><div class="kpi-sub">\u70b9\u51fb\u67e5\u770b\u5b9e\u65f6\u6570\u636e \u2192</div></div></div>
-      <div class="kpi-card success" onclick="app.navigate('locations')" style="cursor:pointer" title="\u70b9\u51fb\u7ba1\u7406\u5730\u5757">
-        <div class="kpi-icon"><i class="fa-solid fa-map"></i></div>
-        <div><div class="kpi-label">\u76d1\u6d4b\u5730\u5757</div><div class="kpi-value">${locs.length}<span class="kpi-unit">\u5757</span></div><div class="kpi-sub">\u5171 ${locs.reduce((a,l)=>a+(+l.area||0),0)} \u4ea9 \u00b7 \u70b9\u51fb\u7ba1\u7406 \u2192</div></div></div>
+    <div class="kpi-card success" onclick="app.navigate('locations')" style="cursor:pointer" title="\u70b9\u51fb\u7ba1\u7406\u5730\u5757">
+      <div class="kpi-icon"><i class="fa-solid fa-map"></i></div>
+      <div><div class="kpi-label">\u76d1\u6d4b\u5730\u5757</div><div class="kpi-value">${locs.length}<span class="kpi-unit">\u5757</span></div><div class="kpi-sub">\u5171 ${locs.reduce((a,l)=>a+(+l.area||0),0)} \u4ea9 \u00b7 \u70b9\u51fb\u7ba1\u7406 \u2192</div></div></div>
     `;
     void this._renderDashboardFarmTasks();
 
@@ -2621,14 +2617,14 @@ const app = {
     }
 
     const sensors = dev.type === 'sensor_pest'
-      ? [{ key:'pest', icon:'\ud83e\udd9f', name:'\u4eca\u65e5\u6355\u83b7\u91cf', unit:'\u5934', min:0, max:50, warn:10, crit:20, color:'#ef4444' }]
+      ? [{ key:'pest', icon:'fa-bug', name:'\u4eca\u65e5\u6355\u83b7\u91cf', unit:'\u5934', min:0, max:50, warn:10, crit:20, color:'var(--danger)' }]
       : [
-          { key:'temp',  icon:'\ud83c\udf21\ufe0f', name:'\u7a7a\u6c14\u6e29\u5ea6', unit:'\u00b0C',  min:5,  max:45,   warn:35,   crit:40,   color:'#f59e0b' },
-          { key:'humid', icon:'\ud83d\udca7', name:'\u7a7a\u6c14\u6e7f\u5ea6', unit:'%',   min:0,  max:100,  warn:null, crit:null, color:'#3b82f6' },
-          { key:'soil',  icon:'\ud83c\udf31', name:'\u571f\u58e4\u6e7f\u5ea6', unit:'%',   min:0,  max:100,  warn:25,   crit:15,   color:'#10b981', invert:true },
-          { key:'light', icon:'\u2600\ufe0f', name:'\u5149\u7167\u5f3a\u5ea6', unit:'lux', min:0,  max:80000,warn:null, crit:null, color:'#eab308' },
-          { key:'co2',   icon:'\ud83c\udf2b\ufe0f', name:'CO\u2082\u6d53\u5ea6', unit:'ppm', min:350,max:1200, warn:800,  crit:1000, color:'#8b5cf6' },
-          { key:'wind',  icon:'\ud83c\udf2c\ufe0f', name:'\u98ce\u901f',    unit:'m/s', min:0,  max:20,   warn:null, crit:null, color:'#64748b' },
+          { key:'temp',  icon:'fa-temperature-half', name:'\u7a7a\u6c14\u6e29\u5ea6', unit:'\u00b0C',  min:5,  max:45,   warn:35,   crit:40,   color:'var(--warning)' },
+          { key:'humid', icon:'fa-droplet', name:'\u7a7a\u6c14\u6e7f\u5ea6', unit:'%',   min:0,  max:100,  warn:null, crit:null, color:'var(--accent)' },
+          { key:'soil',  icon:'fa-glass-water', name:'\u571f\u58e4\u6e7f\u5ea6', unit:'%',   min:0,  max:100,  warn:25,   crit:15,   color:'var(--info)', invert:true },
+          { key:'light', icon:'fa-sun', name:'\u5149\u7167\u5f3a\u5ea6', unit:'lux', min:0,  max:80000,warn:null, crit:null, color:'var(--accent-4)' },
+          { key:'co2',   icon:'fa-leaf', name:'CO\u2082\u6d53\u5ea6', unit:'ppm', min:350,max:1200, warn:800,  crit:1000, color:'var(--success)' },
+          { key:'wind',  icon:'fa-wind', name:'\u98ce\u901f',    unit:'m/s', min:0,  max:20,   warn:null, crit:null, color:'var(--text-muted)' },
         ];
 
     document.getElementById('sensor-grid').innerHTML = sensors.map(s => {
@@ -2642,8 +2638,8 @@ const app = {
         if (s.crit && v >= s.crit) { cls='alert-danger'; st='\u4e25\u91cd\u8d85\u6807'; sc='var(--danger)'; }
         else if (s.warn && v >= s.warn) { cls='alert-warning'; st='\u6ce8\u610f'; sc='var(--warning)'; }
       }
-      return `<div class="sensor-card ${cls}">
-        <div class="sensor-icon">${s.icon}</div>
+      return `<div class="sensor-card ${cls}" style="--sensor-color:${s.color}">
+        <div class="sensor-icon"><i class="fa-solid ${s.icon}"></i></div>
         <div class="sensor-name">${s.name}</div>
         <div class="sensor-value">${s.key==='light'?(v/1000).toFixed(1)+'<span class="sensor-unit">klux</span>':v.toFixed(s.key==='pest'?0:1)+'<span class="sensor-unit">'+s.unit+'</span>'}</div>
         <div class="sensor-status" style="color:${sc}">\u25cf ${st}</div>
@@ -2731,19 +2727,21 @@ const app = {
       grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fa-solid fa-database"></i><p>\u5f53\u524d\u8bbe\u5907\u6682\u65e0\u53ef\u5c55\u793a\u7684\u5b9e\u65f6\u6570\u636e</p></div>';
       return;
     }
-    const ICONS = { '\u6e29\u5ea6':'\ud83c\udf21\ufe0f','\u6e7f\u5ea6':'\ud83d\udca7','PH':'\ud83e\uddea','\u7535\u5bfc\u7387':'\u26a1','\u6c2e':'\ud83d\udfe2','\u78f7':'\ud83d\udfe1','\u94be':'\ud83d\udfe0','\u5149\u7167':'\u2600\ufe0f','\u542b\u6c34\u7387':'\ud83d\udca6','\u76d0\u5206':'\ud83e\uddc2' };
-    const COLORS = { '\u6e29\u5ea6':'#f59e0b','\u6e7f\u5ea6':'#3b82f6','PH':'#8b5cf6','\u7535\u5bfc\u7387':'#10b981','\u6c2e':'#22c55e','\u78f7':'#eab308','\u94be':'#f97316' };
+    const ICONS = { '\u6e29\u5ea6':'fa-temperature-half','\u6e7f\u5ea6':'fa-droplet','PH':'fa-vial','\u7535\u5bfc\u7387':'fa-bolt','\u6c2e':'fa-leaf','\u78f7':'fa-flask','\u94be':'fa-seedling','\u5149\u7167':'fa-sun','\u542b\u6c34\u7387':'fa-glass-water','\u76d0\u5206':'fa-cubes-stacked' };
+    const COLORS = { '\u6e29\u5ea6':'var(--warning)','\u6e7f\u5ea6':'var(--accent)','PH':'var(--accent-3)','\u7535\u5bfc\u7387':'var(--success)','\u6c2e':'var(--success)','\u78f7':'var(--accent-4)','\u94be':'var(--accent-2)','\u5149\u7167':'var(--accent-4)','\u542b\u6c34\u7387':'var(--info)','\u76d0\u5206':'var(--text-muted)' };
     const cards = allRegisters.map(reg => {
       const v = reg.value ?? 0;
       const alarmCls = reg.alarmLevel > 0 ? (reg.alarmLevel >= 3 ? 'alert-danger' : 'alert-warning') : '';
       const alarmSt = reg.alarmLevel > 0 ? (reg.alarmLevel >= 3 ? '\u62a5\u8b66' : '\u9884\u8b66') : '\u6b63\u5e38';
       const alarmColor = reg.alarmLevel > 0 ? (reg.alarmLevel >= 3 ? 'var(--danger)' : 'var(--warning)') : 'var(--success)';
-      return `<div class="sensor-card ${alarmCls}">
-        <div class="sensor-icon">${ICONS[reg.registerName] || '\ud83d\udcca'}</div>
+      const icon = ICONS[reg.registerName] || 'fa-chart-simple';
+      const color = COLORS[reg.registerName] || 'var(--text-muted)';
+      return `<div class="sensor-card ${alarmCls}" style="--sensor-color:${color}">
+        <div class="sensor-icon"><i class="fa-solid ${icon}"></i></div>
         <div class="sensor-name">${reg.registerName}</div>
         <div class="sensor-value">${typeof v === 'number' ? v.toFixed(1) : v}<span class="sensor-unit">${reg.unit || ''}</span></div>
         <div class="sensor-status" style="color:${alarmColor}">\u25cf ${alarmSt}</div>
-        <div class="sensor-bar"><div class="sensor-bar-fill" style="width:50%;background:${COLORS[reg.registerName] || '#64748b'}"></div></div>
+        <div class="sensor-bar"><div class="sensor-bar-fill" style="width:50%;background:${color}"></div></div>
       </div>`;
     }).join('');
     grid.innerHTML = `
@@ -2755,15 +2753,15 @@ const app = {
 
   // Build sensor cards from a flat { name: value } map (used as fallback)
   _buildSensorCardsFromValues(values) {
-    const ICONS = { '\u6e29\u5ea6':'\ud83c\udf21\ufe0f','\u6e7f\u5ea6':'\ud83d\udca7','PH':'\ud83e\uddea','\u7535\u5bfc\u7387':'\u26a1','\u6c2e':'\ud83d\udfe2','\u78f7':'\ud83d\udfe1','\u94be':'\ud83d\udfe0','\u5149\u7167':'\u2600\ufe0f','\u542b\u6c34\u7387':'\ud83d\udca6' };
-    const COLORS = { '\u6e29\u5ea6':'#f59e0b','\u6e7f\u5ea6':'#3b82f6','PH':'#8b5cf6','\u7535\u5bfc\u7387':'#10b981','\u6c2e':'#22c55e','\u78f7':'#eab308','\u94be':'#f97316' };
+    const ICONS = { '\u6e29\u5ea6':'fa-temperature-half','\u6e7f\u5ea6':'fa-droplet','PH':'fa-vial','\u7535\u5bfc\u7387':'fa-bolt','\u6c2e':'fa-leaf','\u78f7':'fa-flask','\u94be':'fa-seedling','\u5149\u7167':'fa-sun','\u542b\u6c34\u7387':'fa-glass-water' };
+    const COLORS = { '\u6e29\u5ea6':'var(--warning)','\u6e7f\u5ea6':'var(--accent)','PH':'var(--accent-3)','\u7535\u5bfc\u7387':'var(--success)','\u6c2e':'var(--success)','\u78f7':'var(--accent-4)','\u94be':'var(--accent-2)','\u5149\u7167':'var(--accent-4)','\u542b\u6c34\u7387':'var(--info)' };
     return Object.entries(values).map(([name, v]) => `
-      <div class="sensor-card">
-        <div class="sensor-icon">${ICONS[name] || '\ud83d\udcca'}</div>
+      <div class="sensor-card" style="--sensor-color:${COLORS[name] || 'var(--text-muted)'}">
+        <div class="sensor-icon"><i class="fa-solid ${ICONS[name] || 'fa-chart-simple'}"></i></div>
         <div class="sensor-name">${name}</div>
         <div class="sensor-value">${typeof v === 'number' ? v.toFixed(1) : v}<span class="sensor-unit"></span></div>
         <div class="sensor-status" style="color:var(--success)">\u25cf \u6b63\u5e38</div>
-        <div class="sensor-bar"><div class="sensor-bar-fill" style="width:50%;background:${COLORS[name] || '#64748b'}"></div></div>
+        <div class="sensor-bar"><div class="sensor-bar-fill" style="width:50%;background:${COLORS[name] || 'var(--text-muted)'}"></div></div>
       </div>`).join('');
   },
 
@@ -2980,6 +2978,7 @@ const app = {
     const toLabel = item => ({ key: item.key, label: item.name });
     this._labelTaxonomy.pestTypes = (entries || []).filter(item => item.type === 'pest').map(toLabel);
     this._labelTaxonomy.diseaseTypes = (entries || []).filter(item => item.type === 'disease').map(toLabel);
+    this._labelTaxonomy.weedTypes = (entries || []).filter(item => item.type === 'weed').map(toLabel);
   },
 
   async _loadPestLibrary(force = false) {
@@ -3010,7 +3009,7 @@ const app = {
             <div class="pest-info">
               <div class="pest-name">${this.sanitize(p.name)}</div>
               <div class="pest-latin">${this.sanitize(p.key)}</div>
-              <div class="pest-tags"><span class="pest-tag">${p.type === 'pest' ? '虫害' : '病害'}</span></div>
+              <div class="pest-tags"><span class="pest-tag">${this._libraryTypeText(p.type)}</span></div>
               ${p.symptoms ? `<div class="pest-card-text">${this.sanitize(String(p.symptoms)).slice(0, 70)}${String(p.symptoms).length > 70 ? '...' : ''}</div>` : ''}
             </div>
           </div>`).join('');
@@ -3020,6 +3019,13 @@ const app = {
   },
 
   filterPests(v) { this.renderPests(v); },
+
+  _libraryTypeText(type) {
+    if (type === 'pest') return '虫害';
+    if (type === 'disease') return '病害';
+    if (type === 'weed') return '杂草';
+    return String(type || '');
+  },
 
   openPestEditor(id = '') {
     if (!AuthService.canManageUsers()) {
@@ -3035,6 +3041,7 @@ const app = {
           <select class="select-input" id="pest-edit-type">
             <option value="pest" ${entry?.type === 'pest' ? 'selected' : ''}>虫害</option>
             <option value="disease" ${entry?.type === 'disease' ? 'selected' : ''}>病害</option>
+            <option value="weed" ${entry?.type === 'weed' ? 'selected' : ''}>杂草</option>
           </select>
         </div>
         <div class="form-group"><label>英文标识 *</label>
@@ -3114,7 +3121,7 @@ const app = {
     document.getElementById('pest-modal-title').textContent = entry.name || '病害虫详情';
     document.getElementById('pest-modal-body').innerHTML = `
       <div class="pest-readonly">
-        <div class="pest-tags"><span class="pest-tag">${entry.type === 'pest' ? '虫害' : '病害'}</span><span class="pest-tag">${this.sanitize(entry.key || '')}</span></div>
+        <div class="pest-tags"><span class="pest-tag">${this._libraryTypeText(entry.type)}</span><span class="pest-tag">${this.sanitize(entry.key || '')}</span></div>
         <div class="form-group" style="margin-top:14px"><label>为害症状</label><div class="pest-readonly-text">${this.sanitize(entry.symptoms || '暂无')}</div></div>
         <div class="form-group"><label>药剂防治</label><div class="pest-readonly-text">${this.sanitize(entry.control || '暂无')}</div></div>
       </div>`;
@@ -3412,7 +3419,7 @@ const app = {
     if (!locs.length) { g.innerHTML = '<div class="empty-state"><i class="fa-solid fa-map"></i><p>\u6682\u65e0\u5730\u5757</p></div>'; return; }
     g.innerHTML = locs.map(loc => {
       const devs = devices.filter(d=>d.locationId===loc.id);
-      const ti = { sensor_env:'\ud83c\udf21\ufe0f', sensor_soil:'\ud83c\udf31', sensor_pest:'\ud83e\udd9f', camera:'\ud83d\udcf9', controller_water:'\ud83d\udca7', controller_light:'\ud83d\udca1', controller_fan:'\ud83c\udf00' };
+      const ti = { sensor_env:'fa-temperature-half', sensor_soil:'fa-seedling', sensor_soil_api:'fa-link', sensor_pest:'fa-bug', camera:'fa-video', controller_water:'fa-droplet', controller_light:'fa-lightbulb', controller_fan:'fa-fan' };
       return `<div class="location-card">
         <div class="location-card-header"><div><div class="location-name">${loc.name}</div><div class="location-type">${loc.type}</div></div>
           <div class="action-row"><button class="btn-icon" onclick="app.editLocation('${loc.id}')"><i class="fa-solid fa-pen"></i></button>
@@ -3421,7 +3428,7 @@ const app = {
           <div class="loc-stat"><div class="loc-stat-value" style="color:var(--accent)">${loc.area||'-'}</div><div class="loc-stat-label">\u4ea9</div></div>
           <div class="loc-stat"><div class="loc-stat-value" style="color:var(--success)">${devs.length}</div><div class="loc-stat-label">\u53f0\u8bbe\u5907</div></div>
         </div>
-        <div class="location-devices">${devs.map(d=>`<span class="badge badge-sensor">${ti[d.type]||'\ud83d\udce1'} ${d.name}</span>`).join('')||'<span style="color:var(--text-muted);font-size:12px">\u6682\u65e0\u8bbe\u5907</span>'}</div>
+        <div class="location-devices">${devs.map(d=>`<span class="badge ${d.type === 'sensor_soil_api' ? 'badge-cloud' : 'badge-sensor'}"><i class="fa-solid ${ti[d.type]||'fa-tower-broadcast'}"></i> ${this.sanitize(d.name)}</span>`).join('')||'<span style="color:var(--text-muted);font-size:12px">\u6682\u65e0\u8bbe\u5907</span>'}</div>
         ${loc.notes?`<div style="font-size:12px;color:var(--text-muted);border-top:1px solid var(--border);padding-top:10px">${loc.notes}</div>`:''}
       </div>`;
     }).join('');
@@ -3583,20 +3590,27 @@ const app = {
         </div>
       `);
     }
-    const tl = { sensor_env:['\ud83c\udf21\ufe0f \u73af\u5883\u4f20\u611f\u5668','badge-sensor'], sensor_soil:['\ud83c\udf31 \u571f\u58e4\u4f20\u611f\u5668','badge-sensor'], sensor_soil_api:['\ud83d\udd17 \u5728\u7ebf\u4f20\u611f\u5668','badge-cloud'],
-      sensor_pest:['\ud83e\udd9f \u866b\u60c5\u76d1\u6d4b\u4eea','badge-sensor'], camera:['\ud83d\udcf9 \u6444\u50cf\u5934','badge-camera'],
-      controller_water:['\ud83d\udca7 \u704c\u6e89\u63a7\u5236\u5668','badge-ctrl'], controller_light:['\ud83d\udca1 \u8865\u5149\u63a7\u5236\u5668','badge-ctrl'], controller_fan:['\ud83c\udf00 \u98ce\u673a\u63a7\u5236\u5668','badge-ctrl'] };
+    const tl = {
+      sensor_env:['fa-temperature-half','\u73af\u5883\u4f20\u611f\u5668','badge-sensor'],
+      sensor_soil:['fa-seedling','\u571f\u58e4\u4f20\u611f\u5668','badge-sensor'],
+      sensor_soil_api:['fa-link','\u5728\u7ebf\u4f20\u611f\u5668','badge-cloud'],
+      sensor_pest:['fa-bug','\u866b\u60c5\u76d1\u6d4b\u4eea','badge-sensor'],
+      camera:['fa-video','\u6444\u50cf\u5934','badge-camera'],
+      controller_water:['fa-droplet','\u704c\u6e89\u63a7\u5236\u5668','badge-ctrl'],
+      controller_light:['fa-lightbulb','\u8865\u5149\u63a7\u5236\u5668','badge-ctrl'],
+      controller_fan:['fa-fan','\u98ce\u673a\u63a7\u5236\u5668','badge-ctrl']
+    };
     document.getElementById('device-tbody').innerHTML = devices.length===0
       ? '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted)">\u6682\u65e0\u8bbe\u5907</td></tr>'
       : devices.map(d=>{
-        const [tLabel,tBadge]=tl[d.type]||['\u672a\u77e5','badge-offline'];
+        const [tIcon,tLabel,tBadge]=tl[d.type]||['fa-circle-question','\u672a\u77e5','badge-offline'];
         const addrDisplay = d.type === 'sensor_soil_api' && d.apiConfig ? d.apiConfig.deviceAddr : (d.address || '-');
         const protocolDisplay = d.type === 'sensor_soil_api' ? '\u5728\u7ebf\u8bc6\u522b\u63a5\u5165' : d.protocol;
         return `<tr><td><b>${d.name}</b>${d.notes?`<div style="font-size:11px;color:var(--text-muted);margin-top:2px">${d.notes}</div>`:''}</td>
-          <td><span class="badge ${tBadge}">${tLabel}</span></td>
+          <td><span class="badge ${tBadge}"><i class="fa-solid ${tIcon}"></i> ${tLabel}</span></td>
           <td>${locMap[d.locationId]||'<span style="color:var(--text-muted)">\u672a\u5206\u914d</span>'}</td>
           <td><code style="font-family:'JetBrains Mono';font-size:12px;color:var(--accent)">${addrDisplay}</code></td>
-          <td><span class="badge ${d.type==='sensor_soil_api'?'badge-cloud':'badge-sensor'}">${protocolDisplay}</span></td>
+          <td><span class="badge ${d.type==='sensor_soil_api'?'badge-cloud':'badge-sensor'}"><i class="fa-solid ${d.type==='sensor_soil_api'?'fa-cloud':'fa-wave-square'}"></i> ${protocolDisplay}</span></td>
           <td><span class="badge ${d.online?'badge-online':'badge-offline'}">\u25cf ${d.online?'\u5728\u7ebf':'\u79bb\u7ebf'}</span></td>
           <td><div class="action-row"><button class="btn-icon" onclick="app.editDevice('${d.id}')"><i class="fa-solid fa-pen"></i></button>
           <button class="btn-icon delete" onclick="app.confirmDelete('device','${d.id}')"><i class="fa-solid fa-trash"></i></button></div></td></tr>`;
@@ -4616,6 +4630,7 @@ const app = {
       this._selectedPestTypes = this._firstLabelValue(labels?.pestDetail?.species);
       this._selectedPestInfestation = labels?.pestDetail?.infestation || null;
       this._selectedDiseaseTypes = this._firstLabelValue(labels?.diseaseDetail?.types);
+      this._selectedWeedTypes = this._firstLabelValue(labels?.weedDetail?.types);
     },
 
     _labelSnapshot(labels) {
@@ -4668,6 +4683,10 @@ const app = {
         <div id="disease-detail-section" style="display:none">
           <div class="form-section-title">病害详情</div>
           <div class="form-group"><div id="label-disease-type-pills" class="label-pill-group"></div></div>
+        </div>
+        <div id="weed-detail-section" style="display:none">
+          <div class="form-section-title">杂草详情</div>
+          <div class="form-group"><div id="label-weed-type-pills" class="label-pill-group"></div></div>
         </div>
       `;
       this._renderLabelPills();
@@ -4760,6 +4779,8 @@ const app = {
       const pestInfestationContainer = document.getElementById('label-pest-infestation-pills');
       const diseaseSection = document.getElementById('disease-detail-section');
       const diseaseTypeContainer = document.getElementById('label-disease-type-pills');
+      const weedSection = document.getElementById('weed-detail-section');
+      const weedTypeContainer = document.getElementById('label-weed-type-pills');
       if (!vContainer || !gContainer || !sContainer) return;
 
       vContainer.innerHTML = this._visualLabelGroups().map(group => `
@@ -4854,6 +4875,20 @@ const app = {
         this._selectedDiseaseTypes = null;
         if (diseaseTypeContainer) diseaseTypeContainer.innerHTML = '';
       }
+
+      const showWeedDetail = this._selectedVisualLabels.includes('weed');
+      if (weedSection) weedSection.style.display = showWeedDetail ? '' : 'none';
+      if (showWeedDetail) {
+        if (weedTypeContainer) {
+          const weedTypes = this._labelTaxonomy.weedTypes || [];
+          weedTypeContainer.innerHTML = weedTypes.length ? weedTypes.map(item =>
+            `<button type="button" class="label-pill ${this._selectedWeedTypes === item.key ? 'active' : ''}" data-key="${item.key}" onclick="app._toggleWeedType('${item.key}')">${this.sanitize(item.label)}</button>`
+          ).join('') : '<span class="label-empty-hint">暂无杂草条目，可在病害虫数据库新增</span>';
+        }
+      } else {
+        this._selectedWeedTypes = null;
+        if (weedTypeContainer) weedTypeContainer.innerHTML = '';
+      }
     },
 
     _toggleVisualLabel(key) {
@@ -4917,6 +4952,12 @@ const app = {
       this._markRecordLabelsDirty();
     },
 
+    _toggleWeedType(key) {
+      this._selectedWeedTypes = this._selectedWeedTypes === key ? null : key;
+      this._renderLabelPills();
+      this._markRecordLabelsDirty();
+    },
+
     _collectLabels() {
       const visual = this._selectedVisualLabels.length ? [...this._selectedVisualLabels] : [];
       const growthStage = this._selectedGrowthStage || null;
@@ -4934,12 +4975,14 @@ const app = {
       if (this._selectedPestTypes) pestDetail.species = this._selectedPestTypes;
       if (this._selectedPestInfestation) pestDetail.infestation = this._selectedPestInfestation;
       const diseaseDetail = this._selectedDiseaseTypes ? { types: this._selectedDiseaseTypes } : null;
+      const weedDetail = this._selectedWeedTypes ? { types: this._selectedWeedTypes } : null;
       const hasPestDetail = Object.keys(pestDetail).length > 0;
-      if (!visual.length && !growthStage && severity === null && !actions.length && !hasPestDetail && !diseaseDetail) return null;
+      if (!visual.length && !growthStage && severity === null && !actions.length && !hasPestDetail && !diseaseDetail && !weedDetail) return null;
       const labels = { visual, growthStage, severity: severity !== null ? severity : null };
       if (actions.length) labels.actions = actions;
       if (hasPestDetail) labels.pestDetail = pestDetail;
       if (diseaseDetail) labels.diseaseDetail = diseaseDetail;
+      if (weedDetail) labels.weedDetail = weedDetail;
       return labels;
     },
 
@@ -4985,6 +5028,12 @@ const app = {
           html += `<span class="label-display-pill">${this.sanitize(item ? item.label : key)}</span>`;
         });
       }
+      if (labels.weedDetail) {
+        this._normalizeLabelList(labels.weedDetail.types).forEach(key => {
+          const item = taxonomy.weedTypes.find(w => w.key === key);
+          html += `<span class="label-display-pill">${this.sanitize(item ? item.label : key)}</span>`;
+        });
+      }
       return html;
     },
 
@@ -5006,6 +5055,11 @@ const app = {
 
     _pestTypeText(key) {
       const item = this._labelTaxonomy.pestTypes.find(v => v.key === key);
+      return item ? item.label : String(key || '');
+    },
+
+    _weedTypeText(key) {
+      const item = this._labelTaxonomy.weedTypes.find(v => v.key === key);
       return item ? item.label : String(key || '');
     },
 
@@ -5147,6 +5201,7 @@ const app = {
       const detections = this._getRegionDetections(record);
       const annotations = Array.isArray(record.annotations) ? record.annotations : [];
       const pestSpecies = this._normalizeLabelList(record.labels?.pestDetail?.species);
+      const weedTypes = this._normalizeLabelList(record.labels?.weedDetail?.types);
       const aiBlock = detections.length ? `
         <div class="region-list-block">
           <div class="region-list-title">AI 检测结果</div>
@@ -5204,12 +5259,22 @@ const app = {
           `).join('')}
         </div>
       ` : '';
+      const weedBlock = weedTypes.length ? `
+        <div class="region-list-block">
+          <div class="region-list-title">已确认杂草</div>
+          ${weedTypes.map(type => `
+            <div class="region-list-row">
+              <span><i class="fa-solid fa-seedling"></i> ${this.sanitize(this._weedTypeText(type))}</span>
+            </div>
+          `).join('')}
+        </div>
+      ` : '';
       if (typeof record.aiDetections === 'string') {
-        host.innerHTML = `<div class="detail-notes">${this.sanitize(record.aiDetections)}</div>${humanBlock}${pestBlock}`;
+        host.innerHTML = `<div class="detail-notes">${this.sanitize(record.aiDetections)}</div>${humanBlock}${pestBlock}${weedBlock}`;
         return;
       }
       const emptyText = record.aiDetections ? 'AI 未检测到区域，可手动画框标注' : '暂无标注';
-      host.innerHTML = aiBlock || humanBlock || pestBlock ? aiBlock + humanBlock + pestBlock : `<div class="region-empty">${emptyText}</div>`;
+      host.innerHTML = aiBlock || humanBlock || pestBlock || weedBlock ? aiBlock + humanBlock + pestBlock + weedBlock : `<div class="region-empty">${emptyText}</div>`;
     },
 
     _renderRecordLabelDisplay(recordId) {
@@ -5415,6 +5480,7 @@ const app = {
       };
       record.annotations.push(annotation);
       this._recentAnnotationId = annotation.id;
+      this._syncVisualLabelFromAnnotation(record, detection.label);
       this._renderRecordLabelDisplay(recordId);
       this._renderRegionAnnotations(recordId);
       await this._saveRegionAnnotations(recordId);

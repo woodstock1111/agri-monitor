@@ -66,10 +66,10 @@ const AGENT_TOOL_DEFS = [
         type: 'function',
         function: {
             name: 'get_pest_library',
-            description: '获取病虫害知识库完整列表。每条包含 key、name、type(pest/disease)、symptoms、control（防治方法）。可选按 type 过滤只看虫害或病害。当用户问"有哪些常见病害"、"虫害列表"时使用。如果用户问某个特定病虫害的详细信息，优先使用 search_pest_library 按关键词精准搜索。',
+            description: '获取病虫害及杂草知识库完整列表。每条包含 key、name、type(pest/disease/weed)、symptoms、control（防治方法）。可选按 type 过滤只看虫害、病害或杂草。当用户问"有哪些常见病害"、"虫害列表"、"杂草列表"时使用。如果用户问某个特定病虫害或杂草的详细信息，优先使用 search_pest_library 按关键词精准搜索。',
             parameters: {
                 type: 'object',
-                properties: { type: { type: 'string', enum: ['pest', 'disease'] } },
+                properties: { type: { type: 'string', enum: ['pest', 'disease', 'weed'] } },
             },
         },
     },
@@ -157,12 +157,12 @@ const AGENT_TOOL_DEFS = [
         type: 'function',
         function: {
             name: 'search_pest_library',
-            description: '按关键词搜索病虫害知识库，匹配范围包括名称、症状描述、防治方法。返回匹配的条目数组，每条包含 key、name、type、symptoms、control。当用户问"蚜虫怎么防治"、"叶子发黄是什么病"时使用。比 get_pest_library 更精准，优先使用此工具搜索特定病虫害。',
+            description: '按关键词搜索病虫害及杂草知识库，匹配范围包括名称、症状或识别要点、防治方法。返回匹配的条目数组，每条包含 key、name、type、symptoms、control。当用户问"蚜虫怎么防治"、"叶子发黄是什么病"、"香附子怎么识别"时使用。比 get_pest_library 更精准，优先使用此工具搜索特定条目。',
             parameters: {
                 type: 'object',
                 properties: {
                     keyword: { type: 'string', description: '搜索关键词，如"蚜虫"、"叶斑"、"发黄"。支持部分匹配。' },
-                    type: { type: 'string', enum: ['pest', 'disease'], description: '可选，限定搜索类型' },
+                    type: { type: 'string', enum: ['pest', 'disease', 'weed'], description: '可选，限定搜索类型' },
                 },
                 required: ['keyword'],
             },
@@ -747,6 +747,7 @@ async function runPhotoAnnotation(recordId, user, requestBody = {}) {
     const libraryEntries = readPestLibrary().entries || [];
     const pestNameMap = Object.fromEntries(libraryEntries.filter(item => item.type === 'pest').map(item => [item.key, item.name]));
     const diseaseNameMap = Object.fromEntries(libraryEntries.filter(item => item.type === 'disease').map(item => [item.key, item.name]));
+    const weedNameMap = Object.fromEntries(libraryEntries.filter(item => item.type === 'weed').map(item => [item.key, item.name]));
     const labelList = value => Array.isArray(value) ? value.filter(Boolean) : (value ? [value] : []);
     if (labels) {
         if (Array.isArray(labels.visual) && labels.visual.length) {
@@ -783,6 +784,10 @@ async function runPhotoAnnotation(recordId, user, requestBody = {}) {
         const diseaseTypes = labelList(labels.diseaseDetail?.types);
         if (diseaseTypes.length) {
             labelLines.push(`病害详情：${diseaseTypes.map(key => diseaseNameMap[key] || key).join('，')}`);
+        }
+        const weedTypes = labelList(labels.weedDetail?.types);
+        if (weedTypes.length) {
+            labelLines.push(`杂草详情：${weedTypes.map(key => weedNameMap[key] || key).join('，')}`);
         }
     }
     const labelsLine = labelLines.length ? `\n${labelLines.join('\n')}` : '';
@@ -1710,7 +1715,7 @@ const server = http.createServer(async (req, res) => {
             const type = String(query.type || '').trim();
             const pl = readPestLibrary();
             let entries = pl.entries || [];
-            if (type === 'pest' || type === 'disease') entries = entries.filter(item => item.type === type);
+            if (type === 'pest' || type === 'disease' || type === 'weed') entries = entries.filter(item => item.type === type);
             entries = [...entries].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN'));
             return sendJson(200, { ok: true, entries });
         }
@@ -1719,7 +1724,8 @@ const server = http.createServer(async (req, res) => {
             const auth = requireAuth(); if (!auth) return;
             const body = await readBody(req).catch(() => ({}));
             const name = String(body.name || '').trim();
-            const type = String(body.type || '').trim() === 'disease' ? 'disease' : 'pest';
+            const rawType = String(body.type || '').trim();
+            const type = rawType === 'disease' ? 'disease' : (rawType === 'weed' ? 'weed' : 'pest');
             if (!name) return sendJson(400, { ok: false, msg: 'name required' });
 
             const pr = readPhotoRecords();
@@ -1729,11 +1735,13 @@ const server = http.createServer(async (req, res) => {
 
             const userPrompt = type === 'disease'
                 ? `病害名称：${name}。请输出以下 JSON：{ "key": "英文标识（kebab-case 格式，如 brown-spot）", "symptoms": "发病症状（1-2句中文描述）", "control": "药剂防治建议（1-2句中文描述）" }`
-                : `害虫名称：${name}。请输出以下 JSON：{ "key": "英文标识（kebab-case 格式，如 striped-flea-beetle）", "symptoms": "为害症状（1-2句中文描述）", "control": "药剂防治建议（1-2句中文描述）" }`;
+                : (type === 'weed'
+                    ? `杂草名称：${name}。请输出以下 JSON：{ "key": "英文标识（kebab-case 格式，如 cyperus-rotundus）", "symptoms": "识别要点（1-2句中文描述）", "control": "防控建议（1-2句中文描述，可为空）" }`
+                    : `害虫名称：${name}。请输出以下 JSON：{ "key": "英文标识（kebab-case 格式，如 striped-flea-beetle）", "symptoms": "为害症状（1-2句中文描述）", "control": "药剂防治建议（1-2句中文描述）" }`);
             const requestBody = JSON.stringify({
                 model: textModel,
                 messages: [
-                    { role: 'system', content: '你是农业植保专家，根据用户提供的中文名称，输出该害虫或病害的结构化信息。只输出 JSON，不要任何其他文字。' },
+                    { role: 'system', content: '你是农业植保专家，根据用户提供的中文名称，输出该害虫、病害或杂草的结构化信息。只输出 JSON，不要任何其他文字。' },
                     { role: 'user', content: userPrompt },
                 ],
             });
@@ -1768,12 +1776,12 @@ const server = http.createServer(async (req, res) => {
             const type = String(body.type || '').trim();
             const key = String(body.key || '').trim();
             const name = String(body.name || '').trim();
-            if (!['pest', 'disease'].includes(type) || !key || !name) {
+            if (!['pest', 'disease', 'weed'].includes(type) || !key || !name) {
                 return sendJson(400, { ok: false, msg: 'type, key and name required' });
             }
             const pl = readPestLibrary();
             const entry = {
-                id: safeId(type === 'disease' ? 'disease' : 'pest'),
+                id: safeId(type === 'disease' ? 'disease' : (type === 'weed' ? 'weed' : 'pest')),
                 type,
                 key,
                 name,
@@ -1877,7 +1885,7 @@ const server = http.createServer(async (req, res) => {
             const pl = readPestLibrary();
             const entry = (pl.entries || []).find(item => item.id === id);
             if (!entry) return sendJson(404, { ok: false, msg: 'entry not found' });
-            if (body.type !== undefined && ['pest', 'disease'].includes(String(body.type))) entry.type = String(body.type);
+            if (body.type !== undefined && ['pest', 'disease', 'weed'].includes(String(body.type))) entry.type = String(body.type);
             if (body.name !== undefined) entry.name = String(body.name || '').trim();
             if (body.symptoms !== undefined) entry.symptoms = String(body.symptoms || '');
             if (body.control !== undefined) entry.control = String(body.control || '');
@@ -2153,6 +2161,7 @@ const server = http.createServer(async (req, res) => {
 任务要求：
 - 输出每个异常区域的 bbox 矩形框坐标 [x, y, width, height]，坐标基于原始图片像素尺寸。
 - label 只能从以下标签中选择：${allowedLabels.join(', ')}
+- 可选 category 包括 pest、disease、weed、plant_abnormal、soil、other；检测到杂草时 label 使用 weed，category 使用 weed。不要输出具体杂草种类作为 label，具体种类由用户在标签编辑里选择。
 - bbox 必须是目标的最小外接矩形，紧贴可见边缘，四周留白尽量小于目标宽高的 5%。
 - 只框可直接看见的证据，不要框整片叶子、整株作物、整块田地或推测性的影响范围。
 - 如果同一张叶片上有多个分散异常，请输出多个小 bbox，不要用一个大 bbox 包住它们。

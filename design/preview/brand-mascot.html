@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="_shared.css"><title>Brand · mascot</title>
+<style>
+  body { padding: 22px 24px; }
+  .wrap2 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; align-items: stretch; }
+  .card { background: rgba(255,255,255,0.92); border-radius: 18px; padding: 18px; display:flex; flex-direction:column; align-items: center; justify-content: center; gap: 10px; box-shadow: inset 1px 1px 0 rgba(255,255,255,0.92), inset -1px -1px 0 rgba(0,0,0,0.08), 0 8px 32px rgba(0,0,0,0.08); }
+  .pixel { image-rendering: pixelated; image-rendering: crisp-edges; }
+  .lbl { font-size: 12px; font-weight: 600; }
+  .meta { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); }
+  .lockup { background: linear-gradient(115deg,#0d1930,#142146); color: #fff; }
+  .lockup .lbl { color: #fff; }
+  .lockup .meta { color: rgba(255,255,255,0.6); }
+</style></head>
+<body>
+<div class="wrap2">
+  <div class="card">
+    <img src="../assets/agent-sweet-potato.png" class="pixel" style="width:80px">
+    <div class="lbl">小薯 · Xiǎo Shǔ</div>
+    <div class="meta">agent-sweet-potato.png</div>
+  </div>
+  <div class="card">
+    <img src="../assets/logo.jpg" style="width:88px;border-radius:50%">
+    <div class="lbl">Institute crest</div>
+    <div class="meta">assets/logo.jpg</div>
+  </div>
+  <div class="card lockup">
+    <img src="../assets/agent-sweet-potato.png" class="pixel" style="width:48px">
+    <div class="lbl" style="font-size:14px">AI 智慧农业 Agent</div>
+    <div class="meta">login lockup · navy overlay</div>
+  </div>
+</div>
+</body></html>

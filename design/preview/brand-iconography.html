@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="_shared.css"><title>Iconography</title>
+<style>
+  body { padding: 18px 22px; }
+  .grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px; }
+  .ico {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 14px 6px 10px;
+    background: rgba(255,255,255,0.92);
+    border-radius: 16px;
+    box-shadow:
+      inset  1px  1px 0 rgba(255,255,255,0.92),
+      inset -1px -1px 0 rgba(15,23,42,0.05),
+      0 4px 14px rgba(15,23,42,0.04);
+  }
+  .ico svg { width: 30px; height: 30px; display: block; }
+  .ico .nm { font-size: 10px; color: rgba(28,33,45,0.72); font-weight: 600; line-height: 1.2; text-align: center; }
+  .ico .zh { font-size: 10px; color: rgba(28,33,45,0.50); }
+  .note { font-size: 11px; color: rgba(28,33,45,0.55); margin-top: 12px; line-height: 1.5; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+
+  /* Restrained palette — sky blue primary, sage / lavender / peach accents */
+  svg {
+    stroke: #4a7bc1;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    fill: none;
+  }
+  svg .fill        { fill: #4a7bc1; stroke: none; }
+  svg .fill-tint   { fill: rgba(74,123,193,0.12); stroke: none; }
+  svg .fill-sage   { fill: #5c9a6f; stroke: none; }
+  svg .fill-peach  { fill: #d98a5b; stroke: none; }
+  svg .fill-lav    { fill: #8b7ab8; stroke: none; }
+  svg .stroke-sage  { stroke: #5c9a6f; }
+  svg .stroke-peach { stroke: #d98a5b; }
+  svg .stroke-lav   { stroke: #8b7ab8; }
+  svg .stroke-mute  { stroke: rgba(28,33,45,0.45); }
+</style></head>
+<body>
+<div class="head">
+  <div class="eyebrow">Custom icon set · 24×24 · 1.6px stroke · restrained palette</div>
+  <div class="eyebrow" style="text-transform:none;letter-spacing:0">绘 · drawn for Agri Monitor</div>
+</div>
+<div class="grid">
+
+  <!-- 1 Sensor node -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <rect x="6" y="9" width="12" height="9" rx="2"/>
+      <path d="M9 9V6a3 3 0 0 1 6 0v3"/>
+      <circle cx="12" cy="13" r="1.2" class="fill"/>
+      <path d="M12 4V2.5M5 6l-1-1M19 6l1-1"/>
+    </svg>
+    <div class="nm">Sensor</div><div class="zh">传感器</div>
+  </div>
+
+  <!-- 2 LoRa wave -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <circle cx="12" cy="14" r="1.6" class="fill"/>
+      <path d="M8.5 14a3.5 3.5 0 0 1 7 0M5.5 14a6.5 6.5 0 0 1 13 0M2.5 14a9.5 9.5 0 0 1 19 0"/>
+    </svg>
+    <div class="nm">LoRa</div><div class="zh">无线信号</div>
+  </div>
+
+  <!-- 3 Soil moisture -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <path d="M3 18 Q7 16 12 18 T 21 18" class="stroke-peach"/>
+      <path d="M3 21 Q7 19 12 21 T 21 21" class="stroke-peach"/>
+      <path d="M12 3 C 9 7 8 10 8 12.5 a4 4 0 0 0 8 0 C 16 10 15 7 12 3z"/>
+      <path d="M11 11 a2 2 0 0 0 1.5 2.5" stroke-width="1.4"/>
+    </svg>
+    <div class="nm">Soil moisture</div><div class="zh">土壤湿度</div>
+  </div>
+
+  <!-- 4 Sun + canopy -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <circle cx="12" cy="9" r="3.2"/>
+      <path d="M12 3.5v1.4M12 13.1v1.4M5.5 9H4.1M19.9 9H18.5M7.4 4.4l1 1M16.6 4.4l-1 1"/>
+      <path d="M3 19 Q12 14 21 19" class="stroke-sage"/>
+      <path d="M5 21 H19" class="stroke-sage"/>
+    </svg>
+    <div class="nm">Light · 光照</div><div class="zh">lux</div>
+  </div>
+
+  <!-- 5 Thermo droplet -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <path d="M9.5 4.5 a2 2 0 0 1 4 0 V13 a3.5 3.5 0 1 1 -4 0 z"/>
+      <circle cx="11.5" cy="16.4" r="1.6" class="fill-peach"/>
+      <path d="M16 6h3M16 9h3M16 12h2"/>
+    </svg>
+    <div class="nm">Thermo</div><div class="zh">温湿度</div>
+  </div>
+
+  <!-- 6 CO2 leaf -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <path d="M5 14 C 5 8 9 5 16 5 C 17 12 14 17 8 18 C 6 18 5 16 5 14z" class="fill-tint"/>
+      <path d="M5 14 C 5 8 9 5 16 5 C 17 12 14 17 8 18 C 6 18 5 16 5 14z"/>
+      <path d="M8 17 Q 12 12 16 6"/>
+      <text x="11" y="22" font-family="JetBrains Mono, monospace" font-size="5" font-weight="700" fill="#4a7bc1" stroke="none">CO₂</text>
+    </svg>
+    <div class="nm">CO₂</div><div class="zh">二氧化碳</div>
+  </div>
+
+  <!-- 7 Cloud sync -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <path d="M7 16 a4 4 0 0 1 0.5 -7.9 A5 5 0 0 1 17 9 a3.5 3.5 0 0 1 0.5 7" class="stroke-lav"/>
+      <path d="M9 19 l3 -2 l3 2" class="stroke-lav"/>
+      <path d="M12 13 v6" class="stroke-lav"/>
+    </svg>
+    <div class="nm">Cloud sync</div><div class="zh">云同步</div>
+  </div>
+
+  <!-- 8 Pest bug -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <ellipse cx="12" cy="13" rx="4" ry="5"/>
+      <path d="M8 13 H4M16 13 H20M8 9 L4.5 6.5M16 9 L19.5 6.5M8 17 L4.5 19M16 17 L19.5 19"/>
+      <path d="M10 6 Q 10 4 9 3.5M14 6 Q 14 4 15 3.5"/>
+      <circle cx="10.5" cy="11.5" r="0.6" class="fill"/>
+      <circle cx="13.5" cy="11.5" r="0.6" class="fill"/>
+    </svg>
+    <div class="nm">Pest</div><div class="zh">病虫害</div>
+  </div>
+
+  <!-- 9 Sweet potato mascot -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <path d="M5 13 C 4 9 8 5 13 6 C 19 7 21 11 19 15 C 17 19 12 20 9 18 C 6 17 5.5 15 5 13z" class="fill-peach"/>
+      <path d="M5 13 C 4 9 8 5 13 6 C 19 7 21 11 19 15 C 17 19 12 20 9 18 C 6 17 5.5 15 5 13z" stroke="#a86741"/>
+      <circle cx="10" cy="11.5" r="0.7" fill="#fff" stroke="none"/>
+      <circle cx="15" cy="12.5" r="0.7" fill="#fff" stroke="none"/>
+      <path d="M11 14.5 Q 12.5 15.5 14 14.5" stroke="#fff" stroke-width="1.2"/>
+      <path d="M8 7 Q 9 4 11 4" class="stroke-sage"/>
+    </svg>
+    <div class="nm">小薯 Agent</div><div class="zh">AI 助手</div>
+  </div>
+
+  <!-- 10 Field plot -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <path d="M3 6 L12 3 L21 6 L21 18 L12 21 L3 18 Z"/>
+      <path d="M12 3 V21M3 6 L21 18 M21 6 L3 18" stroke-opacity="0.4"/>
+      <circle cx="12" cy="12" r="1.4" class="fill-sage"/>
+    </svg>
+    <div class="nm">Plot</div><div class="zh">地块</div>
+  </div>
+
+  <!-- 11 IF-THEN -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <rect x="3" y="6" width="7" height="5" rx="1.2"/>
+      <rect x="14" y="13" width="7" height="5" rx="1.2"/>
+      <path d="M10 8.5 H12.5 a1.5 1.5 0 0 1 1.5 1.5 V13"/>
+      <path d="M13 12 L14 13 L13 14"/>
+      <path d="M5 9 h3" stroke-width="1.2" class="stroke-peach"/>
+      <path d="M16 16 h3" stroke-width="1.2" class="stroke-sage"/>
+    </svg>
+    <div class="nm">IF / THEN</div><div class="zh">规则</div>
+  </div>
+
+  <!-- 12 Irrigation -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <circle cx="12" cy="10" r="4"/>
+      <path d="M12 6 V14 M8 10 H16" stroke-width="1.2"/>
+      <path d="M12 14 V19"/>
+      <path d="M9 21 Q 10 19 11 21 Q 12 19 13 21 Q 14 19 15 21" class="stroke-peach"/>
+    </svg>
+    <div class="nm">Irrigation</div><div class="zh">灌溉</div>
+  </div>
+
+  <!-- 13 Vent fan -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="1.4" class="fill"/>
+      <path d="M12 11 C 10 8 5 8 4 11 C 7 12 9 12 11 12"/>
+      <path d="M13 12 C 16 11 20 13 19 16 C 16 16 14 14.5 13 13"/>
+      <path d="M12 13 C 14 16 12 21 9 20 C 9 17 10 15 11 13"/>
+    </svg>
+    <div class="nm">Ventilation</div><div class="zh">通风</div>
+  </div>
+
+  <!-- 14 Camera shutter -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="7"/>
+      <path d="M12 5 L15 11 H9 Z" class="fill-tint"/>
+      <path d="M19 12 L13 15 V9 Z" class="fill-tint"/>
+      <path d="M12 19 L9 13 H15 Z" class="fill-tint"/>
+      <path d="M5 12 L11 9 V15 Z" class="fill-tint"/>
+      <circle cx="12" cy="12" r="1.6" class="fill"/>
+    </svg>
+    <div class="nm">AI Camera</div><div class="zh">AI 摄像</div>
+  </div>
+
+  <!-- 15 Alert bell -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <path d="M6 16 V11 a6 6 0 0 1 12 0 V16 L19.5 17.5 H4.5 L6 16z" class="stroke-peach"/>
+      <path d="M10.5 20 a1.5 1.5 0 0 0 3 0" class="stroke-peach"/>
+      <circle cx="18" cy="6.5" r="2" fill="#c97268" stroke="none"/>
+    </svg>
+    <div class="nm">Alert</div><div class="zh">告警</div>
+  </div>
+
+  <!-- 16 Live waveform -->
+  <div class="ico">
+    <svg viewBox="0 0 24 24">
+      <path d="M2 12 H5 L7 6 L9 18 L11 9 L13 15 L15 11 L17 13 H22"/>
+      <circle cx="22" cy="13" r="1.2" class="fill-sage"/>
+    </svg>
+    <div class="nm">Live data</div><div class="zh">实时</div>
+  </div>
+
+</div>
+<div class="note">
+  16 custom glyphs · 24×24 · 1.6 stroke · primary <code>#4A7BC1</code> with sage / lavender / peach accents.
+  Use these for nav, KPI tiles, automation rule blocks, empty states.
+</div>
+</body></html>

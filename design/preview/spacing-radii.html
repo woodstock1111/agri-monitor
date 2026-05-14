@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="_shared.css"><title>Radii</title>
+<style>
+  body { padding: 18px 22px; }
+  .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; align-items: end; }
+  .tile { background: #fff; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06), 0 4px 14px rgba(0,0,0,0.05); display: flex; flex-direction: column; justify-content: flex-end; padding: 10px; }
+  .px { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
+  .nm { font-size: 11px; font-weight: 600; color: var(--text-primary); }
+</style></head>
+<body>
+<div class="eyebrow" style="margin-bottom:8px">Corner radii</div>
+<div class="grid">
+  <div class="tile" style="height:84px;border-radius:6px"><div class="nm">tight</div><div class="px">6px</div></div>
+  <div class="tile" style="height:84px;border-radius:12px"><div class="nm">btn / sm</div><div class="px">12px</div></div>
+  <div class="tile" style="height:84px;border-radius:14px"><div class="nm">md</div><div class="px">14px</div></div>
+  <div class="tile" style="height:84px;border-radius:20px"><div class="nm">card / lg</div><div class="px">20px</div></div>
+  <div class="tile" style="height:84px;border-radius:24px"><div class="nm">sidebar</div><div class="px">24px</div></div>
+  <div class="tile" style="height:84px;border-radius:28px"><div class="nm">hero / xl</div><div class="px">28px</div></div>
+</div>
+</body></html>

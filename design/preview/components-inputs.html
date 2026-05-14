@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="_shared.css"><title>Inputs</title>
+<style>
+  body { padding: 22px 24px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  label { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+  .input { padding: 10px 12px; font-size: 14px; font-family: inherit; border-radius: 12px; border: 1px solid #e2e8f0; background: #fff; color: var(--text-primary); transition: 0.2s; }
+  .input:focus { outline: none; border-color: #1070e0; box-shadow: 0 0 0 3px rgba(16,112,224,0.10); }
+  .input.focus { border-color: #1070e0; box-shadow: 0 0 0 3px rgba(16,112,224,0.10); }
+  .input.disabled { background: #f1f5f9; color: var(--text-muted); cursor: not-allowed; }
+  .hint { font-size: 11px; color: var(--text-muted); }
+</style></head>
+<body>
+<div class="grid">
+  <div class="field"><label>地块名称 *</label><input class="input" value="海口示范区 A-3"></div>
+  <div class="field"><label>密码</label><input type="password" class="input focus" value="••••••••••••"><div class="hint">焦点状态 · 3px 蓝色光晕</div></div>
+  <div class="field"><label>备注 (可选)</label><textarea class="input" rows="2">温度高于 32°C 时启动通风</textarea></div>
+  <div class="field"><label>视觉 AI API Key（暂未启用）</label><input class="input disabled" value="sk-…" disabled><div class="hint">禁用状态</div></div>
+</div>
+</body></html>

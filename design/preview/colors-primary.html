@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="_shared.css"><title>Primary &amp; brand color</title>
+<style>
+  body { padding: 18px 22px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .swatch {
+    border-radius: 16px;
+    padding: 14px 14px 12px;
+    min-height: 96px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    box-shadow:
+      inset  1px  1px 0 rgba(255,255,255,0.85),
+      inset -1px -1px 0 rgba(15,23,42,0.05),
+      0 1px 2px rgba(15,23,42,0.04);
+  }
+  .swatch .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; }
+  .chip {
+    width: 28px; height: 28px; border-radius: 8px;
+    box-shadow: inset 0 0 0 1px rgba(15,23,42,0.06);
+    flex: none;
+  }
+  .name { font-weight: 600; font-size: 13px; color: rgba(22,26,38,0.94); }
+  .hex  { font-family: var(--font-mono); font-size: 11px; color: rgba(28,33,45,0.62); margin-top: 1px; }
+  .role { font-size: 11px; color: rgba(28,33,45,0.55); margin-top: 2px; line-height: 1.4; }
+  .eybr { font-size: 10px; font-weight: 600; letter-spacing: 0.10em; text-transform: uppercase; color: rgba(28,33,45,0.50); }
+
+  .grad-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    margin-top: 10px;
+  }
+  .grad {
+    border-radius: 16px;
+    padding: 14px 14px 12px;
+    min-height: 86px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    box-shadow:
+      inset  1px  1px 0 rgba(255,255,255,0.85),
+      inset -1px -1px 0 rgba(15,23,42,0.05),
+      0 1px 2px rgba(15,23,42,0.04);
+  }
+  .grad .strip {
+    height: 16px; border-radius: 6px; flex: none;
+    box-shadow: inset 0 0 0 1px rgba(15,23,42,0.05);
+  }
+</style></head>
+<body>
+
+<div class="eybr" style="margin-bottom:8px">Primary palette · light, restrained, readable</div>
+
+<div class="grid">
+
+  <!-- Primary: softer iOS blue -->
+  <div class="swatch" style="background:#eef4fc">
+    <div class="top">
+      <div>
+        <div class="eybr">Primary</div>
+        <div class="name" style="margin-top:6px">Sky Blue</div>
+        <div class="hex">#1070E0 · tint #EEF4FC</div>
+      </div>
+      <div class="chip" style="background:#1070e0"></div>
+    </div>
+    <div class="role">links · primary button · focus ring</div>
+  </div>
+
+  <!-- Secondary: muted sage -->
+  <div class="swatch" style="background:#eef5ee">
+    <div class="top">
+      <div>
+        <div class="eybr">Secondary</div>
+        <div class="name" style="margin-top:6px">Sage</div>
+        <div class="hex">#5C9A6F · tint #EEF5EE</div>
+      </div>
+      <div class="chip" style="background:#5c9a6f"></div>
+    </div>
+    <div class="role">agriculture · live indicator</div>
+  </div>
+
+  <!-- Tertiary: dusty lavender -->
+  <div class="swatch" style="background:#f1eef7">
+    <div class="top">
+      <div>
+        <div class="eybr">Tertiary</div>
+        <div class="name" style="margin-top:6px">Lavender</div>
+        <div class="hex">#8B7AB8 · tint #F1EEF7</div>
+      </div>
+      <div class="chip" style="background:#8b7ab8"></div>
+    </div>
+    <div class="role">camera · AI agent · violet accents</div>
+  </div>
+
+  <!-- Quaternary: soft peach -->
+  <div class="swatch" style="background:#fbf2eb">
+    <div class="top">
+      <div>
+        <div class="eybr">Highlight</div>
+        <div class="name" style="margin-top:6px">Peach</div>
+        <div class="hex">#D98A5B · tint #FBF2EB</div>
+      </div>
+      <div class="chip" style="background:#d98a5b"></div>
+    </div>
+    <div class="role">soil · sweet potato mascot accent</div>
+  </div>
+
+</div>
+
+<div class="grad-row">
+
+  <!-- Cloud gradient — kept, but desaturated -->
+  <div class="grad" style="background:#f4f1fa">
+    <div>
+      <div class="eybr">Cloud sync · 0531yun only</div>
+      <div class="name" style="margin-top:4px">Mist</div>
+      <div class="hex">linear-gradient(135°, #B8C5E8 → #C7B8DC)</div>
+    </div>
+    <div class="strip" style="background:linear-gradient(135deg,#b8c5e8,#c7b8dc)"></div>
+  </div>
+
+  <!-- Brand text gradient — restrained -->
+  <div class="grad" style="background:#f0f4f9">
+    <div>
+      <div class="eybr">Brand · text gradient</div>
+      <div class="name" style="margin-top:4px">.brand-name</div>
+      <div class="hex">linear-gradient(90°, #4A7BC1 → #7E92C4 → #5FA8B8)</div>
+    </div>
+    <div class="strip" style="background:linear-gradient(90deg,#4a7bc1,#7e92c4,#5fa8b8)"></div>
+  </div>
+
+</div>
+
+</body></html>

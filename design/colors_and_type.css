@@ -1,0 +1,169 @@
+/* ============================================================
+   Agri Monitor — Colors & Type Tokens
+   Source: woodstock1111/agri-monitor / style.css (final cascade,
+   "iOS 17/18 Liquid Glass" override layer takes precedence).
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ---------- Foundation backgrounds ---------- */
+  --bg-base: #e8edf3;
+  --bg-surface: #f8fafc;
+  --bg-panel: #f8fafc;
+  --bg-hover: rgba(16, 85, 170, 0.05);
+  --bg-sidebar: #1b2a4a;          /* deep navy — login + sidebar header */
+
+  /* App background — soft pastel field of cyan/blue/mint blobs */
+  --bg-app:
+    radial-gradient(circle at 12% 18%, rgba(132, 182, 255, 0.45), rgba(132, 182, 255, 0) 35%),
+    radial-gradient(circle at 82% 16%, rgba(186, 214, 255, 0.46), rgba(186, 214, 255, 0) 36%),
+    radial-gradient(circle at 64% 82%, rgba(194, 232, 221, 0.42), rgba(194, 232, 221, 0) 38%),
+    linear-gradient(130deg, #edf4ff 0%, #e9f3ff 50%, #e8f6ef 100%);
+
+  /* ---------- Accent / brand ---------- */
+  --accent: #1070e0;              /* primary blue (links, focus, primary btn) */
+  --accent-light: #e8f0fe;
+  --accent-2: #059669;            /* secondary green (agriculture) */
+  --accent-3: #7c3aed;            /* tertiary violet */
+  --accent-glow: rgba(16, 112, 224, 0.10);
+
+  /* Cloud gradient — used for "connect cloud sensor" flows */
+  --grad-cloud: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+
+  /* Brand text gradient (used on .brand-name) */
+  --grad-brand: linear-gradient(90deg, #2563eb, #7c3aed, #06b6d4);
+
+  /* ---------- Status (iOS-aligned in override layer) ---------- */
+  --success: #34c759;
+  --success-bg: #ecfdf5;
+  --warning: #ff9f0a;
+  --warning-bg: #fffbeb;
+  --danger: #ff3b30;
+  --danger-bg: #fef2f2;
+  --info: #3b82f6;
+  --info-bg: #eff6ff;
+
+  /* ---------- Text (iOS override values) ---------- */
+  --text-primary: rgba(22, 26, 38, 0.94);   /* fg1 */
+  --text-secondary: rgba(28, 33, 45, 0.72); /* fg2 */
+  --text-muted: rgba(28, 33, 45, 0.50);     /* fg3 */
+  --text-sidebar: #cbd5e1;
+  --text-sidebar-active: #ffffff;
+  --text-on-dark: #ffffff;
+  --text-on-accent: #ffffff;
+
+  /* ---------- Borders ---------- */
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --border-soft: rgba(0, 0, 0, 0.06);
+
+  /* ---------- Glass system (final design layer) ---------- */
+  --glass-fill: rgba(255, 255, 255, 0.92);
+  --glass-fill-strong: rgba(255, 255, 255, 0.92);
+  --glass-bg: rgba(255, 255, 255, 0.92);
+  --glass-stroke-top: rgba(255, 255, 255, 0.92);
+  --glass-stroke-bottom: rgba(0, 0, 0, 0.08);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  --glass-bezel:
+    inset 1px 1px 0 var(--glass-stroke-top),
+    inset -1px -1px 0 var(--glass-stroke-bottom),
+    var(--glass-shadow);
+
+  /* ---------- Layout ---------- */
+  --sidebar-w: 240px;
+  --topbar-h: 66px;
+
+  /* ---------- Radii (iOS override scale) ---------- */
+  --radius-xl: 28px;
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --radius-sm: 12px;
+  --radius: 12px;        /* legacy alias */
+
+  /* ---------- Shadows (lite scale, used on flat cards) ---------- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow:    0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.08);
+
+  /* ---------- Type families ---------- */
+  --font-sans: 'SF Pro Display', 'SF Pro Text', -apple-system, BlinkMacSystemFont,
+               'Plus Jakarta Sans', 'Noto Sans SC', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-cn:   'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+
+  /* ---------- Type scale (per CSS audit) ---------- */
+  --fs-display: 34px;   /* page h1, login hero */
+  --fs-h2:      26px;   /* kpi value */
+  --fs-h3:      18px;   /* modal header */
+  --fs-h4:      16px;   /* panel title */
+  --fs-body:    15px;   /* body default (iOS override) */
+  --fs-sm:      13px;   /* dense meta, table cells */
+  --fs-xs:      12px;   /* form labels */
+  --fs-2xs:     11px;   /* table headers, eyebrow */
+  --fs-3xs:     10px;   /* badge, tags */
+
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-semibold:600;
+  --fw-bold:    700;
+
+  --lh-tight: 1.08;
+  --lh-snug:  1.25;
+  --lh-base:  1.6;
+}
+
+/* ---------- Semantic prose helpers (use as classes when raw HTML)
+   These mirror what the app applies via component selectors. ---------- */
+
+.ds-display {
+  font-family: var(--font-sans);
+  font-size: var(--fs-display);
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.5px;
+  color: var(--text-primary);
+}
+.ds-h2 {
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-bold);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.ds-h3 {
+  font-size: var(--fs-h3);
+  font-weight: var(--fw-bold);
+  color: var(--text-primary);
+}
+.ds-h4 {
+  font-size: var(--fs-h4);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-snug);
+  color: var(--text-primary);
+}
+.ds-body {
+  font-size: var(--fs-body);
+  line-height: var(--lh-base);
+  color: var(--text-primary);
+}
+.ds-meta {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+.ds-eyebrow {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.ds-mono {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--accent);
+}
+.ds-numeric {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
+}
