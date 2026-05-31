@@ -19,6 +19,15 @@ const MAX_SENSOR_READINGS = 100000;
 const MAX_RAW_PAYLOADS = 10000;
 const CLOUD_POLL_INTERVAL_MS = Number(process.env.CLOUD_POLL_INTERVAL_MS || 5 * 60 * 1000);
 const WRITE_DEBOUNCE_MS = 1000;
+const LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_IP_FAILURE_LIMIT = 5;
+const LOGIN_IP_LOCK_MS = 15 * 60 * 1000;
+const LOGIN_ACCOUNT_FAILURE_LIMIT = 10;
+const LOGIN_ACCOUNT_LOCK_MS = 10 * 60 * 1000;
+const LOGIN_FAILURES = {
+    ip: new Map(),
+    account: new Map(),
+};
 const AGENT_SESSIONS = new Map();
 const AGENT_SESSION_TTL = 30 * 60 * 1000;
 const AGENT_MAX_ITERATIONS = 10;
@@ -222,6 +231,61 @@ function verifyPassword(password, encoded) {
 
 function safeId(prefix) {
     return `${prefix}_${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`;
+}
+
+function realClientIp(req) {
+    const xRealIp = String(req.headers['x-real-ip'] || '').trim();
+    if (xRealIp) return xRealIp;
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    return forwarded || req.socket.remoteAddress || 'unknown';
+}
+
+function loginAccountKey(account) {
+    return String(account || '').trim().toLowerCase();
+}
+
+function loginBucket(map, key, now) {
+    const current = map.get(key);
+    if (current && now - current.windowStart <= LOGIN_FAILURE_WINDOW_MS) return current;
+    const lockedUntil = current?.lockedUntil > now ? current.lockedUntil : 0;
+    const fresh = { count: 0, windowStart: now, lockedUntil };
+    map.set(key, fresh);
+    return fresh;
+}
+
+function cleanupLoginFailures(now = Date.now()) {
+    Object.values(LOGIN_FAILURES).forEach(map => {
+        for (const [key, item] of map) {
+            const windowExpired = now - item.windowStart > LOGIN_FAILURE_WINDOW_MS;
+            const lockExpired = !item.lockedUntil || item.lockedUntil <= now;
+            if (windowExpired && lockExpired) map.delete(key);
+        }
+    });
+}
+
+function loginRetryAfterSeconds(ip, account, now = Date.now()) {
+    const lockedUntil = Math.max(
+        LOGIN_FAILURES.ip.get(ip)?.lockedUntil || 0,
+        account ? LOGIN_FAILURES.account.get(account)?.lockedUntil || 0 : 0
+    );
+    return lockedUntil > now ? Math.max(1, Math.ceil((lockedUntil - now) / 1000)) : 0;
+}
+
+function recordLoginFailure(ip, account, now = Date.now()) {
+    const ipBucket = loginBucket(LOGIN_FAILURES.ip, ip, now);
+    ipBucket.count += 1;
+    if (ipBucket.count >= LOGIN_IP_FAILURE_LIMIT) ipBucket.lockedUntil = now + LOGIN_IP_LOCK_MS;
+
+    if (account) {
+        const accountBucket = loginBucket(LOGIN_FAILURES.account, account, now);
+        accountBucket.count += 1;
+        if (accountBucket.count >= LOGIN_ACCOUNT_FAILURE_LIMIT) accountBucket.lockedUntil = now + LOGIN_ACCOUNT_LOCK_MS;
+    }
+}
+
+function clearLoginFailures(ip, account) {
+    LOGIN_FAILURES.ip.delete(ip);
+    if (account) LOGIN_FAILURES.account.delete(account);
 }
 
 function tenantIdForAccount(account) {
@@ -1339,12 +1403,13 @@ const server = http.createServer(async (req, res) => {
     const pathname = myUrl.pathname.replace(/\/$/, '');
     const query = Object.fromEntries(myUrl.searchParams);
 
-    const sendJson = (status, obj) => {
+    const sendJson = (status, obj, extraHeaders = {}) => {
         res.writeHead(status, {
             'Content-Type': 'application/json; charset=utf-8',
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Headers': 'authorization, content-type, x-target-base',
             'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            ...extraHeaders,
         });
         res.end(JSON.stringify(obj));
     };
@@ -1386,10 +1451,20 @@ const server = http.createServer(async (req, res) => {
             const body = await readBody(req);
             const state = readState();
             const account = String(body.account || '').trim();
+            const accountKey = loginAccountKey(account);
+            const clientIp = realClientIp(req);
+            const loginFailureMsg = { ok: false, msg: 'Invalid account or password' };
+            cleanupLoginFailures();
+            const retryAfter = loginRetryAfterSeconds(clientIp, accountKey);
+            if (retryAfter > 0) {
+                return sendJson(429, loginFailureMsg, { 'Retry-After': String(retryAfter) });
+            }
             const user = state.users.find(item => item.account === account && item.status !== 'disabled');
             if (!user || !verifyPassword(String(body.password || ''), user.passwordHash)) {
-                return sendJson(401, { ok: false, msg: 'Invalid account or password' });
+                recordLoginFailure(clientIp, accountKey);
+                return sendJson(401, loginFailureMsg);
             }
+            clearLoginFailures(clientIp, accountKey);
             user.lastLoginAt = new Date().toISOString();
             writeState(state);
             const token = signToken({
