@@ -2632,7 +2632,7 @@ setInterval(() => {
     }
 }, 5 * 60 * 1000);
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '127.0.0.1', () => {
     console.log(`[SERVER] RUNNING ON ${PORT}`);
     console.log(`[AUTH] Default admin: admin / ${DEFAULT_ADMIN_PASSWORD}`);
 });
