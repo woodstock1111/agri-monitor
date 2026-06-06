@@ -1,0 +1,96 @@
+<view class="dashboard-page">
+  <view class="chart-palette">
+    <view class="palette-color palette-color--accent"></view>
+    <view class="palette-color palette-color--warning"></view>
+    <view class="palette-color palette-color--danger"></view>
+    <view class="palette-color palette-color--muted"></view>
+    <view class="palette-color palette-color--transparent"></view>
+  </view>
+
+  <view wx:if="{{refreshing}}" class="refresh-bar">
+    <image class="refresh-potato" src="/assets/agent-sweet-potato.png" mode="aspectFit"></image>
+    <text>小薯正在拉取最新数据…</text>
+  </view>
+
+  <view class="app-title">
+    <text>传感器看板</text>
+    <view class="app-title__sub {{cached ? 'app-title__sub--muted' : ''}}">
+      <view class="live-dot {{cached ? 'live-dot--muted' : ''}}"></view>
+      <text>{{summaryOnlineText}}</text>
+    </view>
+  </view>
+
+  <scroll-view scroll-x class="chip-strip" enhanced show-scrollbar="{{false}}">
+    <block wx:for="{{devices}}" wx:key="id">
+      <view
+        class="chip {{item.active ? 'chip--active' : ''}} {{item.offline ? 'chip--offline' : ''}}"
+        hover-class="chip--press"
+        hover-stay-time="80"
+        bindtap="onPickDevice"
+        data-id="{{item.id}}"
+      >
+        <view class="chip__dot"></view>
+        <text>{{item.name}}{{item.offline ? ' · 离线' : ''}}</text>
+      </view>
+    </block>
+  </scroll-view>
+
+  <scroll-view scroll-y class="dashboard-scroll {{cached ? 'dashboard-scroll--cached' : ''}}" enhanced show-scrollbar="{{false}}">
+    <view wx:if="{{loading}}" class="loading-card">
+      <view class="loading-spin"></view>
+      <text>正在加载传感器数据</text>
+    </view>
+
+    <block wx:else>
+      <view class="summary">
+        <view class="summary__shine"></view>
+        <text class="summary__title">{{summaryDeviceName}}</text>
+        <view class="summary__row">
+          <text class="summary__num">{{summaryStatus}}</text>
+          <text class="summary__sub">{{summarySub}}</text>
+        </view>
+        <view class="summary__chips">
+          <text class="summary__pill">{{summaryDeviceOnlineText}}</text>
+          <text class="summary__pill">更新时间 {{summaryTime || '--'}}</text>
+          <text class="summary__pill {{alertCount > 0 ? 'summary__pill--warn' : ''}}">{{alertCount}} 项警告</text>
+          <text wx:if="{{cached}}" class="summary__pill summary__pill--cache">缓存</text>
+        </view>
+      </view>
+
+      <view class="grid">
+        <block wx:for="{{cards}}" wx:key="id">
+          <view class="scard scard--{{item.tone}} {{item.cached ? 'scard--cached' : ''}}">
+            <view class="scard__head">
+              <view class="scard__name">
+                <view class="scard__name-ico scard__name-ico--{{item.tone}}">
+                  <text>{{item.icon}}</text>
+                </view>
+                <text>{{item.name}}</text>
+              </view>
+              <text class="scard__unit">{{item.displayUnit}}</text>
+            </view>
+
+            <view class="scard__value">
+              <text>{{item.value}}</text>
+              <view wx:if="{{item.alarmLevel > 0 && !item.cached}}" class="scard__pulse scard__pulse--{{item.tone}}"></view>
+            </view>
+
+            <view class="scard__chart">
+              <image wx:if="{{item.chartUrl}}" class="chart-image" src="{{item.chartUrl}}" mode="scaleToFill"></image>
+              <view wx:else class="chart-placeholder"></view>
+            </view>
+
+            <view class="scard__foot">
+              <text class="scard__status scard__status--{{item.tone}}">{{item.statusText}}</text>
+              <view class="scard__trend trend--{{item.cached ? 'flat' : item.trend.dir}}">
+                <text>{{item.cached ? '缓存' : item.trend.text}}</text>
+              </view>
+            </view>
+          </view>
+        </block>
+      </view>
+    </block>
+  </scroll-view>
+
+  <canvas type="2d" class="chart-export-canvas" id="chart-export-canvas"></canvas>
+</view>

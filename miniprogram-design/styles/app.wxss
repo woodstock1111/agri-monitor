@@ -1,0 +1,392 @@
+/* ============================================================
+   Agri Monitor 微信小程序 - 全局样式
+   与 Web 端 style.css 视觉语言保持一致
+   单位换算：1rpx = 750/屏幕宽 px ；以 iPhone 6 (375pt) 为基准
+   Web 14px ≈ 28rpx ；Web 16px ≈ 32rpx ；Web 36px ≈ 72rpx
+   ============================================================ */
+
+page {
+  /* —— 核心底色 —— */
+  --bg-base:        #e8edf3;   /* 页面底（与 Web 一致） */
+  --bg-surface:     #f8fafc;   /* 卡片/面板基底 */
+  --bg-panel:       #f8fafc;   /* 同 surface，用于卡片内层 */
+  --bg-hover:       rgba(16, 85, 170, 0.05);   /* 按压底色（小程序 hover-class 使用） */
+  --bg-cool:        #eef3fb;   /* AI 农事区冷色调（项目新增） */
+
+  /* —— 主色与渐变 —— */
+  --accent:         #1070e0;
+  --accent-press:   #0c60c4;   /* 主色按压态（来自 .btn-primary:hover） */
+  --accent-light:   #e8f0fe;   /* 浅底/徽章背景 */
+  --accent-glow:    rgba(16, 112, 224, 0.10);
+  --accent-2:       #059669;
+  --accent-3:       #7c3aed;
+
+  /* —— 状态色 —— */
+  --success:        #10b981;
+  --success-bg:     #ecfdf5;
+  --warning:        #f59e0b;
+  --warning-bg:     #fffbeb;
+  --danger:         #ef4444;
+  --danger-bg:      #fef2f2;
+  --info:           #3b82f6;
+  --info-bg:        #eff6ff;
+
+  /* —— 文本 —— */
+  --text-primary:   #1e293b;
+  --text-secondary: #64748b;
+  --text-muted:     #94a3b8;
+  --text-inverse:   #ffffff;
+
+  /* —— 边框 —— */
+  --border:         #e2e8f0;
+  --border-strong:  #cbd5e1;
+
+  /* —— 圆角（rpx）—— */
+  --radius:         24rpx;     /* Web 12px */
+  --radius-sm:      16rpx;     /* Web 8px */
+  --radius-lg:      32rpx;     /* 大卡片/底部面板 */
+  --radius-pill:    9999rpx;
+
+  /* —— 阴影（小程序支持 box-shadow）—— */
+  --shadow-sm:      0 1rpx 4rpx rgba(0,0,0,0.05);
+  --shadow:         0 8rpx 24rpx rgba(0,0,0,0.06);
+  --shadow-lg:      0 20rpx 60rpx rgba(0,0,0,0.08);
+
+  /* —— 间距节奏（rpx）—— */
+  --gap-xs:         8rpx;
+  --gap-sm:         16rpx;
+  --gap:            24rpx;
+  --gap-md:         32rpx;
+  --gap-lg:         48rpx;
+
+  /* —— 字号阶梯（rpx）—— */
+  --fs-caption:     22rpx;     /* 辅助/角标，仅限非关键 */
+  --fs-body:        28rpx;     /* 正文最小 */
+  --fs-md:          30rpx;
+  --fs-lg:          36rpx;
+  --fs-title:       40rpx;     /* 区块标题 */
+  --fs-display:     56rpx;     /* 关键数值最小 */
+  --fs-display-xl:  72rpx;     /* 传感器主数值 */
+
+  /* —— 动效曲线 & 时长 —— */
+  --ease:           cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-micro:      120ms;
+  --dur-state:      280ms;
+  --dur-page:       360ms;
+
+  /* —— 系统留白 —— */
+  --safe-bottom:    env(safe-area-inset-bottom, 0);
+
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  font-size: var(--fs-body);
+  line-height: 1.6;
+}
+
+/* ============================================================
+   通用容器
+   ============================================================ */
+.page {
+  min-height: 100vh;
+  padding-bottom: calc(120rpx + var(--safe-bottom));
+}
+
+.container {
+  padding: var(--gap);
+}
+
+/* —— 卡片基底 —— */
+.card {
+  background: var(--bg-panel);
+  border: 1rpx solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--gap-md);
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  overflow: hidden;
+}
+
+.card--cool {
+  background: var(--bg-cool);
+  border-color: #d8e3f3;
+}
+
+.card--alert::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 8rpx;
+  background: var(--danger);
+  border-top-left-radius: var(--radius);
+  border-bottom-left-radius: var(--radius);
+}
+
+/* ============================================================
+   按钮（4 态：default / press / disabled / loading）
+   ============================================================ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  min-height: 72rpx;
+  padding: 0 32rpx;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  transition: opacity var(--dur-micro) var(--ease),
+              transform var(--dur-micro) var(--ease),
+              background var(--dur-micro) var(--ease);
+}
+
+.btn--primary {
+  background: var(--accent);
+  color: var(--text-inverse);
+}
+
+.btn--primary-press,         /* 用 hover-class="btn--primary-press" */
+.btn--primary[hover-class] {
+  background: var(--accent-press);
+  transform: scale(0.97);
+}
+
+.btn--ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1rpx solid var(--border);
+}
+
+.btn--ghost-press {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.btn--danger {
+  background: var(--danger);
+  color: var(--text-inverse);
+}
+
+.btn[disabled],
+.btn--disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.btn--loading {
+  pointer-events: none;
+  position: relative;
+  color: transparent;
+}
+
+.btn--loading::after {
+  content: '';
+  position: absolute;
+  width: 28rpx;
+  height: 28rpx;
+  border: 3rpx solid rgba(255,255,255,0.5);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: btnSpin 0.8s linear infinite;
+}
+
+@keyframes btnSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* —— 大圆形完成按钮（农事卡专用） —— */
+.btn-done {
+  width: 96rpx;
+  height: 96rpx;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40rpx;
+  box-shadow: 0 8rpx 20rpx var(--accent-glow);
+  transition: transform var(--dur-micro) var(--ease);
+}
+
+.btn-done-press { transform: scale(0.92); }
+.btn-done-rebound { animation: doneBounce 360ms var(--ease); }
+
+@keyframes doneBounce {
+  0%   { transform: scale(0.92); }
+  60%  { transform: scale(1.05); }
+  100% { transform: scale(1.00); }
+}
+
+/* ============================================================
+   徽章 & 状态 chip
+   ============================================================ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 4rpx 16rpx;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-caption);
+  font-weight: 500;
+}
+
+.badge--online   { background: var(--success-bg); color: var(--success); }
+.badge--offline  { background: var(--bg-base);    color: var(--text-muted); }
+.badge--warning  { background: var(--warning-bg); color: var(--warning); }
+.badge--ai       { background: var(--accent-light); color: var(--accent); }
+
+/* —— chip 选择器 —— */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 12rpx 28rpx;
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
+  border: 1rpx solid var(--border);
+  color: var(--text-secondary);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background var(--dur-micro) var(--ease);
+}
+
+.chip--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ============================================================
+   底部 TabBar（自定义）
+   ============================================================ */
+.tabbar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  height: calc(120rpx + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
+  background: rgba(255,255,255,0.96);
+  backdrop-filter: blur(20rpx);
+  border-top: 1rpx solid var(--border);
+  display: flex;
+  z-index: 50;
+}
+
+.tabbar__item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4rpx;
+  font-size: 22rpx;
+  color: var(--text-muted);
+  transition: color var(--dur-micro) var(--ease);
+}
+
+.tabbar__item--active {
+  color: var(--accent);
+}
+
+.tabbar__icon { font-size: 44rpx; }
+
+/* ============================================================
+   模态/底部抽屉
+   ============================================================ */
+.sheet-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(30,41,59,0.45);
+  z-index: 100;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-state) var(--ease);
+}
+.sheet-mask--open { opacity: 1; pointer-events: auto; }
+
+.sheet {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  background: var(--bg-surface);
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  padding: var(--gap-md) var(--gap) calc(var(--gap-md) + var(--safe-bottom));
+  transform: translateY(100%);
+  transition: transform var(--dur-state) var(--ease);
+  z-index: 101;
+  box-shadow: var(--shadow-lg);
+}
+.sheet--open { transform: translateY(0); }
+
+/* ============================================================
+   Toast（统一从底部上滑）
+   ============================================================ */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(180rpx + var(--safe-bottom));
+  transform: translate(-50%, 20rpx);
+  opacity: 0;
+  background: rgba(30,41,59,0.92);
+  color: #fff;
+  padding: 18rpx 28rpx;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-body);
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  z-index: 200;
+  transition: opacity var(--dur-state) var(--ease),
+              transform var(--dur-state) var(--ease);
+}
+.toast--open { opacity: 1; transform: translate(-50%, 0); }
+
+/* ============================================================
+   空态
+   ============================================================ */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: 120rpx var(--gap);
+  color: var(--text-muted);
+  text-align: center;
+}
+.empty__illus { width: 280rpx; height: 280rpx; }
+.empty__title { font-size: var(--fs-md); color: var(--text-secondary); }
+.empty__cta   { margin-top: var(--gap); }
+
+/* ============================================================
+   通用动画 keyframes
+   ============================================================ */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16rpx); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ripple {
+  0%   { transform: scale(0);   opacity: 0.45; }
+  60%  { opacity: 0.20; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+@keyframes drawCheck {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50%      { opacity: 1.0; transform: scale(1.15); }
+}
+
+/* ============================================================
+   可读性硬指标兜底
+   ============================================================ */
+.text-body { font-size: var(--fs-body); color: var(--text-primary); }
+.text-mute { color: var(--text-muted); }
+.value-display { font-size: var(--fs-display-xl); font-weight: 700; line-height: 1; letter-spacing: -1rpx; }

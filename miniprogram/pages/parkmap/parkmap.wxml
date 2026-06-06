@@ -1,0 +1,165 @@
+<wxs src="./gesture.wxs" module="gm" />
+
+<view class="map-root">
+  <view
+    class="viewport"
+    data-vw="{{vw}}"
+    data-vh="{{vh}}"
+    data-initx="{{initTx}}"
+    data-inity="{{initTy}}"
+    bind:touchstart="{{gm.onTouchStart}}"
+    bind:touchmove="{{gm.onTouchMove}}"
+    bind:touchend="{{gm.onTouchEnd}}"
+    bind:touchcancel="{{gm.onTouchEnd}}"
+  >
+    <view class="stage" style="transform: translate3d({{initTx}}px,{{initTy}}px,0);">
+      <!-- 铺满的农田底图（无可见边界） -->
+      <view class="land">
+        <view class="land__rows"></view>
+        <view class="land__patch land__patch--a"></view>
+        <view class="land__patch land__patch--b"></view>
+      </view>
+      <view class="sea"></view>
+      <view class="coast"></view>
+      <view class="channel"></view>
+      <view class="road road--main"></view>
+      <view class="road road--branch"></view>
+      <view class="map-badge">海南 · 文昌 · 地瓜产业园</view>
+
+      <!-- 散落的手绘小花，按拖动方向倾倒 -->
+      <view class="deco-layer">
+        <block wx:for="{{decos}}" wx:key="idx">
+          <view class="flower flower--{{item.variant}}" style="left:{{item.x}}rpx; top:{{item.y}}rpx;">
+            <view class="flower__head"></view>
+            <view class="flower__leaf"></view>
+            <view class="flower__stem"></view>
+          </view>
+        </block>
+      </view>
+
+      <!-- 地块 -->
+      <block wx:for="{{plots}}" wx:key="id">
+        <view
+          class="plot {{item.id === focusId ? 'plot--focus' : ''}}"
+          data-id="{{item.id}}"
+          data-cx="{{item.cx}}"
+          data-cy="{{item.cy}}"
+          style="left:{{item.left}}rpx; top:{{item.top}}rpx; width:{{item.size}}rpx; height:{{item.h}}rpx; transform: translateY({{-item.initLift}}px) scale({{item.initScale}}); z-index:{{item.z}};"
+          catchtap="onTapPlot"
+        >
+          <view class="parcel parcel--{{item.tone}}">
+            <view class="parcel__rows"></view>
+          </view>
+
+          <!-- 进入提示：聚焦时淡淡浮现在田块下方地上 -->
+          <view class="enter-hint">进入 ›</view>
+
+          <!-- 悬浮标签卡 -->
+          <view class="pin">
+            <view class="pin__card">
+              <view class="pin__row">
+                <text class="pin__name">{{item.name}}</text>
+                <view wx:if="{{item.sensor.alarmLevel > 0}}" class="pin__alarm"></view>
+              </view>
+              <text class="pin__crop">{{item.crop}}</text>
+
+              <view class="pin__info">
+                <view class="ichip">
+                  <text class="ichip__num">{{item.unfinishedCount}}</text>
+                  <text class="ichip__label">待办</text>
+                </view>
+                <view wx:if="{{item.sensor.metrics[0]}}" class="ichip">
+                  <text class="ichip__num">{{item.sensor.metrics[0].value}}<text class="ichip__unit">{{item.sensor.metrics[0].unit}}</text></text>
+                  <text class="ichip__label">{{item.sensor.metrics[0].name}}</text>
+                </view>
+                <view wx:if="{{item.sensor.metrics[1]}}" class="ichip">
+                  <text class="ichip__num">{{item.sensor.metrics[1].value}}<text class="ichip__unit">{{item.sensor.metrics[1].unit}}</text></text>
+                  <text class="ichip__label">{{item.sensor.metrics[1].name}}</text>
+                </view>
+              </view>
+            </view>
+            <view class="pin__stem"></view>
+          </view>
+        </view>
+      </block>
+    </view>
+  </view>
+
+  <!-- 顶部信息条 -->
+  <view class="topbar" style="padding-top:{{statusBarHeight}}px">
+    <text class="topbar__title">地瓜产业园区</text>
+    <text class="topbar__sub">{{plots.length}} 个地块 · 拖动浏览，点击进入</text>
+  </view>
+
+  <!-- 地块详情 -->
+  <view wx:if="{{detailOpen}}" class="detail-mask {{detailShown ? 'detail-mask--in' : ''}}" catchtap="closeDetail"></view>
+  <view wx:if="{{detailOpen}}" class="detail {{detailShown ? 'detail--in' : ''}}">
+    <view class="detail__grab"></view>
+    <view class="detail__head">
+      <view class="detail__title-wrap">
+        <text class="detail__title">{{detail.plot.name}}</text>
+        <text class="detail__meta">{{detail.plot.crop}} · {{detail.plot.area}} 亩 · {{detail.plot.manager}} 负责</text>
+        <text class="detail__meta detail__meta--dim">种植于 {{detail.plot.plantDate}}</text>
+      </view>
+      <view class="detail__close" catchtap="closeDetail">✕</view>
+    </view>
+
+    <scroll-view scroll-y class="detail__scroll" style="height:{{detailScrollH}}px">
+     <view class="detail__inner">
+      <view class="detail__section-title">传感器</view>
+      <view wx:if="{{detail.devices.length}}" class="sensor-wrap">
+        <block wx:for="{{detail.devices}}" wx:key="id" wx:for-item="dev">
+          <view class="sensor-dev">
+            <view class="sensor-dev__head">
+              <text class="sensor-dev__name">{{dev.name}}</text>
+              <text class="sensor-dev__state {{dev.online ? '' : 'sensor-dev__state--off'}}">{{dev.online ? '在线' : '离线'}}</text>
+            </view>
+            <view class="sensor-grid">
+              <block wx:for="{{dev.factors}}" wx:key="registerName" wx:for-item="f">
+                <view class="sfactor sfactor--lv{{f.alarmLevel}}">
+                  <text class="sfactor__name">{{f.registerName}}</text>
+                  <text class="sfactor__val">{{f.value}}<text class="sfactor__unit">{{f.unit}}</text></text>
+                </view>
+              </block>
+            </view>
+          </view>
+        </block>
+      </view>
+      <view wx:else class="detail__empty">该地块暂无传感器</view>
+
+      <view class="detail__section-title detail__section-title--row">
+        <text>农事</text>
+        <view class="add-btn" catchtap="onAddTask">+ 新增</view>
+      </view>
+      <block wx:if="{{detail.tasks.length}}">
+        <block wx:for="{{detail.tasks}}" wx:key="id" wx:for-item="task">
+          <view class="dtask {{task.status === 'done' ? 'dtask--done' : ''}}">
+            <view class="dtask__body">
+              <text class="dtask__title">{{task.title}}</text>
+              <view wx:if="{{task.aiReason}}" class="dtask__why">
+                <text class="dtask__why-tag">小薯</text>
+                <text class="dtask__why-text">{{task.aiReason}}</text>
+              </view>
+              <view class="dtask__tags">
+                <text wx:if="{{task.type === 'ai'}}" class="dtask__tag dtask__tag--ai">AI</text>
+                <text class="dtask__tag">{{task.date}}</text>
+              </view>
+            </view>
+            <view
+              wx:if="{{task.status !== 'done'}}"
+              class="dtask__done-btn"
+              hover-class="dtask__done-btn--press"
+              hover-stay-time="80"
+              data-id="{{task.id}}"
+              catchtap="onCompleteTask"
+            >完成</view>
+            <view wx:else class="dtask__done-tag">✓ 已完成</view>
+          </view>
+        </block>
+      </block>
+      <view wx:else class="detail__empty">这块地还没有农事，点「新增」加一条</view>
+      <view class="detail__pad"></view>
+     </view>
+    </scroll-view>
+  </view>
+</view>

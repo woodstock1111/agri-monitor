@@ -1,0 +1,122 @@
+.tab-shell {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0 40rpx calc(24rpx + env(safe-area-inset-bottom));
+  pointer-events: none;
+  z-index: 999;
+  box-sizing: border-box;
+}
+
+.tab-glass {
+  min-height: 104rpx;
+  padding: 8rpx;
+  border-radius: 40rpx;
+  border: 1rpx solid rgba(255, 255, 255, 0.5);
+  background: rgba(248, 250, 252, 0.82);
+  -webkit-backdrop-filter: blur(40rpx) saturate(180%);
+  backdrop-filter: blur(40rpx) saturate(180%);
+  box-shadow: inset 0 1rpx 0 rgba(255, 255, 255, 0.5),
+              0 16rpx 44rpx rgba(30, 41, 59, 0.12);
+  display: flex;
+  gap: 10rpx;
+  pointer-events: auto;
+}
+
+.tab-item {
+  flex: 1;
+  min-width: 0;
+  height: 88rpx;
+  border-radius: 32rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4rpx;
+  color: var(--text-muted);
+  transition: transform var(--dur-micro) var(--ease),
+              background var(--dur-micro) var(--ease),
+              color var(--dur-micro) var(--ease);
+}
+
+.tab-item--active {
+  color: var(--accent);
+  background: transparent;
+}
+
+.tab-item--press {
+  transform: scale(0.97);
+}
+
+.tab-icon {
+  width: 36rpx;
+  height: 36rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-icon__plan {
+  width: 32rpx;
+  height: 32rpx;
+  border: 3rpx solid currentColor;
+  border-radius: 10rpx;
+  box-sizing: border-box;
+  padding: 6rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.tab-icon__plan-top,
+.tab-icon__plan-line {
+  height: 3rpx;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  opacity: 0.55;
+}
+
+.tab-icon__plan-top {
+  width: 12rpx;
+}
+
+.tab-icon__plan-line--long {
+  width: 18rpx;
+}
+
+.tab-icon__plan-line {
+  width: 14rpx;
+}
+
+.tab-icon__dashboard {
+  width: 32rpx;
+  height: 32rpx;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4rpx;
+}
+
+.tab-icon__dash-cell {
+  border: 3rpx solid currentColor;
+  border-radius: 8rpx;
+  box-sizing: border-box;
+  opacity: 0.55;
+}
+
+.tab-icon__dash-cell--large {
+  grid-row: span 2;
+}
+
+.tab-item--active .tab-icon__plan-top,
+.tab-item--active .tab-icon__plan-line,
+.tab-item--active .tab-icon__dash-cell {
+  opacity: 1;
+  background: currentColor;
+}
+
+.tab-text {
+  font-size: var(--fs-caption);
+  line-height: 1.2;
+  font-weight: 700;
+}

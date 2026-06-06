@@ -1,0 +1,336 @@
+<!-- ============================================================
+     Agri Monitor 小程序 · 视觉组件骨架（无业务逻辑）
+     说明：本文件用于设计 review 阶段，每个组件展示纯视觉壳
+           真实接入时拆分到 components/<name>/<name>.wxml + .wxss + .js
+     ============================================================ -->
+
+<!-- ============================================================
+     1. 卡片基底 base-card
+     用法：所有"区块大卡 / 任务卡 / 传感器卡"都基于它
+     ============================================================ -->
+<template name="base-card">
+  <view class="card {{tone === 'cool' ? 'card--cool' : ''}} {{alert ? 'card--alert' : ''}}"
+        hover-class="card--press"
+        hover-stay-time="80">
+    <view wx:if="{{alert}}" class="card-alert-bar"></view>
+    <slot></slot>
+  </view>
+</template>
+
+<!-- ============================================================
+     2. 主按钮 prim-btn（4 态：default / press / disabled / loading）
+     props: type=primary|ghost|danger, loading, disabled, text
+     ============================================================ -->
+<template name="prim-btn">
+  <button class="btn btn--{{type}} {{loading ? 'btn--loading' : ''}}"
+          hover-class="btn--{{type}}-press"
+          hover-stay-time="80"
+          disabled="{{disabled}}"
+          bindtap="onTap">
+    <text wx:if="{{!loading}}">{{text}}</text>
+  </button>
+</template>
+
+<!-- ============================================================
+     3. 大圆完成按钮 done-btn（农事卡专用 · 含按压回弹）
+     ============================================================ -->
+<template name="done-btn">
+  <view class="btn-done {{phase === 'press' ? 'btn-done-press' : ''}}
+                          {{phase === 'rebound' ? 'btn-done-rebound' : ''}}"
+        bindtap="onDone">
+    <view class="btn-done__icon">✓</view>
+    <view wx:if="{{phase === 'rebound'}}" class="btn-done__ripple"></view>
+  </view>
+</template>
+
+<!-- ============================================================
+     4. 日期 chip 切换条 date-strip
+     ============================================================ -->
+<template name="date-strip">
+  <scroll-view scroll-x="true" class="date-strip" enhanced show-scrollbar="{{false}}">
+    <block wx:for="{{dates}}" wx:key="key">
+      <view class="date-chip {{item.isToday ? 'date-chip--today' : ''}}"
+            bindtap="onPickDate" data-key="{{item.key}}">
+        <text class="date-chip__weekday">{{item.weekday}}</text>
+        <text class="date-chip__day">{{item.day}}</text>
+        <view wx:if="{{item.hasTask}}" class="date-chip__dot"></view>
+      </view>
+    </block>
+  </scroll-view>
+</template>
+
+<!-- ============================================================
+     5. 区块标题 section-head（带图标 + 计数 + 右侧操作）
+     ============================================================ -->
+<template name="section-head">
+  <view class="section__head">
+    <view class="section__title">
+      <view class="section__title-ico section__title-ico--{{flavor}}">
+        <text>{{ico}}</text>
+      </view>
+      <text>{{title}}</text>
+      <text wx:if="{{count}}" class="section__count">{{count}}</text>
+    </view>
+    <view wx:if="{{actText}}" class="section__act" bindtap="onAct">
+      <text>{{actText}}</text>
+    </view>
+  </view>
+</template>
+
+<!-- ============================================================
+     6. 任务卡 task-card（推荐 / AI / 自己 三种）
+     props: task = {title, why, plot, time, owner, overdue, done, kind}
+     kind: ai-rec | ai-auto | user
+     ============================================================ -->
+<template name="task-card">
+  <view class="task task--{{task.kind}}
+                {{task.overdue ? 'task--overdue' : ''}}
+                {{task.done ? 'task--done' : ''}}
+                {{task.done ? 'task--with-check' : ''}}"
+        hover-class="task--press"
+        hover-stay-time="80">
+
+    <!-- 完成对勾（done 后出现） -->
+    <view wx:if="{{task.done}}" class="task__check">
+      <!-- 用 inline svg 兼容大多数小程序基础库；不行可换 cover-image -->
+      <view class="task__check-svg"></view>
+    </view>
+
+    <!-- 主行 -->
+    <view class="task__row1">
+      <text class="task__title">{{task.title}}</text>
+      <view wx:if="{{task.owner}}" class="task__avatar"
+            style="background:{{task.owner.color}}">
+        <text>{{task.owner.short}}</text>
+      </view>
+    </view>
+
+    <!-- AI 推荐：原因说明 -->
+    <view wx:if="{{task.kind === 'ai-rec' && task.why}}" class="task__why">
+      <text class="task__why-tag">小薯</text>
+      <text>{{task.why}}</text>
+    </view>
+
+    <!-- 元信息 -->
+    <view class="task__meta">
+      <text wx:if="{{task.plot}}" class="task__chip">{{task.plot}}</text>
+      <text wx:if="{{task.time}}" class="task__chip task__chip--time">{{task.time}}</text>
+      <text wx:if="{{task.overdue}}" class="task__chip task__chip--overdue">已逾期</text>
+    </view>
+
+    <!-- 底部动作区 -->
+    <view class="task__footer">
+
+      <!-- AI 推荐：采纳/忽略 -->
+      <view wx:if="{{task.kind === 'ai-rec'}}" class="ai-actions">
+        <view class="act-btn act-btn--primary" bindtap="onAdopt">采纳</view>
+        <view class="act-btn" bindtap="onIgnore">忽略</view>
+      </view>
+
+      <!-- AI 农事：完成/跳过/转人工 -->
+      <view wx:elif="{{task.kind === 'ai-auto'}}" class="ai-actions">
+        <view class="act-btn act-btn--primary" bindtap="onDone">完成</view>
+        <view class="act-btn" bindtap="onSkip">跳过</view>
+        <view class="act-btn" bindtap="onConvert">转人工</view>
+      </view>
+
+      <!-- 用户任务：负责人 + 大圆完成按钮 -->
+      <block wx:else>
+        <text class="task__owner-text">{{task.ownerLabel}}</text>
+        <template is="done-btn" data="{{phase: task.donePhase}}"/>
+      </block>
+
+    </view>
+  </view>
+</template>
+
+<!-- ============================================================
+     7. 传感器卡 sensor-card
+     props: s = {name, unit, value, alert, trend, plot}
+     ============================================================ -->
+<template name="sensor-card">
+  <view class="scard
+                {{s.alert === 'danger' ? 'scard--alert' : ''}}
+                {{s.alert === 'warn' ? 'scard--warn' : ''}}
+                {{s.wide ? 'scard--wide' : ''}}">
+    <view class="scard__head">
+      <view class="scard__name">
+        <view class="scard__name-ico" style="background:{{s.icoBg}};color:{{s.icoColor}}">
+          <text>{{s.ico}}</text>
+        </view>
+        <text>{{s.name}}</text>
+      </view>
+      <text class="scard__unit">{{s.unit}}</text>
+    </view>
+
+    <view class="scard__value">
+      <text>{{s.value}}</text>
+      <view wx:if="{{s.alert}}" class="scard__pulse"></view>
+    </view>
+
+    <!-- mini 折线（用 canvas 或 svg；这里给 svg 占位） -->
+    <view class="scard__chart">
+      <!-- 真实接入用 <canvas type="2d"> 或 ec-canvas；UI 阶段用 inline svg -->
+    </view>
+
+    <view class="scard__foot">
+      <text>{{s.footLabel}}</text>
+      <view class="scard__trend trend--{{s.trend.dir}}">
+        <text>{{s.trend.icon}} {{s.trend.delta}}</text>
+      </view>
+    </view>
+  </view>
+</template>
+
+<!-- ============================================================
+     8. 设备 chip 选择器 chip-strip
+     ============================================================ -->
+<template name="chip-strip">
+  <scroll-view scroll-x="true" class="chip-strip" enhanced show-scrollbar="{{false}}">
+    <block wx:for="{{devices}}" wx:key="id">
+      <view class="chip {{item.active ? 'chip--active' : ''}} {{item.offline ? 'chip--offline' : ''}}"
+            bindtap="onPickDevice" data-id="{{item.id}}">
+        <view class="chip__dot" style="background:{{item.offline ? '#94a3b8' : '#10b981'}}"></view>
+        <text>{{item.name}}{{item.offline ? ' · 离线' : ''}}</text>
+      </view>
+    </block>
+  </scroll-view>
+</template>
+
+<!-- ============================================================
+     9. 空态 empty-state
+     ============================================================ -->
+<template name="empty-state">
+  <view class="empty">
+    <image class="empty__illus" src="{{illus || '/assets/empty-potato.svg'}}" mode="aspectFit"/>
+    <text class="empty__title">{{title}}</text>
+    <text wx:if="{{sub}}" class="empty__sub">{{sub}}</text>
+    <view wx:if="{{ctaText}}" class="btn-empty" bindtap="onCta">
+      <text>{{ctaText}}</text>
+    </view>
+  </view>
+</template>
+
+<!-- ============================================================
+     10. 消息气泡 chat-bubble（用户/小薯）
+     ============================================================ -->
+<template name="chat-bubble">
+  <view class="msg msg--{{msg.from}}">
+    <image wx:if="{{msg.from === 'bot'}}" class="msg__avatar" src="/assets/sweet-potato.svg"/>
+    <view class="msg__bubble">
+      <text>{{msg.text}}</text>
+      <view wx:if="{{msg.streaming}}" class="cursor"></view>
+      <!-- 结构化数据卡 -->
+      <view wx:if="{{msg.card}}" class="msg-card">
+        <view class="msg-card__title">{{msg.card.title}}</view>
+        <block wx:for="{{msg.card.rows}}" wx:key="k">
+          <view class="msg-card__row">
+            <text>{{item.label}}</text>
+            <text class="msg-card__row-val">{{item.value}}</text>
+          </view>
+        </block>
+        <view wx:if="{{msg.card.cta}}" class="msg-card__cta" bindtap="onCardCta">
+          <text>{{msg.card.cta}} →</text>
+        </view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<!-- ============================================================
+     11. 思考中三点 typing-dots
+     ============================================================ -->
+<template name="typing-dots">
+  <view class="msg msg--bot">
+    <image class="msg__avatar" src="/assets/sweet-potato.svg"/>
+    <view class="typing">
+      <view></view><view></view><view></view>
+    </view>
+  </view>
+</template>
+
+<!-- ============================================================
+     12. 底部抽屉 sheet（加号 / 添加任务通用）
+     ============================================================ -->
+<template name="bottom-sheet">
+  <view class="sheet-mask {{open ? 'sheet-mask--open' : ''}}" bindtap="onClose"></view>
+  <view class="sheet {{open ? 'sheet--open' : ''}}">
+    <view class="sheet__handle"></view>
+    <view class="sheet__list">
+      <block wx:for="{{items}}" wx:key="key">
+        <view class="sheet__item" bindtap="onPick" data-key="{{item.key}}">
+          <view class="sheet__item-ico sheet__item-ico--{{item.flavor}}">
+            <text>{{item.ico}}</text>
+          </view>
+          <view>
+            <text>{{item.label}}</text>
+            <text wx:if="{{item.sub}}" class="sheet__item-sub">{{item.sub}}</text>
+          </view>
+        </view>
+      </block>
+    </view>
+    <view class="sheet__cancel" bindtap="onClose"><text>取消</text></view>
+  </view>
+</template>
+
+<!-- ============================================================
+     13. Toast（撤销 / 普通）
+     ============================================================ -->
+<template name="toast">
+  <view class="toast {{open ? 'toast--open' : ''}}">
+    <text>{{text}}</text>
+    <view wx:if="{{action}}" class="toast__action" bindtap="onAction">
+      <text>{{action}}</text>
+    </view>
+  </view>
+</template>
+
+<!-- ============================================================
+     14. 自定义 TabBar（小程序需关闭原生 tabBar，使用 custom-tab-bar）
+     ============================================================ -->
+<template name="tabbar">
+  <view class="tabbar">
+    <block wx:for="{{tabs}}" wx:key="key">
+      <view class="tabbar__item {{item.active ? 'tabbar__item--active' : ''}}"
+            bindtap="onSwitchTab" data-key="{{item.key}}">
+        <view class="tabbar__icon"><text>{{item.icon}}</text></view>
+        <text>{{item.label}}</text>
+      </view>
+    </block>
+  </view>
+</template>
+
+<!-- ============================================================
+     15. 顶部状态条 chat-head
+     ============================================================ -->
+<template name="chat-head">
+  <view class="chat-head">
+    <view class="chat-head__avatar">
+      <image class="potato" src="/assets/sweet-potato.svg"/>
+    </view>
+    <view>
+      <text class="chat-head__name">{{name}}</text>
+      <view class="chat-head__status">
+        <view class="dot"></view>
+        <text>{{statusText}}</text>
+      </view>
+    </view>
+    <view class="chat-head__more" bindtap="onMore">⋯</view>
+  </view>
+</template>
+
+<!-- ============================================================
+     使用示例（页面 wxml 中）
+     ============================================================ -->
+<!--
+<import src="/components/components.wxml"/>
+
+<template is="date-strip" data="{{dates}}"/>
+
+<view class="section">
+  <template is="section-head" data="{{title:'AI 每日推荐', ico:'★', count:'2 条', actText:'↻ 刷新', flavor:'ai'}}"/>
+  <block wx:for="{{aiRecs}}" wx:key="id">
+    <template is="task-card" data="{{task: item}}"/>
+  </block>
+</view>
+-->

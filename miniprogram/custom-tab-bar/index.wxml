@@ -1,0 +1,27 @@
+<view class="tab-shell">
+  <view class="tab-glass">
+    <block wx:for="{{list}}" wx:key="pagePath">
+      <view
+        class="tab-item {{selected === index ? 'tab-item--active' : ''}}"
+        data-index="{{index}}"
+        hover-class="tab-item--press"
+        hover-stay-time="80"
+        bindtap="switchTab"
+      >
+        <view class="tab-icon tab-icon--{{item.icon}}">
+          <view wx:if="{{item.icon === 'plan'}}" class="tab-icon__plan">
+            <view class="tab-icon__plan-top"></view>
+            <view class="tab-icon__plan-line tab-icon__plan-line--long"></view>
+            <view class="tab-icon__plan-line"></view>
+          </view>
+          <view wx:else class="tab-icon__dashboard">
+            <view class="tab-icon__dash-cell tab-icon__dash-cell--large"></view>
+            <view class="tab-icon__dash-cell"></view>
+            <view class="tab-icon__dash-cell"></view>
+          </view>
+        </view>
+        <text class="tab-text">{{item.text}}</text>
+      </view>
+    </block>
+  </view>
+</view>

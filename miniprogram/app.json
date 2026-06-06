@@ -1,0 +1,16 @@
+{
+  "pages": [
+    "pages/parkmap/parkmap",
+    "pages/farmtasks/farmtasks",
+    "pages/dashboard/dashboard"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#f8fafc",
+    "navigationBarTitleText": "地瓜产业园区",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#e8edf3",
+    "enablePullDownRefresh": false
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

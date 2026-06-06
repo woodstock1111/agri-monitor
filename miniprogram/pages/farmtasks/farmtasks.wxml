@@ -1,0 +1,153 @@
+<view class="farm-page">
+  <view class="app-title">
+    <text>农事计划</text>
+    <button class="title-add" hover-class="title-add--press" hover-stay-time="80" bindtap="onAddTask">
+      <text>+</text>
+    </button>
+  </view>
+
+  <scroll-view scroll-x class="date-strip" enhanced show-scrollbar="{{false}}">
+    <block wx:for="{{dates}}" wx:key="key">
+      <view
+        class="date-chip {{item.active ? 'date-chip--active' : ''}} {{item.isToday ? 'date-chip--today' : ''}}"
+        hover-class="date-chip--press"
+        hover-stay-time="80"
+        bindtap="onPickDate"
+        data-date="{{item.key}}"
+      >
+        <text class="date-chip__weekday">{{item.weekday}}</text>
+        <text class="date-chip__day">{{item.day}}</text>
+        <view class="date-chip__foot">
+          <view wx:if="{{item.hasTask}}" class="date-chip__dot"></view>
+          <text wx:if="{{item.count > 1}}" class="date-chip__count">{{item.count}}</text>
+        </view>
+      </view>
+    </block>
+  </scroll-view>
+
+  <scroll-view scroll-y class="content-scroll" enhanced show-scrollbar="{{false}}">
+    <view wx:if="{{loading}}" class="loading-card">
+      <view class="loading-spin"></view>
+      <text>正在加载农事计划</text>
+    </view>
+
+    <view wx:elif="{{sections.length}}">
+      <block wx:for="{{sections}}" wx:key="key">
+        <view class="section {{item.cool ? 'section--cool' : ''}} section--{{item.flavor}}">
+          <view class="section__head">
+            <view class="section__title">
+              <view class="section__title-ico section__title-ico--{{item.flavor}}">
+                <text>{{item.icon}}</text>
+              </view>
+              <text>{{item.title}}</text>
+              <text class="section__count">{{item.count}}</text>
+            </view>
+            <view
+              wx:if="{{item.action}}"
+              class="section__act"
+              hover-class="section__act--press"
+              hover-stay-time="80"
+              data-key="{{item.key}}"
+              bindtap="onSectionAction"
+            >
+              <text>{{item.action}}</text>
+            </view>
+          </view>
+
+          <view wx:if="{{!item.tasks.length && item.key === 'user'}}" class="section-empty">
+            <text>这一天还没有自己的农事</text>
+          </view>
+
+          <block wx:for="{{item.tasks}}" wx:key="id" wx:for-item="task">
+            <view
+              class="task task--{{item.flavor}} {{item.cool ? 'task--cool' : ''}} {{task.overdue ? 'task--overdue' : ''}} {{task.done ? 'task--done task--with-check' : ''}} task--phase-{{task.donePhase}}"
+              hover-class="task--press"
+              hover-stay-time="80"
+              data-id="{{task.id}}"
+            >
+              <view wx:if="{{task.overdue}}" class="task__alert-bar"></view>
+              <view wx:if="{{task.done || task.donePhase === 'rebound'}}" class="task__check">
+                <text>✓</text>
+              </view>
+              <view wx:if="{{task.donePhase === 'rebound'}}" class="task__ripple"></view>
+
+              <view class="task__row1">
+                <text class="task__title">{{task.title}}</text>
+                <view wx:if="{{task.ownerShort}}" class="task__avatar task__avatar--{{task.overdue ? 'danger' : 'normal'}}">
+                  <text>{{task.ownerShort}}</text>
+                </view>
+              </view>
+
+              <view wx:if="{{task.aiReason}}" class="task__why">
+                <text class="task__why-tag">小薯</text>
+                <text class="task__why-text">{{task.aiReason}}</text>
+              </view>
+
+              <view class="task__meta">
+                <text wx:if="{{task.plot}}" class="task__chip">{{task.plot}}</text>
+                <text wx:if="{{task.time}}" class="task__chip task__chip--time">{{task.time}}</text>
+                <text wx:if="{{task.overdue}}" class="task__chip task__chip--overdue">已逾期</text>
+                <text wx:if="{{task.done}}" class="task__chip task__chip--done">已完成 {{task.completedTime}}</text>
+              </view>
+
+              <view class="task__footer">
+                <view wx:if="{{item.key === 'ai-rec'}}" class="ai-actions">
+                  <button
+                    class="act-btn act-btn--primary"
+                    hover-class="act-btn--primary-press"
+                    hover-stay-time="80"
+                    data-id="{{task.id}}"
+                    bindtap="onAdoptTask"
+                  >采纳</button>
+                  <button class="act-btn" hover-class="act-btn--press" hover-stay-time="80" bindtap="onIgnoreTask">忽略</button>
+                </view>
+
+                <view wx:elif="{{item.key === 'ai-auto'}}" class="ai-actions">
+                  <button
+                    class="act-btn act-btn--primary"
+                    hover-class="act-btn--primary-press"
+                    hover-stay-time="80"
+                    data-id="{{task.id}}"
+                    bindtap="onDoneTask"
+                  >完成</button>
+                  <button class="act-btn" hover-class="act-btn--press" hover-stay-time="80" bindtap="onSkipTask">跳过</button>
+                  <button class="act-btn" hover-class="act-btn--press" hover-stay-time="80" bindtap="onConvertTask">转人工</button>
+                </view>
+
+                <block wx:else>
+                  <text class="task__owner-text {{task.overdue ? 'task__owner-text--danger' : ''}}">
+                    {{task.ownerText}}
+                  </text>
+                  <button
+                    class="btn-done {{task.overdue ? 'btn-done--warning' : ''}} {{task.done ? 'btn-done--done' : ''}} btn-done--{{task.donePhase}}"
+                    hover-class="btn-done--press"
+                    hover-stay-time="80"
+                    data-id="{{task.id}}"
+                    disabled="{{task.done}}"
+                    bindtap="onDoneTask"
+                  >
+                    <text>✓</text>
+                  </button>
+                </block>
+              </view>
+            </view>
+          </block>
+        </view>
+      </block>
+    </view>
+
+    <view wx:else class="empty">
+      <image class="empty__illus" src="/assets/agent-sweet-potato.png" mode="aspectFit"></image>
+      <text class="empty__title">今天暂无安排</text>
+      <text class="empty__sub">要不要让小薯帮你看看田里的情况？</text>
+      <button class="btn-empty" hover-class="btn-empty--press" hover-stay-time="80" bindtap="onAskAgent">
+        <text>◇ 问问小薯</text>
+      </button>
+    </view>
+  </scroll-view>
+
+  <view class="undo-toast {{toastOpen ? 'undo-toast--open' : ''}}">
+    <text class="undo-toast__text">{{toastText}}</text>
+    <button class="undo-toast__btn" bindtap="onUndoTask">撤销</button>
+  </view>
+</view>

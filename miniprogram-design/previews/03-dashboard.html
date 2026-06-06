@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>传感器看板 · 高保真视觉稿</title>
+<style>
+:root {
+  --bg-base: #e8edf3; --bg-surface: #f8fafc; --bg-panel: #f8fafc;
+  --bg-cool: #eef3fb;
+  --accent: #1070e0; --accent-press: #0c60c4;
+  --accent-light: #e8f0fe; --accent-glow: rgba(16,112,224,0.10);
+  --success: #10b981; --success-bg: #ecfdf5;
+  --warning: #f59e0b; --warning-bg: #fffbeb;
+  --danger: #ef4444; --danger-bg: #fef2f2;
+  --info: #3b82f6;
+  --text-primary: #1e293b; --text-secondary: #64748b; --text-muted: #94a3b8;
+  --border: #e2e8f0; --border-strong: #cbd5e1;
+  --radius: 12px; --radius-sm: 8px;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, "PingFang SC", sans-serif;
+  background: #cdd5e0;
+  padding: 40px 24px 80px;
+  color: var(--text-primary);
+}
+.board-title { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+.board-sub  { font-size: 14px; color: #475569; margin-bottom: 32px; }
+.board-row { display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start; }
+
+.phone {
+  width: 390px; border-radius: 44px;
+  background: #0f1f35; padding: 14px;
+  box-shadow: 0 30px 80px rgba(15,23,42,0.35), inset 0 0 0 2px #2a3958;
+  position: relative;
+}
+.phone::before {
+  content: ''; position: absolute;
+  top: 22px; left: 50%; transform: translateX(-50%);
+  width: 120px; height: 32px; background: #000;
+  border-radius: 20px; z-index: 10;
+}
+.phone__caption { text-align: center; color: #e2e8f0; font-size: 12px; margin-top: 12px; }
+.screen {
+  width: 100%; height: 812px; border-radius: 32px;
+  overflow: hidden; background: var(--bg-base);
+  position: relative; display: flex; flex-direction: column;
+}
+.statusbar {
+  height: 44px; display: flex; justify-content: space-between;
+  align-items: flex-end; padding: 0 26px 6px;
+  font-size: 14px; font-weight: 600;
+}
+.statusbar__icons { display: flex; gap: 6px; align-items: center; font-size: 12px; }
+.capsule {
+  position: absolute; top: 50px; right: 16px;
+  width: 88px; height: 32px; border-radius: 16px;
+  background: rgba(255,255,255,0.55);
+  display: flex; align-items: center; justify-content: center;
+  gap: 18px; font-size: 14px; color: var(--text-secondary);
+  z-index: 5;
+}
+
+.app-title {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px 4px;
+  font-size: 22px; font-weight: 700;
+}
+.app-title__sub {
+  font-size: 12px; color: var(--text-muted); font-weight: 500;
+  display: flex; align-items: center; gap: 6px;
+}
+.app-title__sub .live-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--success);
+  animation: pulse 2s var(--ease) infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50%      { opacity: 1; transform: scale(1.3); }
+}
+
+.chip-strip {
+  display: flex; gap: 8px;
+  padding: 14px 20px 16px;
+  overflow-x: auto;
+}
+.chip {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.chip--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.chip__dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--success);
+}
+.chip--active .chip__dot { background: #fff; }
+
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 14px 100px;
+}
+
+/* —— 数据卡网格 —— */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+/* —— 单卡 —— */
+.scard {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  position: relative;
+  box-shadow: var(--shadow-sm);
+  min-height: 168px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.scard--alert {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+  box-shadow: 0 0 0 1px var(--danger), var(--shadow-sm);
+}
+.scard--warn {
+  border-color: var(--warning);
+  background: var(--warning-bg);
+}
+.scard--wide {
+  grid-column: span 2;
+}
+.scard__head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
+.scard__name {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.scard__name-ico {
+  width: 18px; height: 18px;
+  border-radius: 5px;
+  background: var(--accent-light);
+  color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px;
+}
+.scard__unit {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.scard__value {
+  font-size: 36px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-primary);
+  letter-spacing: -1px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+.scard--alert .scard__value { color: var(--danger); }
+.scard--warn .scard__value { color: var(--warning); }
+.scard__pulse {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: pulse 2s var(--ease) infinite;
+}
+
+.scard__chart {
+  margin-top: auto;
+  height: 36px;
+  position: relative;
+}
+.scard__chart svg { width: 100%; height: 100%; display: block; }
+
+.scard__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.scard__trend {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.trend--up   { color: var(--success); background: var(--success-bg); }
+.trend--down { color: var(--danger);  background: var(--danger-bg); }
+.trend--flat { color: var(--text-muted); background: var(--bg-base); }
+
+/* —— 摘要顶卡 —— */
+.summary {
+  background: linear-gradient(135deg, #1070e0, #1d4ed8);
+  color: #fff;
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 14px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+.summary::after {
+  content: '';
+  position: absolute;
+  right: -40px; top: -40px;
+  width: 140px; height: 140px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.08);
+}
+.summary__title { font-size: 12px; opacity: 0.85; margin-bottom: 4px; }
+.summary__row { display: flex; align-items: baseline; gap: 14px; }
+.summary__num { font-size: 36px; font-weight: 700; }
+.summary__sub { font-size: 12px; opacity: 0.85; }
+.summary__chips { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.summary__pill {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.18);
+}
+
+/* —— 下拉刷新 —— */
+.refresh-bar {
+  position: absolute;
+  left: 0; right: 0; top: 100px;
+  height: 60px;
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.refresh-potato {
+  width: 32px; height: 32px;
+  animation: potatoBounce 1.2s var(--ease) infinite;
+}
+@keyframes potatoBounce {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  30% { transform: translateY(-6px) rotate(-15deg); }
+  60% { transform: translateY(0) rotate(8deg); }
+}
+
+/* —— TabBar —— */
+.tabbar {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 84px;
+  background: rgba(255,255,255,0.98);
+  border-top: 1px solid var(--border);
+  display: flex;
+  padding-bottom: 18px;
+}
+.tabitem {
+  flex: 1;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 2px; font-size: 11px; color: var(--text-muted);
+}
+.tabitem.active { color: var(--accent); }
+.tabitem .ico {
+  font-size: 22px; font-weight: 700;
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.note {
+  margin-top: 12px;
+  background: rgba(255,255,255,0.95);
+  border: 1px solid #cbd5e1;
+  border-left: 3px solid var(--accent);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #334155;
+  line-height: 1.6;
+  border-radius: 6px;
+}
+.note b { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="board-title">页面三：传感器看板 — 高保真视觉稿</div>
+<div class="board-sub">展示：数据卡网格 · 阈值告警 · 趋势箭头 · 下拉刷新（小薯 logo）· 离线态</div>
+
+<div class="board-row">
+
+  <!-- ========== C1 默认数据网格 ========== -->
+  <div>
+  <div class="phone">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><div class="statusbar__icons">●●● 5G ◰</div></div>
+      <div class="capsule">⋯ ⊙</div>
+
+      <div class="app-title">
+        <span>传感器看板</span>
+        <span class="app-title__sub"><span class="live-dot"></span> 实时 · 9:41:08</span>
+      </div>
+
+      <div class="chip-strip">
+        <div class="chip chip--active"><span class="chip__dot"></span>南棚</div>
+        <div class="chip"><span class="chip__dot"></span>东棚</div>
+        <div class="chip"><span class="chip__dot"></span>西区</div>
+        <div class="chip" style="color:var(--text-muted)"><span class="chip__dot" style="background:var(--text-muted)"></span>北棚 · 离线</div>
+      </div>
+
+      <div class="scroll">
+
+        <!-- 顶部摘要卡 -->
+        <div class="summary">
+          <div class="summary__title">南棚 · 番茄 · 第 38 天</div>
+          <div class="summary__row">
+            <div class="summary__num">良好</div>
+            <div class="summary__sub">12 项指标 · 1 项告警</div>
+          </div>
+          <div class="summary__chips">
+            <div class="summary__pill">设备 6/6</div>
+            <div class="summary__pill">摄像头 2/2</div>
+            <div class="summary__pill" style="background:rgba(245,158,11,0.4)">湿度偏低</div>
+          </div>
+        </div>
+
+        <div class="grid">
+
+          <!-- 普通卡 -->
+          <div class="scard">
+            <div class="scard__head">
+              <div class="scard__name"><div class="scard__name-ico">℃</div>气温</div>
+              <span class="scard__unit">℃</span>
+            </div>
+            <div class="scard__value">24.6</div>
+            <div class="scard__chart">
+              <svg viewBox="0 0 120 36" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="gA" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#1070e0" stop-opacity="0.25"/>
+                    <stop offset="1" stop-color="#1070e0" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0 26 L10 22 L20 24 L30 18 L40 20 L50 14 L60 16 L70 12 L80 14 L90 10 L100 12 L110 8 L120 10 L120 36 L0 36 Z" fill="url(#gA)"/>
+                <path d="M0 26 L10 22 L20 24 L30 18 L40 20 L50 14 L60 16 L70 12 L80 14 L90 10 L100 12 L110 8 L120 10" fill="none" stroke="#1070e0" stroke-width="1.5"/>
+              </svg>
+            </div>
+            <div class="scard__foot">
+              <span>vs 昨日</span>
+              <span class="scard__trend trend--up">↑ 1.2℃</span>
+            </div>
+          </div>
+
+          <!-- 告警卡（土壤湿度） -->
+          <div class="scard scard--warn">
+            <div class="scard__head">
+              <div class="scard__name"><div class="scard__name-ico" style="background:var(--warning-bg);color:var(--warning)">◐</div>土壤湿度</div>
+              <span class="scard__unit">%</span>
+            </div>
+            <div class="scard__value">38<span class="scard__pulse" style="background:var(--warning)"></span></div>
+            <div class="scard__chart">
+              <svg viewBox="0 0 120 36" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="gW" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#f59e0b" stop-opacity="0.3"/>
+                    <stop offset="1" stop-color="#f59e0b" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0 6 L10 8 L20 10 L30 12 L40 14 L50 16 L60 18 L70 20 L80 22 L90 24 L100 26 L110 28 L120 28 L120 36 L0 36 Z" fill="url(#gW)"/>
+                <path d="M0 6 L10 8 L20 10 L30 12 L40 14 L50 16 L60 18 L70 20 L80 22 L90 24 L100 26 L110 28 L120 28" fill="none" stroke="#f59e0b" stroke-width="1.5"/>
+                <line x1="0" y1="20" x2="120" y2="20" stroke="#f59e0b" stroke-dasharray="2,3" stroke-width="1" opacity="0.5"/>
+              </svg>
+            </div>
+            <div class="scard__foot">
+              <span style="color:var(--warning);font-weight:600">↘ 低于阈值 45%</span>
+              <span class="scard__trend trend--down">↓ 7%</span>
+            </div>
+          </div>
+
+          <!-- 普通卡 光照 -->
+          <div class="scard">
+            <div class="scard__head">
+              <div class="scard__name"><div class="scard__name-ico" style="background:#fef3c7;color:#d97706">☀</div>光照</div>
+              <span class="scard__unit">kLux</span>
+            </div>
+            <div class="scard__value">32.1</div>
+            <div class="scard__chart">
+              <svg viewBox="0 0 120 36" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="gS" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#10b981" stop-opacity="0.25"/>
+                    <stop offset="1" stop-color="#10b981" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0 30 L20 28 L40 22 L60 12 L80 8 L100 10 L120 18 L120 36 L0 36 Z" fill="url(#gS)"/>
+                <path d="M0 30 L20 28 L40 22 L60 12 L80 8 L100 10 L120 18" fill="none" stroke="#10b981" stroke-width="1.5"/>
+              </svg>
+            </div>
+            <div class="scard__foot">
+              <span>vs 昨日</span>
+              <span class="scard__trend trend--up">↑ 4 kLux</span>
+            </div>
+          </div>
+
+          <!-- 告警 红 -->
+          <div class="scard scard--alert">
+            <div class="scard__head">
+              <div class="scard__name"><div class="scard__name-ico" style="background:var(--danger-bg);color:var(--danger)">⚠</div>CO₂</div>
+              <span class="scard__unit">ppm</span>
+            </div>
+            <div class="scard__value">1126<span class="scard__pulse"></span></div>
+            <div class="scard__chart">
+              <svg viewBox="0 0 120 36" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="gD" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#ef4444" stop-opacity="0.3"/>
+                    <stop offset="1" stop-color="#ef4444" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0 26 L20 22 L40 18 L60 12 L80 8 L100 6 L120 4 L120 36 L0 36 Z" fill="url(#gD)"/>
+                <path d="M0 26 L20 22 L40 18 L60 12 L80 8 L100 6 L120 4" fill="none" stroke="#ef4444" stroke-width="1.5"/>
+              </svg>
+            </div>
+            <div class="scard__foot">
+              <span style="color:var(--danger);font-weight:600">超阈值 1000</span>
+              <span class="scard__trend trend--up">↑ 24%</span>
+            </div>
+          </div>
+
+          <!-- pH -->
+          <div class="scard">
+            <div class="scard__head">
+              <div class="scard__name"><div class="scard__name-ico" style="background:#f3e8ff;color:#7c3aed">pH</div>土壤酸碱</div>
+              <span class="scard__unit">pH</span>
+            </div>
+            <div class="scard__value">6.8</div>
+            <div class="scard__chart">
+              <svg viewBox="0 0 120 36" preserveAspectRatio="none">
+                <path d="M0 18 L20 20 L40 18 L60 19 L80 18 L100 20 L120 18" fill="none" stroke="#7c3aed" stroke-width="1.5"/>
+              </svg>
+            </div>
+            <div class="scard__foot">
+              <span>vs 昨日</span>
+              <span class="scard__trend trend--flat">→ 持平</span>
+            </div>
+          </div>
+
+          <!-- EC -->
+          <div class="scard">
+            <div class="scard__head">
+              <div class="scard__name"><div class="scard__name-ico" style="background:var(--info-bg);color:var(--info)">⚡</div>EC</div>
+              <span class="scard__unit">mS/cm</span>
+            </div>
+            <div class="scard__value">2.4</div>
+            <div class="scard__chart">
+              <svg viewBox="0 0 120 36" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="gE" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#3b82f6" stop-opacity="0.25"/>
+                    <stop offset="1" stop-color="#3b82f6" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0 22 L20 24 L40 20 L60 18 L80 22 L100 16 L120 14 L120 36 L0 36 Z" fill="url(#gE)"/>
+                <path d="M0 22 L20 24 L40 20 L60 18 L80 22 L100 16 L120 14" fill="none" stroke="#3b82f6" stroke-width="1.5"/>
+              </svg>
+            </div>
+            <div class="scard__foot">
+              <span>vs 昨日</span>
+              <span class="scard__trend trend--up">↑ 0.2</span>
+            </div>
+          </div>
+
+          <!-- 风速 占整行 -->
+          <div class="scard scard--wide">
+            <div class="scard__head">
+              <div class="scard__name"><div class="scard__name-ico" style="background:#e0f2fe;color:#0284c7">≋</div>风速</div>
+              <span class="scard__unit">m/s · 24h</span>
+            </div>
+            <div class="scard__value">3.6</div>
+            <div class="scard__chart" style="height:48px">
+              <svg viewBox="0 0 240 48" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="gB" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#0284c7" stop-opacity="0.3"/>
+                    <stop offset="1" stop-color="#0284c7" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0 30 L20 32 L40 28 L60 26 L80 22 L100 18 L120 24 L140 20 L160 14 L180 18 L200 12 L220 16 L240 10 L240 48 L0 48 Z" fill="url(#gB)"/>
+                <path d="M0 30 L20 32 L40 28 L60 26 L80 22 L100 18 L120 24 L140 20 L160 14 L180 18 L200 12 L220 16 L240 10" fill="none" stroke="#0284c7" stroke-width="1.5"/>
+              </svg>
+            </div>
+            <div class="scard__foot">
+              <span>过去 24h</span>
+              <span class="scard__trend trend--up">↑ 1.1 m/s</span>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <div class="tabbar">
+        <div class="tabitem"><div class="ico">⌂</div>计划</div>
+        <div class="tabitem active"><div class="ico">◐</div>看板</div>
+        <div class="tabitem"><div class="ico">◇</div>小薯</div>
+        <div class="tabitem"><div class="ico">◯</div>我的</div>
+      </div>
+
+    </div>
+  </div>
+  <div class="phone__caption">C1 · 默认 · 2 项告警</div>
+  <div class="note">
+    <b>视觉锚点：</b>每张卡的"中央数值"是唯一锚点（36px 700）；mini 折线无刻度，渐变底铺色暗示量级。
+    告警态用整张卡边框 + 数值染色 + 脉动小圆点三连，符合"户外强光下能瞄到"的硬指标。
+  </div>
+  </div>
+
+  <!-- ========== C2 下拉刷新 + 离线态 ========== -->
+  <div>
+  <div class="phone">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><div class="statusbar__icons">●●● 5G ◰</div></div>
+      <div class="capsule">⋯ ⊙</div>
+
+      <div class="app-title">
+        <span>传感器看板</span>
+        <span class="app-title__sub" style="color:var(--text-muted)"><span class="live-dot" style="background:var(--text-muted)"></span> 离线 · 显示缓存</span>
+      </div>
+
+      <div class="chip-strip">
+        <div class="chip chip--active"><span class="chip__dot"></span>南棚</div>
+        <div class="chip"><span class="chip__dot"></span>东棚</div>
+        <div class="chip"><span class="chip__dot"></span>西区</div>
+      </div>
+
+      <!-- 下拉刷新 bar -->
+      <div class="refresh-bar">
+        <svg class="refresh-potato" viewBox="0 0 32 32">
+          <ellipse cx="16" cy="18" rx="11" ry="12" fill="#c4a07a"/>
+          <circle cx="13" cy="16" r="1.3" fill="#1e293b"/>
+          <circle cx="19" cy="16" r="1.3" fill="#1e293b"/>
+          <path d="M 14 21 Q 16 23 18 21" stroke="#1e293b" stroke-width="1" fill="none"/>
+        </svg>
+        小薯正在拉取最新数据…
+      </div>
+
+      <div class="scroll" style="opacity:0.55; padding-top:60px;">
+
+        <div class="grid">
+
+          <div class="scard" style="opacity:0.7">
+            <div class="scard__head">
+              <div class="scard__name"><div class="scard__name-ico">℃</div>气温</div>
+              <span class="scard__unit">℃</span>
+            </div>
+            <div class="scard__value" style="color:var(--text-muted)">24.6</div>
+            <div class="scard__chart">
+              <svg viewBox="0 0 120 36" preserveAspectRatio="none">
+                <path d="M0 24 L40 18 L80 14 L120 10" fill="none" stroke="#94a3b8" stroke-width="1.5"/>
+              </svg>
+            </div>
+            <div class="scard__foot">
+              <span>11 分钟前</span>
+              <span class="scard__trend trend--flat">缓存</span>
+            </div>
+          </div>
+
+          <div class="scard" style="opacity:0.7">
+            <div class="scard__head">
+              <div class="scard__name"><div class="scard__name-ico">◐</div>土壤湿度</div>
+              <span class="scard__unit">%</span>
+            </div>
+            <div class="scard__value" style="color:var(--text-muted)">38</div>
+            <div class="scard__chart">
+              <svg viewBox="0 0 120 36" preserveAspectRatio="none">
+                <path d="M0 12 L60 22 L120 28" fill="none" stroke="#94a3b8" stroke-width="1.5"/>
+              </svg>
+            </div>
+            <div class="scard__foot">
+              <span>11 分钟前</span>
+              <span class="scard__trend trend--flat">缓存</span>
+            </div>
+          </div>
+
+          <div class="scard" style="opacity:0.7">
+            <div class="scard__head">
+              <div class="scard__name"><div class="scard__name-ico">☀</div>光照</div>
+              <span class="scard__unit">kLux</span>
+            </div>
+            <div class="scard__value" style="color:var(--text-muted)">32.1</div>
+            <div class="scard__chart"></div>
+            <div class="scard__foot">
+              <span>11 分钟前</span>
+              <span class="scard__trend trend--flat">缓存</span>
+            </div>
+          </div>
+
+          <div class="scard" style="opacity:0.7">
+            <div class="scard__head">
+              <div class="scard__name"><div class="scard__name-ico">⚠</div>CO₂</div>
+              <span class="scard__unit">ppm</span>
+            </div>
+            <div class="scard__value" style="color:var(--text-muted)">1126</div>
+            <div class="scard__chart"></div>
+            <div class="scard__foot">
+              <span>11 分钟前</span>
+              <span class="scard__trend trend--flat">缓存</span>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <div class="tabbar">
+        <div class="tabitem"><div class="ico">⌂</div>计划</div>
+        <div class="tabitem active"><div class="ico">◐</div>看板</div>
+        <div class="tabitem"><div class="ico">◇</div>小薯</div>
+        <div class="tabitem"><div class="ico">◯</div>我的</div>
+      </div>
+
+    </div>
+  </div>
+  <div class="phone__caption">C2 · 下拉刷新 + 离线缓存态</div>
+  <div class="note">
+    <b>下拉刷新：</b>用小薯 logo 做加载图标（弹跳动画 1.2s 循环），不用系统默认 loading 圈。
+    断网时整体降透明度到 55% + 数值置灰 + "缓存"标签，明确告知数据陈旧。
+  </div>
+  </div>
+
+</div>
+
+</body>
+</html>

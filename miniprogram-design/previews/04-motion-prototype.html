@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>关键动效原型 · 可交互演示</title>
+<style>
+:root {
+  --bg-base: #e8edf3; --bg-surface: #f8fafc;
+  --accent: #1070e0; --accent-light: #e8f0fe; --accent-glow: rgba(16,112,224,0.10);
+  --success: #10b981; --success-bg: #ecfdf5;
+  --warning: #f59e0b; --warning-bg: #fffbeb;
+  --danger: #ef4444; --danger-bg: #fef2f2;
+  --text-primary: #1e293b; --text-secondary: #64748b; --text-muted: #94a3b8;
+  --border: #e2e8f0;
+  --radius: 12px;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, "PingFang SC", sans-serif;
+  background: #cdd5e0;
+  padding: 40px 32px;
+  color: var(--text-primary);
+}
+h1 { font-size: 22px; margin-bottom: 6px; }
+.sub { color: #475569; font-size: 14px; margin-bottom: 32px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 24px;
+}
+
+.demo {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+}
+.demo h3 { font-size: 15px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+.demo h3 .tag {
+  font-size: 10px;
+  background: var(--accent-light);
+  color: var(--accent);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.demo .desc { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.6; }
+.demo .stage {
+  background: var(--bg-base);
+  border-radius: 12px;
+  padding: 16px;
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+.demo .ctrl {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+.demo button {
+  flex: 1;
+  font-size: 13px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  font-weight: 600;
+  font-family: inherit;
+}
+.demo button.ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.spec {
+  margin-top: 12px;
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 11px;
+  color: #475569;
+  background: rgba(0,0,0,0.03);
+  padding: 8px 10px;
+  border-radius: 6px;
+  line-height: 1.5;
+}
+
+/* ============================================================
+   Demo 1: 完成动画（按压回弹 + 波纹 + 对勾 + 沉降）
+   ============================================================ */
+.task-mock {
+  background: #fff;
+  border-radius: 12px;
+  padding: 14px 14px 14px 14px;
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: opacity 360ms var(--ease), transform 360ms var(--ease);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+.task-mock__title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.task-mock__plot { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+.btn-done {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  font-size: 18px;
+  box-shadow: 0 4px 12px var(--accent-glow);
+  position: relative;
+  flex-shrink: 0;
+  transition: transform 130ms var(--ease), background 200ms var(--ease);
+}
+.btn-done.press { transform: scale(0.92); }
+.btn-done.bounce { animation: bounceUp 360ms var(--ease); background: var(--success); }
+@keyframes bounceUp {
+  0% { transform: scale(0.92); }
+  60% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
+
+.ripple {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at right center, rgba(16,185,129,0.45) 0%, rgba(16,185,129,0) 70%);
+  opacity: 0;
+}
+.ripple.go {
+  animation: rippleGo 600ms var(--ease) forwards;
+}
+@keyframes rippleGo {
+  0% { transform: scale(0.2); opacity: 0; }
+  20% { opacity: 0.45; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+.check-svg {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px; height: 24px;
+  pointer-events: none;
+  opacity: 0;
+}
+.check-svg path {
+  stroke: var(--success);
+  stroke-width: 3;
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 30;
+  stroke-dashoffset: 30;
+}
+.check-svg.go { opacity: 1; }
+.check-svg.go path { animation: drawCheck 320ms var(--ease) forwards; }
+@keyframes drawCheck { to { stroke-dashoffset: 0; } }
+
+.task-mock.done {
+  opacity: 0.6;
+  transform: translateY(8px);
+  padding-left: 50px;
+}
+
+/* 撤销 toast */
+.undo {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translate(-50%, 16px);
+  background: rgba(30,41,59,0.94);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  display: none;
+  align-items: center;
+  gap: 12px;
+  opacity: 0;
+  transition: opacity 250ms var(--ease), transform 250ms var(--ease);
+}
+.undo.show { display: flex; opacity: 1; transform: translate(-50%, 0); }
+.undo button {
+  background: none; border: none; color: #fbbf24;
+  font-size: 12px; font-weight: 700; padding: 0;
+  flex: initial;
+}
+
+/* ============================================================
+   Demo 2: 采纳过渡（推荐项滑入"自己的农事"）
+   ============================================================ */
+.adopt-stage { flex-direction: column; gap: 12px; align-items: stretch; padding: 10px; }
+.adopt-list { display: flex; flex-direction: column; gap: 6px; }
+.adopt-list-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 4px;
+}
+.adopt-item {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: all 360ms var(--ease);
+  overflow: hidden;
+  max-height: 80px;
+}
+.adopt-item.gone { max-height: 0; padding-top: 0; padding-bottom: 0; opacity: 0; border-color: transparent; margin: 0; }
+.adopt-item.fly-in {
+  animation: flyIn 360ms var(--ease);
+}
+@keyframes flyIn {
+  from { opacity: 0; transform: translateY(-12px) scale(0.96); max-height: 0; padding-top: 0; padding-bottom: 0; }
+  to   { opacity: 1; transform: translateY(0) scale(1); max-height: 80px; padding-top: 10px; padding-bottom: 10px; }
+}
+.adopt-item .pill {
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--accent-light);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.adopt-item .adopt-btn {
+  font-size: 11px; padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent); color: #fff;
+  border: none; font-weight: 600;
+}
+
+/* ============================================================
+   Demo 3: 思考三点 + 流式
+   ============================================================ */
+.chat-stage { flex-direction: column; align-items: flex-start; gap: 8px; padding: 14px; }
+.bubble {
+  background: #fff;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border-bottom-left-radius: 4px;
+  font-size: 13px;
+  max-width: 80%;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  animation: bubbleIn 250ms var(--ease);
+}
+@keyframes bubbleIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.dots {
+  background: #fff;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border-bottom-left-radius: 4px;
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.dots span {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: dot 1.2s var(--ease) infinite;
+}
+.dots span:nth-child(2) { animation-delay: 0.2s; }
+.dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dot {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-4px); }
+}
+.cursor {
+  display: inline-block;
+  width: 2px; height: 12px;
+  background: var(--accent);
+  vertical-align: middle;
+  margin-left: 2px;
+  animation: blink 1s steps(2) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ============================================================
+   Demo 4: 阈值告警脉动
+   ============================================================ */
+.scard-mock {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  width: 220px;
+  transition: all 280ms var(--ease);
+}
+.scard-mock.alert {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+.scard-mock .name { font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; }
+.scard-mock .val {
+  font-size: 32px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.scard-mock.alert .val { color: var(--danger); }
+.pulse-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--danger);
+  animation: pulse 2s var(--ease) infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.3); }
+}
+
+/* ============================================================
+   Demo 5: 下拉刷新（小薯弹跳）
+   ============================================================ */
+.refresh-stage { flex-direction: column; gap: 8px; }
+.potato-icon {
+  width: 48px; height: 48px;
+  animation: potatoBounce 1.2s var(--ease) infinite;
+}
+@keyframes potatoBounce {
+  0%, 100% { transform: translateY(0) rotate(0); }
+  30% { transform: translateY(-10px) rotate(-15deg); }
+  60% { transform: translateY(0) rotate(8deg); }
+}
+
+/* ============================================================
+   Demo 6: 日期切换横向滑入
+   ============================================================ */
+.date-stage { padding: 14px; flex-direction: column; gap: 12px; }
+.date-strip-mock {
+  display: flex; gap: 8px; width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+.dchip {
+  flex: 0 0 56px;
+  text-align: center;
+  padding: 6px 0 8px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid var(--border);
+  transition: all 280ms var(--ease);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.dchip strong { display: block; font-size: 16px; margin-top: 2px; color: var(--text-primary); font-weight: 700; }
+.dchip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.dchip.active strong { color: #fff; }
+
+.day-content {
+  width: 100%;
+  background: #fff;
+  border-radius: 10px;
+  padding: 14px;
+  font-size: 13px;
+  text-align: center;
+  color: var(--text-secondary);
+  animation: slideIn 350ms var(--ease);
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.day-content.back { animation: slideInLeft 350ms var(--ease); }
+</style>
+</head>
+<body>
+
+<h1>关键动效原型 · 可交互演示</h1>
+<div class="sub">点击按钮触发；所有动画曲线统一为 cubic-bezier(0.4, 0, 0.2, 1)；时长严格遵守规范文档。</div>
+
+<div class="grid">
+
+  <!-- ========== Demo 1: 完成动画 ========== -->
+  <div class="demo">
+    <h3>① 完成动画 <span class="tag">核心体验</span></h3>
+    <div class="desc">按压回弹 130ms → 波纹 + 对勾 320ms → 透明度 0.6、下沉 8px。误点 3s 内可撤销。</div>
+    <div class="stage" id="stage1">
+      <div class="task-mock" id="t1">
+        <div>
+          <div class="task-mock__title">给南棚追施钾肥</div>
+          <div class="task-mock__plot">南棚 · 番茄 · 10:00</div>
+        </div>
+        <button class="btn-done" id="b1">✓</button>
+        <div class="ripple" id="r1"></div>
+        <svg class="check-svg" id="c1" viewBox="0 0 24 24">
+          <path d="M4 12 L10 18 L20 6"/>
+        </svg>
+      </div>
+      <div class="undo" id="u1">已完成 <button id="undoBtn">撤销</button></div>
+    </div>
+    <div class="ctrl">
+      <button onclick="playDone()">播放完成</button>
+      <button class="ghost" onclick="resetDone()">重置</button>
+    </div>
+    <div class="spec">
+130ms · scale 0.92→1.05→1.0 (按压回弹)
+↓
+320ms · ripple 0→2.5x · check stroke-dashoffset 30→0
+↓
+360ms · opacity 1→0.6 · translateY 0→8px
+↓
+3000ms · undo toast 自动消失
+    </div>
+  </div>
+
+  <!-- ========== Demo 2: 采纳滑入 ========== -->
+  <div class="demo">
+    <h3>② 采纳过渡 <span class="tag">区块迁移</span></h3>
+    <div class="desc">AI 推荐项被采纳后，从源区收起，飞入"自己的农事"区。max-height + opacity 双值过渡。</div>
+    <div class="stage adopt-stage">
+      <div class="adopt-list">
+        <div class="adopt-list-label">AI 每日推荐</div>
+        <div class="adopt-item" id="src1">
+          <span>早 8 点前完成西红柿区灌溉<span class="pill" style="margin-left:6px">推荐</span></span>
+          <button class="adopt-btn" onclick="playAdopt()">采纳</button>
+        </div>
+      </div>
+      <div class="adopt-list">
+        <div class="adopt-list-label">自己的农事</div>
+        <div id="targetHost"></div>
+      </div>
+    </div>
+    <div class="ctrl">
+      <button onclick="resetAdopt()" class="ghost">重置</button>
+    </div>
+    <div class="spec">
+原项: max-height 80→0, padding 10→0, opacity 1→0 (360ms)
+新项: translateY -12→0, opacity 0→1, max-height 0→80 (360ms · stagger 80ms)
+触发: wx.vibrateShort
+    </div>
+  </div>
+
+  <!-- ========== Demo 3: 思考点 + 流式 ========== -->
+  <div class="demo">
+    <h3>③ 小薯回复 <span class="tag">思考 + 流式</span></h3>
+    <div class="desc">先 3 跳点 800ms（思考中），再气泡淡入 250ms，文字按词流式注入。</div>
+    <div class="stage chat-stage" id="stage3">
+      <div class="bubble">湿度低要不要现在浇水</div>
+    </div>
+    <div class="ctrl">
+      <button onclick="playChat()">播放</button>
+      <button class="ghost" onclick="resetChat()">重置</button>
+    </div>
+    <div class="spec">
+typing: 3 dots × bounce 1.2s loop
+↓
+bubble: opacity 0→1, translateY 8→0 (250ms)
+↓
+stream: append 1 word every 60ms · 末尾闪烁光标
+    </div>
+  </div>
+
+  <!-- ========== Demo 4: 告警脉动 ========== -->
+  <div class="demo">
+    <h3>④ 阈值告警 <span class="tag">持续状态</span></h3>
+    <div class="desc">边框换色 + 数值染色 + 圆点 2s 呼吸。注意：脉动 ≠ 闪烁，opacity 0.4↔1.0 平滑过渡，不打扰。</div>
+    <div class="stage" id="stage4">
+      <div class="scard-mock" id="s4">
+        <div class="name">CO₂ (ppm)</div>
+        <div class="val">1126 <span class="pulse-dot" id="pd"></span></div>
+      </div>
+    </div>
+    <div class="ctrl">
+      <button onclick="toggleAlert()">切换告警</button>
+    </div>
+    <div class="spec">
+.scard.alert: border var(--danger), bg var(--danger-bg), value color var(--danger)
+.pulse-dot: opacity 0.4↔1.0, scale 1↔1.3, 2s ease infinite
+    </div>
+  </div>
+
+  <!-- ========== Demo 5: 下拉刷新 ========== -->
+  <div class="demo">
+    <h3>⑤ 下拉刷新 <span class="tag">小薯 logo</span></h3>
+    <div class="desc">替代系统 loading 圈。小薯 IP 弹跳 1.2s 循环，结束后向上滑出。</div>
+    <div class="stage refresh-stage">
+      <svg class="potato-icon" viewBox="0 0 48 48">
+        <ellipse cx="24" cy="26" rx="16" ry="18" fill="#c4a07a"/>
+        <circle cx="19" cy="22" r="2" fill="#1e293b"/>
+        <circle cx="29" cy="22" r="2" fill="#1e293b"/>
+        <circle cx="19.5" cy="21.5" r="0.7" fill="#fff"/>
+        <circle cx="29.5" cy="21.5" r="0.7" fill="#fff"/>
+        <path d="M 20 30 Q 24 33 28 30" stroke="#1e293b" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+        <ellipse cx="14" cy="28" rx="3" ry="1.5" fill="#fda4af" opacity="0.7"/>
+        <ellipse cx="34" cy="28" rx="3" ry="1.5" fill="#fda4af" opacity="0.7"/>
+        <path d="M 22 10 Q 18 5 22 3 Q 28 4 26 9" fill="#10b981"/>
+      </svg>
+      <div style="font-size:11px;color:var(--text-secondary)">小薯正在拉取最新数据…</div>
+    </div>
+    <div class="spec">
+@keyframes potatoBounce: translateY(0→-10→0) · rotate(0→-15→8→0)
+duration: 1.2s, ease, infinite
+    </div>
+  </div>
+
+  <!-- ========== Demo 6: 日期切换横滑 ========== -->
+  <div class="demo">
+    <h3>⑥ 日期切换 <span class="tag">页面级转场</span></h3>
+    <div class="desc">日期 chip 高亮迁移 280ms，下方内容横向滑入 350ms。方向跟随手势。</div>
+    <div class="stage date-stage">
+      <div class="date-strip-mock" id="strip">
+        <div class="dchip" data-i="0">周一<strong>1</strong></div>
+        <div class="dchip" data-i="1">周二<strong>2</strong></div>
+        <div class="dchip active" data-i="2">今天<strong>3</strong></div>
+        <div class="dchip" data-i="3">周四<strong>4</strong></div>
+        <div class="dchip" data-i="4">周五<strong>5</strong></div>
+      </div>
+      <div class="day-content" id="dayCt">今天 · 5 项任务</div>
+    </div>
+    <div class="ctrl">
+      <button class="ghost" onclick="moveDay(-1)">← 前一天</button>
+      <button class="ghost" onclick="moveDay(1)">后一天 →</button>
+    </div>
+    <div class="spec">
+chip 状态切换: 280ms (background, color)
+content 切换: translateX ±20→0, opacity 0→1, 350ms ease
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ====== Demo 1 完成动画 ======
+const t1 = document.getElementById('t1');
+const b1 = document.getElementById('b1');
+const r1 = document.getElementById('r1');
+const c1 = document.getElementById('c1');
+const u1 = document.getElementById('u1');
+
+let undoTimer = null;
+function playDone() {
+  resetDone(true);
+  b1.classList.add('press');
+  setTimeout(() => {
+    b1.classList.remove('press');
+    b1.classList.add('bounce');
+    r1.classList.add('go');
+    c1.classList.add('go');
+    setTimeout(() => {
+      t1.classList.add('done');
+      u1.classList.add('show');
+      undoTimer = setTimeout(() => u1.classList.remove('show'), 3000);
+    }, 320);
+  }, 130);
+}
+function resetDone(silent) {
+  clearTimeout(undoTimer);
+  b1.classList.remove('press', 'bounce');
+  r1.classList.remove('go');
+  c1.classList.remove('go');
+  t1.classList.remove('done');
+  if (!silent) u1.classList.remove('show');
+  // svg restart
+  c1.innerHTML = c1.innerHTML;
+}
+document.getElementById('undoBtn').addEventListener('click', () => resetDone(false));
+
+// ====== Demo 2 采纳 ======
+const src1 = document.getElementById('src1');
+const targetHost = document.getElementById('targetHost');
+function playAdopt() {
+  src1.classList.add('gone');
+  setTimeout(() => {
+    const node = document.createElement('div');
+    node.className = 'adopt-item fly-in';
+    node.innerHTML = '<span>早 8 点前完成西红柿区灌溉</span><span class="pill">已采纳</span>';
+    targetHost.appendChild(node);
+  }, 200);
+}
+function resetAdopt() {
+  src1.classList.remove('gone');
+  targetHost.innerHTML = '';
+}
+
+// ====== Demo 3 思考 + 流式 ======
+const stage3 = document.getElementById('stage3');
+const reply = "建议早 8 点前完成灌溉，避免午时蒸发。今晚 30% 阵雨概率，过早大水会浪费。".split(' ');
+let chatTimer;
+function playChat() {
+  resetChat();
+  const dots = document.createElement('div');
+  dots.className = 'dots';
+  dots.innerHTML = '<span></span><span></span><span></span>';
+  stage3.appendChild(dots);
+  setTimeout(() => {
+    dots.remove();
+    const b = document.createElement('div');
+    b.className = 'bubble';
+    stage3.appendChild(b);
+    let i = 0;
+    chatTimer = setInterval(() => {
+      if (i >= reply.length) {
+        clearInterval(chatTimer);
+        return;
+      }
+      b.innerHTML = reply.slice(0, i+1).join(' ') + '<span class="cursor"></span>';
+      i++;
+    }, 80);
+  }, 800);
+}
+function resetChat() {
+  clearInterval(chatTimer);
+  stage3.innerHTML = '<div class="bubble">湿度低要不要现在浇水</div>';
+}
+
+// ====== Demo 4 告警 ======
+const s4 = document.getElementById('s4');
+function toggleAlert() { s4.classList.toggle('alert'); }
+toggleAlert(); // 默认告警
+
+// ====== Demo 6 日期 ======
+let dayIdx = 2;
+const days = ['周一·1', '周二·2', '今天·3', '周四·4', '周五·5'];
+function moveDay(d) {
+  const next = dayIdx + d;
+  if (next < 0 || next >= 5) return;
+  dayIdx = next;
+  document.querySelectorAll('.dchip').forEach((c, i) => c.classList.toggle('active', i === dayIdx));
+  const ct = document.getElementById('dayCt');
+  ct.classList.remove('back');
+  void ct.offsetWidth;
+  if (d < 0) ct.classList.add('back');
+  ct.style.animation = 'none';
+  void ct.offsetWidth;
+  ct.style.animation = '';
+  ct.textContent = days[dayIdx] + ' · ' + (3 + (dayIdx-2)*2) + ' 项任务';
+}
+</script>
+
+</body>
+</html>
