@@ -1557,6 +1557,13 @@ const server = http.createServer(async (req, res) => {
             if (!auth) return;
             if (req.method === 'PUT') {
                 const body = await readBody(req, 10 * 1024 * 1024);
+                // 安全护栏：拒绝“空客户端”把整库覆盖成空（曾两次导致数据被清空）
+                const incomingEmpty = !(Array.isArray(body.locations) && body.locations.length)
+                    && !(Array.isArray(body.devices) && body.devices.length)
+                    && !(Array.isArray(body.automations) && body.automations.length);
+                if (incomingEmpty && ((auth.state.locations || []).length || (auth.state.devices || []).length)) {
+                    return sendJson(200, { ok: true, skipped: 'empty-sync-ignored' });
+                }
                 const next = mergeOperationalState(auth.state, body, auth.user);
                 writeState(next);
                 signatureSet = new Set((next.sensorReadings || []).map(item => item.signature).filter(Boolean));
