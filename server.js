@@ -2303,6 +2303,46 @@ const server = http.createServer(async (req, res) => {
             }
         }
 
+        // 小程序“小薯”助手：木薯/红薯 看图识虫草 + 种植问答（展示模式，暂未鉴权）
+        if (pathname === '/api/v1/agent/chat' && req.method === 'POST') {
+            const body = await readBody(req, 8 * 1024 * 1024).catch(() => ({}));
+            const pr = readPhotoRecords();
+            const visionApiKey = String(pr.config.visionApiKey || '').trim();
+            const model = String(pr.config.visionModel || 'qwen-vl-plus').trim() || 'qwen-vl-plus';
+            if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
+
+            const SYSTEM = `你是“小薯”，一个只懂木薯和红薯（甘薯）种植的 AI 助手。你只做两件事：
+1) 看图识别：用户发来田间照片时，判断图中是什么害虫、什么杂草或什么病害，给出名称、对木薯/红薯的危害、以及简明的防治建议。
+2) 种植问答：回答木薯、红薯的种植、育苗、施肥、灌溉、病虫草害防治等问题。
+约束：只聊木薯和红薯相关的内容；遇到无关话题，礼貌说明你只懂木薯和红薯，并把话题引回来。回答用简洁、口语化的中文，面向农户，不要长篇大论。`;
+
+            const history = Array.isArray(body.history) ? body.history.slice(-8) : [];
+            const messages = [{ role: 'system', content: SYSTEM }];
+            history.forEach(m => {
+                if (!m || !m.text) return;
+                messages.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.text) });
+            });
+            const userContent = [];
+            if (body.image && /^data:image\//.test(String(body.image))) {
+                userContent.push({ type: 'image_url', image_url: { url: String(body.image) } });
+            }
+            userContent.push({ type: 'text', text: String(body.text || (body.image ? '这是什么？帮我看看是什么虫或草，怎么防治。' : '')) });
+            messages.push({ role: 'user', content: userContent });
+
+            const payload = JSON.stringify({ model, messages });
+            try {
+                const result = await requestJson('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${visionApiKey}` },
+                }, payload);
+                if (result.status >= 400) return sendJson(502, { ok: false, msg: apiErrorMessage(result, 'agent failed') });
+                const reply = result.data?.choices?.[0]?.message?.content || '';
+                return sendJson(200, { ok: true, reply });
+            } catch (error) {
+                return sendJson(502, { ok: false, msg: error.message || 'agent failed' });
+            }
+        }
+
         if (pathname === '/api/v1/photos/sensor-range' && req.method === 'GET') {
             const auth = requireAuth(); if (!auth) return;
             const { deviceId, startTime, endTime } = query;
