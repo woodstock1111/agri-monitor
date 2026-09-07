@@ -3,6 +3,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const chinaSoil = require('./china-soil').createSoilService();
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'server-data');
@@ -1446,6 +1447,14 @@ const server = http.createServer(async (req, res) => {
 
     try {
         if (pathname === '/api/v1/health') return sendJson(200, { ok: true });
+
+        if (pathname === '/api/v1/harvest/soil' && req.method === 'GET') {
+            const auth = requireAuth(); if (!auth) return;
+            const result = await chinaSoil.lookup(query.lat, query.lng);
+            const status = result.ok ? 200 : result.status === 'invalid_coordinates' ? 400
+                : ['outside_coverage', 'no_data'].includes(result.status) ? 422 : 503;
+            return sendJson(status, result);
+        }
 
         if (pathname === '/api/v1/auth/login' && req.method === 'POST') {
             const body = await readBody(req);

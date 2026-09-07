@@ -6,3 +6,5 @@ node_modules/
 .vscode/
 __pycache__/
 server-data/
+
+.venv-soil/

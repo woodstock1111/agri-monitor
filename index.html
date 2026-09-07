@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="palette-override.css">
+    <link rel="stylesheet" href="harvest.css?v=20260907-5">
 </head>
 <body class="auth-pending">
     <section class="login-screen" id="login-screen">
@@ -65,6 +66,7 @@
                         <path d="M12 4V2.5M5 6l-1-1M19 6l1-1"/>
                     </svg><span>系统总览</span>
                 </a>
+                <a class="nav-link" data-page="harvest"><svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16M7 17v-5m5 5V8m5 9V4M4 9l6-4 4 1 6-4"/></svg><span>AI收成预测</span></a>
                 <a class="nav-link" data-page="farmtasks">
                     <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
                         <circle cx="12" cy="10" r="4"/>
@@ -226,6 +228,7 @@
                 </div>
 
                 <!-- Farm Tasks -->
+                <div class="page" id="page-harvest"><div id="harvest-root"></div></div>
                 <div class="page" id="page-farmtasks">
                     <div id="farmtasks-date-header"></div>
                     <div id="farmtasks-ai-section"></div>
@@ -815,6 +818,8 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="app.js"></script>
+    <script src="harvest-model.js?v=20260907-5"></script>
+    <script src="harvest.js?v=20260907-5"></script>
+    <script src="app.js?v=20260907-5"></script>
 </body>
 </html>
