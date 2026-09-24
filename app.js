@@ -1320,6 +1320,7 @@ const app = {
 
   navigate(page) {
     this.currentPage = page;
+    this._setMobileSidebar(false);
     sessionStorage.setItem('agri_current_page', page);
     document.querySelectorAll('.nav-link').forEach(l => l.classList.toggle('active', l.dataset.page === page));
     const titles = {
@@ -1372,9 +1373,32 @@ const app = {
     if (init[page]) init[page]();
   },
 
+  // Phones (<= 600px, see style.css) use an off-canvas sidebar (.mobile-open); wider screens collapse it to icons.
+  _isPhoneLayout() {
+    return window.matchMedia('(max-width: 600px)').matches;
+  },
+
+  _setMobileSidebar(open) {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar) return;
+    sidebar.classList.toggle('mobile-open', open);
+    let backdrop = document.getElementById('sidebar-backdrop');
+    if (open && !backdrop) {
+      backdrop = document.createElement('div');
+      backdrop.id = 'sidebar-backdrop';
+      backdrop.className = 'sidebar-backdrop';
+      backdrop.addEventListener('click', () => this._setMobileSidebar(false));
+      document.body.appendChild(backdrop);
+    } else if (!open && backdrop) {
+      backdrop.remove();
+    }
+  },
+
   bindSidebarToggle() {
     document.getElementById('sidebarToggle').addEventListener('click', () => {
-      document.getElementById('sidebar').classList.toggle('collapsed');
+      const sidebar = document.getElementById('sidebar');
+      if (this._isPhoneLayout()) this._setMobileSidebar(!sidebar.classList.contains('mobile-open'));
+      else sidebar.classList.toggle('collapsed');
     });
   },
 
@@ -1697,7 +1721,7 @@ const app = {
           <div class="ft-preset-list">
             ${this._getFtPresets().map(item => this._renderFtPreset(item)).join('')}
           </div>
-          <div class="ft-palette-hint">拖到右侧添加</div>
+          <div class="ft-palette-hint"><span class="ft-hint-desktop">拖到右侧添加</span><span class="ft-hint-mobile">点一下添加到今天</span></div>
         </aside>
         <div class="glass-panel ft-user-panel">
           <div class="panel-header"><span class="panel-title">我的农事</span><span class="badge badge-sensor">${pending.length} 待办</span></div>
@@ -1725,7 +1749,7 @@ const app = {
     const category = this.sanitize(item.category || item.title || '其他');
     return `
       <button class="ft-preset-card" draggable="true" data-title="${title}" data-category="${category}"
-        ondragstart="app._ftPresetDragStart(event)" ondragend="app._ftPresetDragEnd()">
+        onclick="app._ftPresetTap(event)" ondragstart="app._ftPresetDragStart(event)" ondragend="app._ftPresetDragEnd()">
         <span class="ft-emoji">${this._ftCategoryEmoji(item.category || item.title)}</span>
         <span>${title}</span>
       </button>
@@ -2054,6 +2078,14 @@ const app = {
     document.querySelectorAll('#ft-user-list .ft-card.drag-over').forEach(el => el.classList.remove('drag-over'));
     target.before(dragged);
     this._persistFtDomOrder();
+  },
+
+  // Touch screens cannot drag; there a tap adds the preset. With a mouse, presets stay drag-only (no accidental adds).
+  async _ftPresetTap(event) {
+    const touchLike = window.matchMedia('(hover: none)').matches || window.matchMedia('(max-width: 760px)').matches;
+    if (!touchLike) return;
+    const el = event.currentTarget;
+    await this.createFtTaskFromPreset(el.dataset.title || '', el.dataset.category || el.dataset.title || '');
   },
 
   _ftPresetDragStart(event, title = null, category = null) {

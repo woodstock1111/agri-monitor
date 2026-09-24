@@ -1,0 +1,224 @@
+/* ============================================================
+   MOBILE FIXES (phones, <= 760px)
+   Loaded last so it wins over style.css and palette-override.css,
+   which is why some rules need !important. Desktop is untouched.
+   Scope agreed 2026-09-24: make every page usable on a phone for
+   admins and farm owners; no finger drawing of annotation boxes.
+   ============================================================ */
+
+@media (max-width: 760px) {
+  /* ---------- off-canvas sidebar (opened by the topbar menu button) ---------- */
+  /* Drawer and backdrop sit above the floating topbar (the menu closes via the backdrop or a menu item). */
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1090;
+    background: rgba(15, 23, 42, 0.38);
+  }
+
+  .sidebar.mobile-open {
+    z-index: 1100 !important;
+  }
+
+  /* Room for the floating 小薯 button so it never covers the last controls. */
+  .page-area {
+    padding-bottom: 96px !important;
+  }
+
+  /* ---------- login ---------- */
+  .login-logo {
+    width: 150px !important;
+    height: 150px !important;
+  }
+
+  /* ---------- dashboard: three KPI cards in one compact row ---------- */
+  .kpi-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+
+  .kpi-row .kpi-card {
+    padding: 12px 10px !important;
+    min-height: 0 !important;
+  }
+
+  .kpi-row .kpi-card .kpi-icon {
+    display: none !important;
+  }
+
+  /* The whole card is tappable, so the "点击管理… →" hint line can go. */
+  .kpi-row .kpi-card .kpi-sub {
+    display: none !important;
+  }
+
+  .kpi-row .kpi-card .kpi-label {
+    font-size: 12px !important;
+    white-space: nowrap;
+  }
+
+  .kpi-row .kpi-card .kpi-value {
+    font-size: 26px !important;
+  }
+
+  /* Panel headers (map, lists): let the buttons wrap under the title instead of overlapping it. */
+  .panel-header {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .panel-header .panel-title {
+    white-space: nowrap;
+  }
+
+  /* Header control groups with a filter select (e.g. the dashboard map): one full-width row, select stretches. */
+  .panel-header > div:last-child:has(> select) {
+    flex: 0 0 100% !important;
+    width: 100% !important;
+    max-width: none !important;
+    flex-wrap: nowrap !important;
+    justify-content: flex-start !important;
+    gap: 6px !important;
+  }
+
+  .panel-header > div:last-child:has(> select) > select {
+    flex: 1 1 auto;
+    width: auto !important;
+    min-width: 0;
+  }
+
+  .panel-header > div:last-child:has(> select) > button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  /* ---------- wide tables scroll sideways instead of being clipped ---------- */
+  .device-table-wrap,
+  .table-wrap {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .device-table-wrap .data-table,
+  .table-wrap .data-table {
+    min-width: 640px;
+  }
+
+  /* ---------- realtime: readable header, two cards per row ---------- */
+  #sensor-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  /* Same selector as palette-override.css (which forces display:grid) so this one wins. */
+  #page-realtime #sensor-grid > div:first-child:not(.sensor-card):not(.empty-state) {
+    grid-column: 1 / -1;
+    display: flex !important;
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 4px;
+  }
+
+  #page-realtime #sensor-grid .api-data-timestamp {
+    display: block !important;
+    white-space: normal !important;
+    overflow-wrap: anywhere;
+  }
+
+  #sensor-grid .sensor-card {
+    padding: 12px !important;
+    min-width: 0;
+  }
+
+  #sensor-grid .sensor-card .sensor-value,
+  #sensor-grid .sensor-card .sensor-value * {
+    font-size: 26px;
+  }
+
+  /* ---------- AI 记录: crop list on top (sideways chips), records full width below ---------- */
+  .photos-layout {
+    flex-direction: column !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .crops-panel {
+    width: 100% !important;
+  }
+
+  .crops-list {
+    display: flex !important;
+    flex-direction: row;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 10px !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .crops-list .crop-item {
+    flex: 0 0 auto;
+    min-width: 150px;
+    max-width: 220px;
+    margin: 0 !important;
+  }
+
+  .records-panel {
+    width: 100% !important;
+    min-height: 300px;
+  }
+
+  .records-grid {
+    max-height: none !important;
+    overflow: visible !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    padding: 12px !important;
+  }
+
+  .records-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* ---------- record detail: region toolbar and rows stack instead of squeezing text ---------- */
+  .region-annotation-toolbar {
+    flex-wrap: wrap;
+  }
+
+  /* Drawing boxes needs a mouse (no finger drawing on phones, by decision), so hide the "拖拽画框" hint. */
+  .region-annotation-toolbar > .region-annotation-hint {
+    display: none;
+  }
+
+  .region-review-controls {
+    margin-left: 0 !important;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .region-list-row {
+    flex-direction: column;
+    align-items: stretch !important;
+  }
+
+  .region-list-actions {
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .region-species-select {
+    max-width: none;
+    flex: 1 1 140px;
+  }
+
+  /* ---------- 农事计划: tap a preset to add it (dragging does not work on touch screens) ---------- */
+  .ft-palette-hint .ft-hint-desktop {
+    display: none;
+  }
+}
+
+@media (min-width: 761px) {
+  .ft-palette-hint .ft-hint-mobile {
+    display: none;
+  }
+}
