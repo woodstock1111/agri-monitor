@@ -6,8 +6,12 @@ The numerical core in harvest-model.js is adapted from R/quefts.R in
 https://github.com/IITA-AKILIMO/akilimo-recommendations (main, retrieved 2026-09-07).
 The upstream license is embedded in README.md.
 Changes: JavaScript port, configurable crop coefficients, zero/singular-case guards,
-nonnegative output bound, explicit kg/ha dry-matter units. Climate/economic layers
-are demo assumptions, not upstream LINTUL or its calibrated datasets.
+nonnegative output bound, explicit kg/ha dry-matter units. The daily water layer follows FAO-56 equations and crop tables (chapters 6 and 8):
+https://www.fao.org/4/X0490E/x0490e0b.htm
+https://www.fao.org/4/X0490E/x0490e0e.htm
+Growth, soil hydraulic defaults and economic assumptions remain an uncalibrated
+Beta implementation, not upstream LINTUL or its calibrated datasets.
+Algorithm details and parameter provenance: docs/harvest-algorithm-v3.md.
 
 MIT License
 

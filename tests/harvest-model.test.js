@@ -16,12 +16,12 @@ test('budget limits incremental costs, including zero budget',()=>{
 test('area independent per-mu yield and precise dry/fresh conversion',()=>{
  const r=m.evaluate(p,weather()),large=m.evaluate({...p,area:100},weather());assert.equal(r.best.fresh,large.best.fresh);
  const base=m.quefts([p.n,p.p,p.k],[0,0,0],r.wly,m.crops.sweetpotato)/.25/15;
- assert.equal(r.rows[0].fresh,base);assert.equal(r.best.net,r.best.fresh*p.price-p.base-r.best.cost);
+ assert.equal(r.rows[0].fresh,base);assert.equal(r.best.net,r.best.fresh*.85*p.price-p.base-r.best.cost);
 });
 test('frost, cold, water and drainage materially affect results',()=>{
  const warm=m.evaluate(p,weather());const cold=m.evaluate(p,weather(0,-7));assert.equal(cold.score,0);assert.equal(cold.best.fresh,0);
- assert(m.evaluate({...p,drainage:'poor'},weather()).score<warm.score);
- const dry=m.evaluate(p,weather(26,19,0));assert.equal(dry.best.fresh,0);assert(m.evaluate({...p,water:'irrigated'},weather(26,19,0)).best.fresh>0);
+ assert(m.evaluate({...p,drainage:'poor'},weather(26,19,100)).wly<m.evaluate(p,weather(26,19,100)).wly);
+ const dry=m.evaluate(p,weather(26,19,0));assert(dry.best.fresh<warm.best.fresh);assert(m.evaluate({...p,water:'irrigated'},weather(26,19,0)).best.fresh>dry.best.fresh);
 });
 test('invalid numeric/date input and incomplete weather rejected',()=>{
  for(const patch of [{lat:91},{lng:NaN},{area:0},{days:0},{days:150.5},{date:'2026-02-30'},{budget:-1},{p:NaN}]) assert.throws(()=>m.evaluate({...p,...patch},weather()));
