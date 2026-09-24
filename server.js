@@ -3,6 +3,8 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { promisify } = require('util');
+const pbkdf2Async = promisify(crypto.pbkdf2);
 const chinaSoil = require('./china-soil').createSoilService();
 
 const PORT = process.env.PORT || 3000;
@@ -18,6 +20,12 @@ const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123456';
 const TOKEN_TTL_SECONDS = 8 * 60 * 60;
 const MAX_SENSOR_READINGS = 100000;
 const MAX_RAW_PAYLOADS = 10000;
+// Trim in batches: slicing a 100k array and rebuilding the signature set on every append is O(n) per insert.
+const SENSOR_READINGS_TRIM_SLACK = 10000;
+const RAW_PAYLOADS_TRIM_SLACK = 1000;
+const LIVE_FETCH_MIN_INTERVAL_MS = 30 * 1000;
+const MINI_AGENT_RATE_WINDOW_MS = 10 * 60 * 1000;
+const MINI_AGENT_RATE_LIMIT = 30;
 const CLOUD_POLL_INTERVAL_MS = Number(process.env.CLOUD_POLL_INTERVAL_MS || 5 * 60 * 1000);
 const WRITE_DEBOUNCE_MS = 1000;
 const LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
@@ -30,6 +38,9 @@ const LOGIN_FAILURES = {
     account: new Map(),
 };
 const AGENT_SESSIONS = new Map();
+const MINI_AGENT_RATE = new Map();
+const LIVE_FETCHES = new Map();
+const HISTORY_SYNCS_IN_PROGRESS = new Set();
 const AGENT_SESSION_TTL = 30 * 60 * 1000;
 const AGENT_MAX_ITERATIONS = 10;
 const AGENT_TOOL_DEFS = [
@@ -184,13 +195,12 @@ let cachedState = null;
 let writeTimeout = null;
 let isDirty = false;
 let isShuttingDown = false;
-let isSyncInProgress = false;
+let isFlushing = false;
 let signatureSet = new Set();
+let tmpFileCounter = 0;
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(PHOTOS_DIR, { recursive: true });
-if (!fs.existsSync(PHOTO_RECORDS_FILE)) writePhotoRecords(readPhotoRecords());
-if (!fs.existsSync(PEST_LIBRARY_FILE)) writePestLibrary(readPestLibrary());
 
 function emptyState() {
     return {
@@ -223,11 +233,12 @@ function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
     return `pbkdf2$${salt}$${hash}`;
 }
 
-function verifyPassword(password, encoded) {
+// Async so concurrent logins don't block the event loop (120k pbkdf2 iterations each).
+async function verifyPassword(password, encoded) {
     if (!encoded || !encoded.startsWith('pbkdf2$')) return false;
     const [, salt, expected] = encoded.split('$');
-    const actual = hashPassword(password, salt).split('$')[2];
-    return crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
+    const actual = await pbkdf2Async(password, salt, 120000, 32, 'sha256');
+    return crypto.timingSafeEqual(actual, Buffer.from(expected, 'hex'));
 }
 
 function safeId(prefix) {
@@ -287,6 +298,16 @@ function recordLoginFailure(ip, account, now = Date.now()) {
 function clearLoginFailures(ip, account) {
     LOGIN_FAILURES.ip.delete(ip);
     if (account) LOGIN_FAILURES.account.delete(account);
+}
+
+function allowMiniAgentRequest(ip, now = Date.now()) {
+    const bucket = MINI_AGENT_RATE.get(ip);
+    if (!bucket || now - bucket.windowStart > MINI_AGENT_RATE_WINDOW_MS) {
+        MINI_AGENT_RATE.set(ip, { windowStart: now, count: 1 });
+        return true;
+    }
+    bucket.count += 1;
+    return bucket.count <= MINI_AGENT_RATE_LIMIT;
 }
 
 function tenantIdForAccount(account) {
@@ -409,37 +430,70 @@ function normalizeState(raw = {}) {
     return { state, changed };
 }
 
+function tmpPathFor(file) {
+    tmpFileCounter += 1;
+    return `${file}.${process.pid}.${tmpFileCounter}.tmp`;
+}
+
+// Write to a temp file, fsync, then rename over the target, so a crash mid-write never leaves a half-written file.
+function writeFileAtomicSync(file, text) {
+    const tmp = tmpPathFor(file);
+    const fd = fs.openSync(tmp, 'w');
+    try {
+        fs.writeSync(fd, text);
+        fs.fsyncSync(fd);
+    } finally {
+        fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, file);
+}
+
+async function writeFileAtomic(file, text) {
+    const tmp = tmpPathFor(file);
+    const handle = await fs.promises.open(tmp, 'w');
+    try {
+        await handle.writeFile(text, 'utf8');
+        await handle.sync();
+    } finally {
+        await handle.close();
+    }
+    await fs.promises.rename(tmp, file);
+}
+
+// An existing but unparseable data file must stop the process: falling back to empty data
+// would get written back on the next save and wipe production (restore from server-data backups instead).
+function readJsonFileOrExit(file) {
+    try {
+        return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (error) {
+        console.error(`[Storage] FATAL: ${file} is unreadable (${error.message}). Refusing to start so it is not overwritten.`);
+        process.exit(1);
+    }
+}
+
 function readState() {
     if (cachedState) return cachedState;
-    try {
-        const raw = fs.existsSync(STATE_FILE)
-            ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
-            : emptyState();
-        const { state, changed } = normalizeState(raw);
-        cachedState = state;
-        signatureSet = new Set((cachedState.sensorReadings || []).map(item => item.signature).filter(Boolean));
-        if (changed) writeState(state);
-        return cachedState;
-    } catch (error) {
-        console.error('[State] read failed:', error.message);
-        const { state } = normalizeState(emptyState());
-        cachedState = state;
-        signatureSet = new Set((cachedState.sensorReadings || []).map(item => item.signature).filter(Boolean));
-        return cachedState;
-    }
+    const raw = fs.existsSync(STATE_FILE) ? readJsonFileOrExit(STATE_FILE) : emptyState();
+    const { state, changed } = normalizeState(raw);
+    cachedState = state;
+    signatureSet = new Set((cachedState.sensorReadings || []).map(item => item.signature).filter(Boolean));
+    if (changed) writeState(state);
+    return cachedState;
 }
 
 async function flushToDisk() {
     writeTimeout = null;
-    if (!isDirty || !cachedState) return;
+    if (!isDirty || !cachedState || isFlushing) return;
     isDirty = false;
+    isFlushing = true;
     try {
-        await fs.promises.writeFile(STATE_FILE, JSON.stringify(cachedState), 'utf8');
+        await writeFileAtomic(STATE_FILE, JSON.stringify(cachedState));
         console.log('[Storage] State flushed to disk.');
     } catch (error) {
         console.error('[Storage] flush failed:', error.message);
         isDirty = true;
     } finally {
+        isFlushing = false;
         if (isDirty && !writeTimeout && !isShuttingDown) {
             writeTimeout = setTimeout(() => {
                 void flushToDisk();
@@ -457,18 +511,38 @@ function writeState(data) {
     }, WRITE_DEBOUNCE_MS);
 }
 
-function readFarmTasks() {
-    if (!fs.existsSync(FARM_TASKS_FILE)) return { tasks: [] };
-    const data = JSON.parse(fs.readFileSync(FARM_TASKS_FILE, 'utf8'));
+// Small JSON files live in memory and are mutated in place, then written back atomically.
+// Handlers must not hold a copy across an await and write it back later: that is what used to
+// drop concurrent updates (e.g. a photo uploaded while an AI annotation of another photo was running).
+// Because of the cache, edit these files by hand only while the server is stopped.
+function createJsonStore(file, createDefault, normalize) {
+    let cache = null;
+    return {
+        read() {
+            if (!cache) cache = normalize(fs.existsSync(file) ? readJsonFileOrExit(file) : createDefault());
+            return cache;
+        },
+        write(data) {
+            cache = data;
+            writeFileAtomicSync(file, JSON.stringify(data));
+        },
+    };
+}
+
+const farmTaskStore = createJsonStore(FARM_TASKS_FILE, () => ({ tasks: [] }), data => {
     if (!Array.isArray(data.tasks)) data.tasks = [];
     data.tasks.forEach(item => {
         if (item && !item.tenantId) item.tenantId = DEFAULT_TENANT_ID;
     });
     return data;
+});
+
+function readFarmTasks() {
+    return farmTaskStore.read();
 }
 
 function writeFarmTasks(data) {
-    fs.writeFileSync(FARM_TASKS_FILE, JSON.stringify(data));
+    farmTaskStore.write(data);
 }
 
 function defaultPestLibrary() {
@@ -486,19 +560,20 @@ function defaultPestLibrary() {
     };
 }
 
-function readPestLibrary() {
-    const data = fs.existsSync(PEST_LIBRARY_FILE)
-        ? JSON.parse(fs.readFileSync(PEST_LIBRARY_FILE, 'utf8'))
-        : defaultPestLibrary();
+const pestLibraryStore = createJsonStore(PEST_LIBRARY_FILE, defaultPestLibrary, data => {
     if (!Array.isArray(data.entries)) data.entries = [];
     data.entries.forEach(item => {
         if (item && !item.tenantId) item.tenantId = DEFAULT_TENANT_ID;
     });
     return data;
+});
+
+function readPestLibrary() {
+    return pestLibraryStore.read();
 }
 
 function writePestLibrary(data) {
-    fs.writeFileSync(PEST_LIBRARY_FILE, JSON.stringify(data));
+    pestLibraryStore.write(data);
 }
 
 function normalizePestLibraryKey(key) {
@@ -512,14 +587,7 @@ function normalizePestLibraryKey(key) {
     return text;
 }
 
-function readPhotoRecords() {
-    // Return the initial photo records structure when the file does not exist.
-    if (!fs.existsSync(PHOTO_RECORDS_FILE)) {
-        return { crops: [], records: [], config: {
-            amapKey: '',
-            visionApiKey: '', visionModel: 'qwen3-vl-flash', textModel: 'qwen-turbo' }};
-    }
-    const data = JSON.parse(fs.readFileSync(PHOTO_RECORDS_FILE, 'utf8'));
+const photoRecordStore = createJsonStore(PHOTO_RECORDS_FILE, () => ({ crops: [], records: [], config: {} }), data => {
     if (!Array.isArray(data.crops)) data.crops = [];
     if (!Array.isArray(data.records)) data.records = [];
     data.config = {
@@ -536,10 +604,14 @@ function readPhotoRecords() {
         if (item && !item.tenantId) item.tenantId = DEFAULT_TENANT_ID;
     });
     return data;
+});
+
+function readPhotoRecords() {
+    return photoRecordStore.read();
 }
 
 function writePhotoRecords(data) {
-    fs.writeFileSync(PHOTO_RECORDS_FILE, JSON.stringify(data));
+    photoRecordStore.write(data);
 }
 
 function deletePhotoRecordFile(record) {
@@ -561,7 +633,7 @@ function flushSyncBeforeExit(signal) {
     }
     if (!isDirty || !cachedState) return;
     try {
-        fs.writeFileSync(STATE_FILE, JSON.stringify(cachedState), 'utf8');
+        writeFileAtomicSync(STATE_FILE, JSON.stringify(cachedState));
         isDirty = false;
         console.log(`[Storage] Final synchronous flush before ${signal}.`);
     } catch (error) {
@@ -604,14 +676,20 @@ function scopedTenantRows(user, rows = []) {
 function operationalSnapshot(state, user) {
     const tenantId = user.role === 'platform_admin' ? null : user.tenantId;
     const scoped = rows => tenantId ? rows.filter(item => !item.tenantId || item.tenantId === tenantId) : rows;
+    const devices = scoped(state.devices);
+    const deviceIds = new Set(devices.map(item => item.id));
+    // history/serverRealtime/realtimeState are keyed by deviceId and carry no tenantId of their own.
+    const byVisibleDevice = map => tenantId
+        ? Object.fromEntries(Object.entries(map || {}).filter(([deviceId]) => deviceIds.has(deviceId)))
+        : (map || {});
     return {
         locations: scoped(state.locations),
-        devices: scoped(state.devices),
+        devices,
         automations: scoped(state.automations),
         autoLog: scoped(state.autoLog),
-        history: state.history || {},
-        serverRealtime: state.serverRealtime || {},
-        realtimeState: state.realtimeState || {},
+        history: byVisibleDevice(state.history),
+        serverRealtime: byVisibleDevice(state.serverRealtime),
+        realtimeState: byVisibleDevice(state.realtimeState),
         channels: scoped(state.channels || []),
         sensorReadings: tenantId
             ? (state.sensorReadings || []).filter(item => item.tenantId === tenantId).slice(-1000)
@@ -692,7 +770,13 @@ function getAuthUser(req) {
     return { state, user };
 }
 
+// Memoized per request: the first caller's limit applies, later callers get the same parsed body.
 function readBody(req, limit = 1024 * 1024) {
+    if (!req.bodyPromise) req.bodyPromise = readBodyOnce(req, limit);
+    return req.bodyPromise;
+}
+
+function readBodyOnce(req, limit) {
     return new Promise((resolve, reject) => {
         let body = '';
         req.on('data', chunk => {
@@ -1239,7 +1323,7 @@ function createRawPayload(state, dev, provider, payload) {
         payload,
     };
     state.rawIngestPayloads.push(raw);
-    if (state.rawIngestPayloads.length > MAX_RAW_PAYLOADS) {
+    if (state.rawIngestPayloads.length > MAX_RAW_PAYLOADS + RAW_PAYLOADS_TRIM_SLACK) {
         state.rawIngestPayloads = state.rawIngestPayloads.slice(-MAX_RAW_PAYLOADS);
     }
     return raw;
@@ -1315,7 +1399,7 @@ function appendPlatformReading(state, record) {
     if (signatureSet.has(signature)) return false;
     state.sensorReadings.push({ ...record, signature });
     signatureSet.add(signature);
-    if (state.sensorReadings.length > MAX_SENSOR_READINGS) {
+    if (state.sensorReadings.length > MAX_SENSOR_READINGS + SENSOR_READINGS_TRIM_SLACK) {
         state.sensorReadings = state.sensorReadings.slice(-MAX_SENSOR_READINGS);
         signatureSet = new Set((state.sensorReadings || []).map(item => item.signature).filter(Boolean));
     }
@@ -1361,6 +1445,48 @@ function updatePlatformRealtime(state, dev, record, dataItems = []) {
     };
 }
 
+// Offline devices come back as { deviceStatus: 'offline', dataItem: null, timeStamp: 0 }. Storing that would
+// save an empty reading stamped "now", blank out the realtime panel and mark the device online.
+function rowHasReadings(row) {
+    return Array.isArray(row?.dataItem) && row.dataItem.some(node => (node.registerItem || []).length);
+}
+
+function markDeviceOnline(dev, online) {
+    const current = readState();
+    const target = current.devices.find(x => x.id === dev.id);
+    if (!target || target.online === online) return;
+    target.online = online;
+    writeState(current);
+}
+
+async function fetchAndStoreLiveReading(dev) {
+    const c = dev.apiConfig;
+    const token = await getCloudToken(c.loginName, c.password, c.apiUrl);
+    const realtimeRow = await fetchCloudRealtime(dev, token);
+    if (!realtimeRow) return;
+    if (!rowHasReadings(realtimeRow)) return markDeviceOnline(dev, false);
+    const current = readState();
+    const record = normalizePlatformCloudRow(current, dev, realtimeRow, 'cloud-live-fetch');
+    appendPlatformReading(current, record);
+    updatePlatformRealtime(current, dev, record, realtimeRow.dataItem || []);
+    const dIdx = current.devices.findIndex(x => x.id === dev.id);
+    if (dIdx >= 0) current.devices[dIdx].online = true;
+    writeState(current);
+}
+
+// Viewers polling with force=true share one cloud request per device, at most once per LIVE_FETCH_MIN_INTERVAL_MS.
+function liveFetchDevice(dev) {
+    const entry = LIVE_FETCHES.get(dev.id);
+    if (entry?.promise) return entry.promise;
+    if (entry && Date.now() - entry.startedAt < LIVE_FETCH_MIN_INTERVAL_MS) return Promise.resolve();
+    const next = { startedAt: Date.now(), promise: null };
+    next.promise = fetchAndStoreLiveReading(dev)
+        .catch(error => console.error('[LiveFetch Error]', dev.id, error.message))
+        .finally(() => { next.promise = null; });
+    LIVE_FETCHES.set(dev.id, next);
+    return next.promise;
+}
+
 async function runCollector() {
     while (true) {
         try {
@@ -1373,7 +1499,10 @@ async function runCollector() {
                     const realtimeRow = await fetchCloudRealtime(dev, token);
                     if (!realtimeRow) continue;
                     const row = await fetchLatestCloudHistoryRecord(dev, token, realtimeRow);
-                    if (!row) continue;
+                    if (!rowHasReadings(row)) {
+                        markDeviceOnline(dev, false);
+                        continue;
+                    }
                     const current = readState();
                     if (!cloudRowChanged(current, dev, row)) continue;
                     const record = normalizePlatformCloudRow(current, dev, row, 'cloud-poll');
@@ -1396,7 +1525,11 @@ async function runCollector() {
     }
 }
 
+// Load every data file up front so a corrupt file stops startup instead of failing (or being overwritten) later.
 readState();
+readFarmTasks();
+if (!fs.existsSync(PHOTO_RECORDS_FILE)) writePhotoRecords(readPhotoRecords());
+if (!fs.existsSync(PEST_LIBRARY_FILE)) writePestLibrary(readPestLibrary());
 runCollector();
 
 const server = http.createServer(async (req, res) => {
@@ -1469,7 +1602,7 @@ const server = http.createServer(async (req, res) => {
                 return sendJson(429, loginFailureMsg, { 'Retry-After': String(retryAfter) });
             }
             const user = state.users.find(item => item.account === account && item.status !== 'disabled');
-            if (!user || !verifyPassword(String(body.password || ''), user.passwordHash)) {
+            if (!user || !(await verifyPassword(String(body.password || ''), user.passwordHash))) {
                 recordLoginFailure(clientIp, accountKey);
                 return sendJson(401, loginFailureMsg);
             }
@@ -1575,7 +1708,9 @@ const server = http.createServer(async (req, res) => {
                 }
                 const next = mergeOperationalState(auth.state, body, auth.user);
                 writeState(next);
-                signatureSet = new Set((next.sensorReadings || []).map(item => item.signature).filter(Boolean));
+                if (next.sensorReadings !== auth.state.sensorReadings) {
+                    signatureSet = new Set((next.sensorReadings || []).map(item => item.signature).filter(Boolean));
+                }
                 return sendJson(200, { ok: true });
             }
             return sendJson(200, operationalSnapshot(auth.state, auth.user));
@@ -1625,28 +1760,11 @@ const server = http.createServer(async (req, res) => {
             const dev = scopedDevices.find(d => d.id === deviceId);
             if (!dev) return sendJson(404, { ok: false, msg: 'Device not found' });
 
-            let rt = auth.state.serverRealtime?.[deviceId];
             const force = String(query.force || '').toLowerCase() === 'true';
             if (force && dev.type === 'sensor_soil_api' && dev.apiConfig) {
-                try {
-                    const c = dev.apiConfig;
-                    const token = await getCloudToken(c.loginName, c.password, c.apiUrl);
-                    const realtimeRow = await fetchCloudRealtime(dev, token);
-                    if (realtimeRow) {
-                        const current = readState();
-                        const record = normalizePlatformCloudRow(current, dev, realtimeRow, 'cloud-live-fetch');
-                        appendPlatformReading(current, record);
-                        updatePlatformRealtime(current, dev, record, realtimeRow.dataItem || []);
-                        rt = current.serverRealtime?.[deviceId] || rt;
-                        const dIdx = current.devices.findIndex(x => x.id === deviceId);
-                        if (dIdx >= 0) current.devices[dIdx].online = true;
-                        writeState(current);
-                    }
-                } catch (e) {
-                    console.error('[LiveFetch Error]', e.message);
-                }
+                await liveFetchDevice(dev);
             }
-
+            const rt = readState().serverRealtime?.[deviceId];
             return sendJson(200, rt || { ok: false, msg: 'No realtime data yet' });
         }
 
@@ -1715,12 +1833,12 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/api/v1/cloud-history-sync') {
             const auth = requireAuth();
             if (!auth) return;
-            if (isSyncInProgress) return sendJson(429, { ok: false, msg: 'Sync already in progress' });
             const { deviceId, startTime, endTime } = query;
-            const state = readState();
-            const dev = (state.devices || []).find(d => d.id === deviceId);
-            if (!dev) return sendJson(404, { ok: false, msg: 'Device not found' });
-            isSyncInProgress = true;
+            if (!deviceId || !startTime || !endTime) return sendJson(400, { ok: false, msg: 'deviceId, startTime and endTime required' });
+            const dev = scopedTenantRows(auth.user, auth.state.devices || []).find(d => d.id === deviceId);
+            if (!dev || !dev.apiConfig) return sendJson(404, { ok: false, msg: 'Device not found' });
+            if (HISTORY_SYNCS_IN_PROGRESS.has(deviceId)) return sendJson(429, { ok: false, msg: 'Sync already in progress' });
+            HISTORY_SYNCS_IN_PROGRESS.add(deviceId);
             try {
                 const token = await getCloudToken(dev.apiConfig.loginName, dev.apiConfig.password, dev.apiConfig.apiUrl);
                 const rtRes = await requestJson(`${dev.apiConfig.apiUrl}/api/data/getRealTimeDataByDeviceAddr?deviceAddrs=${dev.apiConfig.deviceAddr}`, { method: 'GET', headers: { 'authorization': token } });
@@ -1760,6 +1878,10 @@ const server = http.createServer(async (req, res) => {
                     }
                 });
 
+                // Re-read after the cloud requests: state may have been replaced (e.g. by an app-state PUT) meanwhile,
+                // and writing back the object captured before the awaits would silently undo that change.
+                const state = readState();
+                if (!(state.devices || []).some(d => d.id === deviceId)) return sendJson(404, { ok: false, msg: 'Device not found' });
                 let inserted = 0;
                 const list = Object.values(grouped).sort((a, b) => b.time.localeCompare(a.time));
                 list.forEach(item => {
@@ -1797,7 +1919,7 @@ const server = http.createServer(async (req, res) => {
                 writeState(state);
                 return sendJson(200, { ok: true, list: list.map(item => ({ time: item.time, values: item.values })), inserted });
             } finally {
-                isSyncInProgress = false;
+                HISTORY_SYNCS_IN_PROGRESS.delete(deviceId);
             }
         }
 
@@ -1976,11 +2098,12 @@ const server = http.createServer(async (req, res) => {
             const pl = readPestLibrary();
             const entry = (pl.entries || []).find(item => item.id === id);
             if (!entry) return sendJson(404, { ok: false, msg: 'entry not found' });
+            const nextName = body.name !== undefined ? String(body.name || '').trim() : entry.name;
+            if (!entry.key || !nextName) return sendJson(400, { ok: false, msg: 'key and name required' });
             if (body.type !== undefined && ['pest', 'disease', 'weed'].includes(String(body.type))) entry.type = String(body.type);
-            if (body.name !== undefined) entry.name = String(body.name || '').trim();
+            entry.name = nextName;
             if (body.symptoms !== undefined) entry.symptoms = String(body.symptoms || '');
             if (body.control !== undefined) entry.control = String(body.control || '');
-            if (!entry.key || !entry.name) return sendJson(400, { ok: false, msg: 'key and name required' });
             writePestLibrary(pl);
             return sendJson(200, { ok: true, entry });
         }
@@ -2312,9 +2435,17 @@ const server = http.createServer(async (req, res) => {
             }
         }
 
-        // 小程序“小薯”助手：木薯/红薯 看图识虫草 + 种植问答（展示模式，暂未鉴权）
-        if (pathname === '/api/v1/agent/chat' && req.method === 'POST') {
-            const body = await readBody(req, 8 * 1024 * 1024).catch(() => ({}));
+        // 小程序“小薯”助手：木薯/红薯 看图识虫草 + 种植问答（展示模式，暂未鉴权，按 IP 限流）
+        // 与 Web 端共用同一路径：小程序发 {text, image, history}，Web 端发 {message, sessionId}，
+        // 带 message 的请求落到下方需要登录、带工具的 Web 处理器。
+        const agentChatBody = pathname === '/api/v1/agent/chat' && req.method === 'POST'
+            ? await readBody(req, 8 * 1024 * 1024).catch(() => ({}))
+            : null;
+        if (agentChatBody && agentChatBody.message === undefined) {
+            const body = agentChatBody;
+            if (!allowMiniAgentRequest(realClientIp(req))) {
+                return sendJson(429, { ok: false, msg: '请求太频繁，请稍后再试' });
+            }
             const pr = readPhotoRecords();
             const visionApiKey = String(pr.config.visionApiKey || '').trim();
             const model = String(pr.config.visionModel || 'qwen-vl-plus').trim() || 'qwen-vl-plus';
@@ -2511,121 +2642,132 @@ const server = http.createServer(async (req, res) => {
                 });
             }
             AGENT_SESSIONS.set(sessionId, session);
-            session.messages.push({ role: 'user', content: message });
+            if (session.busy) return sendJson(409, { ok: false, msg: '上一条消息还在处理中，请稍候' });
+            session.busy = true;
+            const turnStart = session.messages.length;
+            let turnCompleted = false;
+            try {
+                session.messages.push({ role: 'user', content: message });
 
-            let finalContent = '';
-            let iterations = 0;
-            const toolCallLog = [];
-            const debugLog = [];
-            const WRITE_TOOLS = ['complete_farm_task', 'create_farm_task'];
-            let nudgedForWrite = false;
-            while (iterations < AGENT_MAX_ITERATIONS) {
-                iterations += 1;
-                console.log(`[Agent Chat] session=${sessionId} iteration=${iterations}`);
-                const result = await requestJson('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
-                    method: 'POST',
-                    timeout: 60000,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${visionApiKey}`,
-                    },
-                }, JSON.stringify({
-                    model: textModel,
-                    messages: session.messages,
-                    tools: AGENT_TOOL_DEFS,
-                    tool_choice: 'auto',
-                }));
-                if (result.status >= 400) {
-                    return sendJson(502, { ok: false, msg: apiErrorMessage(result, 'Agent chat failed') });
-                }
-                const choice = result.data?.choices?.[0];
-                const assistantMsg = choice?.message || { role: 'assistant', content: '' };
-                session.messages.push(assistantMsg);
-                const toolCalls = Array.isArray(assistantMsg.tool_calls) ? assistantMsg.tool_calls : [];
-                const iterationDebug = {
-                    iteration: iterations,
-                    thinking: String(assistantMsg.content || ''),
-                    toolCalls: [],
-                };
-                debugLog.push(iterationDebug);
-                if (toolCalls.length) {
-                    for (const tc of toolCalls) {
-                        const toolName = tc.function?.name || '';
-                        console.log(`[Agent Chat] tool=${toolName}`);
-                        let args = {};
-                        try {
-                            const rawArgs = tc.function?.arguments;
-                            args = typeof rawArgs === 'string' ? JSON.parse(rawArgs || '{}') : (rawArgs || {});
-                        } catch (error) {
-                            args = {};
-                        }
-                        toolCallLog.push({ tool: toolName, args });
-                        const debugCall = { name: toolName, args, result: '' };
-                        iterationDebug.toolCalls.push(debugCall);
-                        let toolResult = '';
-                        try {
-                            toolResult = await executeAgentTool(toolName, args, auth.user);
-                        } catch (error) {
-                            toolResult = JSON.stringify({ error: error.message || 'Tool failed' });
-                        }
-                        debugCall.result = String(toolResult || '').slice(0, 500);
-                        try {
-                            const parsedToolResult = JSON.parse(toolResult);
-                            const currentLog = toolCallLog[toolCallLog.length - 1];
-                            if (currentLog) {
-                                currentLog.ok = parsedToolResult.ok;
-                                currentLog.verified = parsedToolResult.verified;
-                                currentLog.error = parsedToolResult.error;
-                                if (parsedToolResult.task) currentLog.task = parsedToolResult.task;
-                            }
-                        } catch {}
-                        session.messages.push({
-                            role: 'tool',
-                            tool_call_id: tc.id,
-                            content: toolResult,
-                        });
+                let finalContent = '';
+                let iterations = 0;
+                const toolCallLog = [];
+                const debugLog = [];
+                const WRITE_TOOLS = ['complete_farm_task', 'create_farm_task'];
+                let nudgedForWrite = false;
+                while (iterations < AGENT_MAX_ITERATIONS) {
+                    iterations += 1;
+                    console.log(`[Agent Chat] session=${sessionId} iteration=${iterations}`);
+                    const result = await requestJson('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+                        method: 'POST',
+                        timeout: 60000,
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${visionApiKey}`,
+                        },
+                    }, JSON.stringify({
+                        model: textModel,
+                        messages: session.messages,
+                        tools: AGENT_TOOL_DEFS,
+                        tool_choice: 'auto',
+                    }));
+                    if (result.status >= 400) {
+                        return sendJson(502, { ok: false, msg: apiErrorMessage(result, 'Agent chat failed') });
                     }
-                    continue;
+                    const choice = result.data?.choices?.[0];
+                    const assistantMsg = choice?.message || { role: 'assistant', content: '' };
+                    session.messages.push(assistantMsg);
+                    const toolCalls = Array.isArray(assistantMsg.tool_calls) ? assistantMsg.tool_calls : [];
+                    const iterationDebug = {
+                        iteration: iterations,
+                        thinking: String(assistantMsg.content || ''),
+                        toolCalls: [],
+                    };
+                    debugLog.push(iterationDebug);
+                    if (toolCalls.length) {
+                        for (const tc of toolCalls) {
+                            const toolName = tc.function?.name || '';
+                            console.log(`[Agent Chat] tool=${toolName}`);
+                            let args = {};
+                            try {
+                                const rawArgs = tc.function?.arguments;
+                                args = typeof rawArgs === 'string' ? JSON.parse(rawArgs || '{}') : (rawArgs || {});
+                            } catch (error) {
+                                args = {};
+                            }
+                            toolCallLog.push({ tool: toolName, args });
+                            const debugCall = { name: toolName, args, result: '' };
+                            iterationDebug.toolCalls.push(debugCall);
+                            let toolResult = '';
+                            try {
+                                toolResult = await executeAgentTool(toolName, args, auth.user);
+                            } catch (error) {
+                                toolResult = JSON.stringify({ error: error.message || 'Tool failed' });
+                            }
+                            debugCall.result = String(toolResult || '').slice(0, 500);
+                            try {
+                                const parsedToolResult = JSON.parse(toolResult);
+                                const currentLog = toolCallLog[toolCallLog.length - 1];
+                                if (currentLog) {
+                                    currentLog.ok = parsedToolResult.ok;
+                                    currentLog.verified = parsedToolResult.verified;
+                                    currentLog.error = parsedToolResult.error;
+                                    if (parsedToolResult.task) currentLog.task = parsedToolResult.task;
+                                }
+                            } catch {}
+                            session.messages.push({
+                                role: 'tool',
+                                tool_call_id: tc.id,
+                                content: toolResult,
+                            });
+                        }
+                        continue;
+                    }
+                    finalContent = String(assistantMsg.content || '');
+                    const hasWriteTools = toolCallLog.some(item => WRITE_TOOLS.includes(item.tool));
+                    const hasQueryTools = toolCallLog.some(item => item.tool && !WRITE_TOOLS.includes(item.tool));
+                    const needsNudge = !hasWriteTools && !nudgedForWrite && (
+                        toolCallLog.length === 0 || hasQueryTools
+                    );
+                    if (needsNudge) {
+                        nudgedForWrite = true;
+                        console.log('[Agent Chat] nudge: no write tools called, retrying. toolCallLog:', toolCallLog.map(item => item.tool));
+                        session.messages.push({
+                            role: 'user',
+                            content: '你查询了数据但没有执行任何写入操作。如果我的请求要求你执行操作（如标记完成、创建任务），你必须调用对应的写入工具（complete_farm_task、create_farm_task），不能只查询后口头回答"已完成"。如果我只是在询问信息，请正常回答。',
+                        });
+                        continue;
+                    }
+                    break;
                 }
-                finalContent = String(assistantMsg.content || '');
-                const hasWriteTools = toolCallLog.some(item => WRITE_TOOLS.includes(item.tool));
-                const hasQueryTools = toolCallLog.some(item => item.tool && !WRITE_TOOLS.includes(item.tool));
-                const needsNudge = !hasWriteTools && !nudgedForWrite && (
-                    toolCallLog.length === 0 || hasQueryTools
-                );
-                if (needsNudge) {
-                    nudgedForWrite = true;
-                    console.log('[Agent Chat] nudge: no write tools called, retrying. toolCallLog:', toolCallLog.map(item => item.tool));
-                    session.messages.push({
-                        role: 'user',
-                        content: '你查询了数据但没有执行任何写入操作。如果我的请求要求你执行操作（如标记完成、创建任务），你必须调用对应的写入工具（complete_farm_task、create_farm_task），不能只查询后口头回答"已完成"。如果我只是在询问信息，请正常回答。',
-                    });
-                    continue;
-                }
-                break;
-            }
 
-            finalContent = String(finalContent || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-            if (!finalContent) finalContent = '我暂时没有得到可用结论，请稍后再试或换一种问法。';
-            if (session.messages.length > 100) {
-                session.messages = [session.messages[0], ...session.messages.slice(-60)];
+                finalContent = String(finalContent || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+                if (!finalContent) finalContent = '我暂时没有得到可用结论，请稍后再试或换一种问法。';
+                if (session.messages.length > 100) {
+                    session.messages = [session.messages[0], ...session.messages.slice(-60)];
+                }
+                session.lastAccess = Date.now();
+                AGENT_SESSIONS.set(sessionId, session);
+                const writeResults = toolCallLog
+                    .filter(item => WRITE_TOOLS.includes(item.tool))
+                    .map(item => ({
+                        tool: item.tool,
+                        ok: item.ok === true,
+                        taskId: item.task?.id || item.args?.taskId || '',
+                        title: item.task?.title || item.args?.title || '',
+                        date: item.task?.date || item.args?.date || '',
+                        status: item.task?.status || '',
+                        completed: item.tool === 'complete_farm_task' ? item.task?.status === 'done' : undefined,
+                    }));
+                const responseBody = { ok: true, sessionId, reply: finalContent, toolCalls: toolCallLog, iterations, writeResults };
+                if (auth.user.agentDebug === true) responseBody.debugLog = debugLog;
+                turnCompleted = true;
+                return sendJson(200, responseBody);
+            } finally {
+                session.busy = false;
+                // A failed turn leaves a dangling user message / tool_calls that would break every later request on this session.
+                if (!turnCompleted) session.messages.length = turnStart;
             }
-            session.lastAccess = Date.now();
-            AGENT_SESSIONS.set(sessionId, session);
-            const writeResults = toolCallLog
-                .filter(item => WRITE_TOOLS.includes(item.tool))
-                .map(item => ({
-                    tool: item.tool,
-                    ok: item.ok === true,
-                    taskId: item.task?.id || item.args?.taskId || '',
-                    title: item.task?.title || item.args?.title || '',
-                    date: item.task?.date || item.args?.date || '',
-                    status: item.task?.status || '',
-                    completed: item.tool === 'complete_farm_task' ? item.task?.status === 'done' : undefined,
-                }));
-            const responseBody = { ok: true, sessionId, reply: finalContent, toolCalls: toolCallLog, iterations, writeResults };
-            if (auth.user.agentDebug === true) responseBody.debugLog = debugLog;
-            return sendJson(200, responseBody);
         }
 
         if (pathname === '/api/v1/agent/chat' && req.method === 'DELETE') {
@@ -2684,7 +2826,10 @@ const server = http.createServer(async (req, res) => {
 setInterval(() => {
     const now = Date.now();
     for (const [id, session] of AGENT_SESSIONS) {
-        if (now - session.lastAccess > AGENT_SESSION_TTL) AGENT_SESSIONS.delete(id);
+        if (now - session.lastAccess > AGENT_SESSION_TTL && !session.busy) AGENT_SESSIONS.delete(id);
+    }
+    for (const [ip, bucket] of MINI_AGENT_RATE) {
+        if (now - bucket.windowStart > MINI_AGENT_RATE_WINDOW_MS) MINI_AGENT_RATE.delete(ip);
     }
 }, 5 * 60 * 1000);
 
