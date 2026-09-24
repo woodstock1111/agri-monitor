@@ -4322,15 +4322,49 @@ const app = {
     }
   },
 
+  // Pseudo crop id for the platform-admin "待专家审核" queue in the crop list.
+  REVIEW_QUEUE_ID: '__review__',
+
+  _reviewQueueItemHtml() {
+    if (!AuthService.canManageUsers()) return '';
+    const count = Number.isFinite(this._reviewQueueCount) ? this._reviewQueueCount : '…';
+    return `
+      <div class="crop-item review-queue-item ${this._selectedCropId === this.REVIEW_QUEUE_ID ? 'active' : ''}" data-crop-id="${this.REVIEW_QUEUE_ID}" onclick="app.selectReviewQueue()">
+        <i class="fa-solid fa-user-check"></i>
+        <div class="crop-item-info">
+          <div class="crop-item-name">待专家审核 <span class="review-queue-count">${count}</span></div>
+          <div class="crop-item-sub">所有农场里已确认、未审核的照片</div>
+        </div>
+      </div>
+    `;
+  },
+
+  async _refreshReviewQueueCount() {
+    if (!AuthService.canManageUsers()) return;
+    try {
+      const data = await this._photoRequest('/review-queue');
+      this._reviewQueueCount = (data.records || []).length;
+    } catch {
+      this._reviewQueueCount = undefined;
+    }
+    const host = document.querySelector('.review-queue-count');
+    if (host) host.textContent = Number.isFinite(this._reviewQueueCount) ? this._reviewQueueCount : '…';
+  },
+
+  async selectReviewQueue() {
+    await this.selectCrop(this.REVIEW_QUEUE_ID, '待专家审核');
+  },
+
   _renderCropList(crops) {
     const list = document.getElementById('crops-list');
     if (!list) return;
     if (!crops.length) {
-      list.innerHTML = '<div class="crops-empty"><i class="fa-solid fa-seedling"></i><p>\u6682\u65e0\u519c\u4f5c\u7269</p></div>';
+      list.innerHTML = this._reviewQueueItemHtml() + '<div class="crops-empty"><i class="fa-solid fa-seedling"></i><p>\u6682\u65e0\u519c\u4f5c\u7269</p></div>';
+      this._refreshReviewQueueCount();
       return;
     }
     const locMap = Object.fromEntries(DataRepository.listLocations().map(item => [item.id, item.name]));
-    list.innerHTML = crops.map(c => `
+    list.innerHTML = this._reviewQueueItemHtml() + crops.map(c => `
       <div class="crop-item ${c.id === this._selectedCropId ? 'active' : ''}" data-crop-id="${this.sanitize(c.id)}" data-crop-name="${this.sanitize(c.name || '')}" onclick="app.selectCrop(this.dataset.cropId, this.dataset.cropName)">
         <i class="fa-solid fa-leaf"></i>
         <div class="crop-item-info">
@@ -4341,6 +4375,7 @@ const app = {
         <button class="btn-icon crop-delete-btn" title="\u5220\u9664\u519c\u4f5c\u7269" onclick="event.stopPropagation(); app.deleteCrop('${this.sanitize(c.id)}')"><i class="fa-solid fa-trash"></i></button>
       </div>
     `).join('');
+    this._refreshReviewQueueCount();
   },
 
   async selectCrop(cropId, cropName) {
@@ -4352,6 +4387,8 @@ const app = {
     document.getElementById('records-header').style.display = 'flex';
     document.getElementById('records-crop-title').textContent = cropName || '';
     document.getElementById('records-empty').style.display = 'none';
+    const newRecordBtn = document.querySelector('#records-header .btn-primary');
+    if (newRecordBtn) newRecordBtn.style.display = cropId === this.REVIEW_QUEUE_ID ? 'none' : '';
     await this._loadRecords(cropId);
   },
 
@@ -4360,7 +4397,10 @@ const app = {
     if (!grid) return;
     grid.innerHTML = '<div class="loading-state"><i class="fa-solid fa-spinner fa-spin"></i></div>';
     try {
-      const data = await this._photoRequest('/records?cropId=' + encodeURIComponent(cropId));
+      const data = cropId === this.REVIEW_QUEUE_ID
+        ? await this._photoRequest('/review-queue')
+        : await this._photoRequest('/records?cropId=' + encodeURIComponent(cropId));
+      if (cropId === this.REVIEW_QUEUE_ID) this._reviewQueueCount = (data.records || []).length;
       this._renderRecordGrid(data.records || []);
     } catch (e) {
       grid.innerHTML = '<div class="empty-state"><p>\u52a0\u8f7d\u5931\u8d25</p></div>';
@@ -4586,6 +4626,7 @@ const app = {
               <i class="fa-solid fa-crosshairs"></i> AI 检测
             </button>
             <span class="region-annotation-hint">在图片上拖拽可手动画框</span>
+            <span id="region-review-controls" class="region-review-controls"></span>
           </div>
           <div id="region-annotation-list" class="region-annotation-list"></div>
         </div>
@@ -5203,6 +5244,52 @@ const app = {
         }
       }
       this._renderRegionAnnotationList(recordId);
+      this._renderReviewControls(recordId);
+    },
+
+    // Platform admins only: approve (stamp every confirmed box of this photo) or revoke the approval.
+    _renderReviewControls(recordId) {
+      const host = document.getElementById('region-review-controls');
+      const record = this._photoRecordCache[recordId];
+      if (!host || !record) return;
+      if (!AuthService.canManageUsers()) { host.innerHTML = ''; return; }
+      const pending = Number(record.review?.pending || 0);
+      const approved = Number(record.review?.approved || 0);
+      const rid = this.sanitize(recordId);
+      if (pending > 0) {
+        host.innerHTML = `<button type="button" class="btn-ghost btn-sm review-approve-btn" onclick="event.stopPropagation(); app.expertReviewRecord('${rid}', true)"><i class="fa-solid fa-user-check"></i> 专家已审（${pending} 个框）</button>`;
+      } else if (approved > 0) {
+        host.innerHTML = `<span class="review-done-tag"><i class="fa-solid fa-circle-check"></i> 专家已审</span>
+          <button type="button" class="btn-ghost btn-sm" onclick="event.stopPropagation(); app.expertReviewRecord('${rid}', false)">撤销审核</button>`;
+      } else {
+        host.innerHTML = '<span class="region-annotation-hint">暂无已确认的框可审核</span>';
+      }
+    },
+
+    async expertReviewRecord(recordId, approve) {
+      const record = this._photoRecordCache[recordId];
+      if (!record) return;
+      try {
+        const data = await this._photoRequest('/records/' + encodeURIComponent(recordId) + '/expert-review', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ approve }),
+        });
+        if (data?.record) {
+          record.annotations = data.record.annotations;
+          record.review = data.record.review;
+        }
+        this._renderRegionAnnotations(recordId);
+        UI.toast(approve ? '已标记为专家已审' : '已撤销专家审核', 'success');
+        await this._refreshReviewQueueCount();
+        if (this._selectedCropId === this.REVIEW_QUEUE_ID) {
+          await this._loadRecords(this.REVIEW_QUEUE_ID);
+          // An approved photo drops out of the queue list; keep it cached while its detail view is still open.
+          this._photoRecordCache[recordId] = record;
+        }
+      } catch (e) {
+        UI.toast('审核失败：' + e.message, 'danger');
+      }
     },
 
     _renderRegionAnnotationList(recordId) {
@@ -5253,8 +5340,11 @@ const app = {
           <div class="region-list-title">已确认标注</div>
           ${annotations.map(ann => `
             <div class="region-list-row ${ann.id === this._recentAnnotationId ? 'new' : ''}">
-              <span>${this.sanitize(this._visualLabelText(ann.label))} <em>${ann.source === 'ai_confirmed' ? 'AI' : '人工'}</em></span>
-              <button class="btn-ghost btn-sm" onclick="app.deleteRegionAnnotation('${this.sanitize(recordId)}', '${this.sanitize(ann.id)}')">删除</button>
+              <span>${this.sanitize(this._visualLabelText(ann.label))} <em>${ann.source === 'ai_confirmed' ? 'AI' : '人工'}</em>${ann.expertStatus === 'confirmed' ? ' <em class="region-expert-badge">专家已审</em>' : ''}</span>
+              <div class="region-list-actions">
+                ${this._regionSpeciesSelect(recordId, ann)}
+                <button class="btn-ghost btn-sm" onclick="app.deleteRegionAnnotation('${this.sanitize(recordId)}', '${this.sanitize(ann.id)}')">删除</button>
+              </div>
             </div>
           `).join('')}
         </div>
@@ -5459,7 +5549,7 @@ const app = {
       const record = this._photoRecordCache[recordId];
       if (!record) return;
       try {
-        await this._photoRequest('/records/' + encodeURIComponent(recordId), {
+        const data = await this._photoRequest('/records/' + encodeURIComponent(recordId), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -5467,6 +5557,11 @@ const app = {
             labels: record.labels || null,
           }),
         });
+        // The server returns the stored boxes (with species and review status); keep the cache in step.
+        if (Array.isArray(data?.record?.annotations)) record.annotations = data.record.annotations;
+        if (data?.record?.review) record.review = data.record.review;
+        this._renderReviewControls(recordId);
+        this._refreshReviewQueueCount();
         this._refreshRecordImageMark(recordId);
         return true;
       } catch (e) {
@@ -5486,6 +5581,7 @@ const app = {
         type: 'bbox',
         label: detection.label,
         bbox,
+        libraryKey: detection.libraryKey || this._pestGuessKey(detection.pestGuess) || null,
         source: 'ai_confirmed',
         createdAt: new Date().toISOString(),
       };
@@ -5536,6 +5632,48 @@ const app = {
       this._renderRegionAnnotationList(recordId);
       const saved = await this._saveRegionAnnotations(recordId);
       if (saved) UI.toast('虫种已删除：' + this._pestTypeText(species), 'success');
+    },
+
+    // Box label -> which library types its species can be. Mirrors LABEL_CATEGORY in lib/photo-store.js.
+    _regionSpeciesTypes(label) {
+      const byLabel = {
+        insect_visible: ['pest'], insect_damage: ['pest'], leaf_holes: ['pest'],
+        disease_spot: ['disease'], white_powder: ['disease'],
+        weed: ['weed'],
+        soil_crack: [], soil_too_wet: [],
+      };
+      return byLabel[label] || ['pest', 'disease', 'weed'];
+    },
+
+    // Per-box species picker: a confirmed box with a species becomes a sample for image-similarity identification.
+    _regionSpeciesSelect(recordId, ann) {
+      const types = this._regionSpeciesTypes(ann.label);
+      if (!types.length) return '';
+      const groups = { pest: ['害虫', this._labelTaxonomy.pestTypes], disease: ['病害', this._labelTaxonomy.diseaseTypes], weed: ['杂草', this._labelTaxonomy.weedTypes] };
+      const current = ann.libraryKey || '';
+      const known = types.some(type => (groups[type][1] || []).some(item => item.key === current));
+      const optionHtml = items => (items || []).map(item =>
+        `<option value="${this.sanitize(item.key)}" ${item.key === current ? 'selected' : ''}>${this.sanitize(item.label)}</option>`).join('');
+      const body = types.length === 1
+        ? optionHtml(groups[types[0]][1])
+        : types.map(type => `<optgroup label="${groups[type][0]}">${optionHtml(groups[type][1])}</optgroup>`).join('');
+      return `
+        <select class="region-species-select" title="这个框里是什么" onchange="app.setAnnotationSpecies('${this.sanitize(recordId)}', '${this.sanitize(ann.id)}', this.value)">
+          <option value="">选择种类…</option>
+          ${current && !known ? `<option value="${this.sanitize(current)}" selected>${this.sanitize(current)}</option>` : ''}
+          ${body}
+        </select>
+      `;
+    },
+
+    async setAnnotationSpecies(recordId, annotationId, libraryKey) {
+      const record = this._photoRecordCache[recordId];
+      const ann = (record?.annotations || []).find(item => item.id === annotationId);
+      if (!ann) return;
+      ann.libraryKey = libraryKey || null;
+      const saved = await this._saveRegionAnnotations(recordId);
+      if (saved) UI.toast(libraryKey ? '种类已保存' : '已清除种类', 'success');
+      this._renderRegionAnnotationList(recordId);
     },
 
     async deleteRegionAnnotation(recordId, annotationId) {

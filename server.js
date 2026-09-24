@@ -1,29 +1,39 @@
+require('./lib/env').loadEnv();
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { promisify } = require('util');
+const sharp = require('sharp');
 const pbkdf2Async = promisify(crypto.pbkdf2);
 const chinaSoil = require('./china-soil').createSoilService();
+const db = require('./lib/db');
+const { requestJson } = require('./lib/http');
+const { parseBeijing } = require('./lib/time');
+const sensorStore = require('./lib/sensor-store');
+const photoStore = require('./lib/photo-store');
+const pestStore = require('./lib/pest-store');
+const vision = require('./lib/vision');
+const { createCollector } = require('./lib/collector');
+const cloud0531 = require('./providers/0531yun').createProvider({ requestJson });
+const SENSOR_PROVIDERS = new Map([[cloud0531.id, cloud0531]]);
 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = path.join(__dirname, 'server-data');
 const STATE_FILE = path.join(DATA_DIR, 'app-state.json');
 const PHOTO_RECORDS_FILE = path.join(DATA_DIR, 'photo-records.json');
 const FARM_TASKS_FILE = path.join(DATA_DIR, 'farm-tasks.json');
-const PEST_LIBRARY_FILE = path.join(DATA_DIR, 'pest-library.json');
 const PHOTOS_DIR = path.join(DATA_DIR, 'photos');
 const DEFAULT_TARGET_BASE = 'http://www.0531yun.com';
 const DEFAULT_TENANT_ID = 'tenant_default';
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123456';
 const TOKEN_TTL_SECONDS = 8 * 60 * 60;
-const MAX_SENSOR_READINGS = 100000;
-const MAX_RAW_PAYLOADS = 10000;
-// Trim in batches: slicing a 100k array and rebuilding the signature set on every append is O(n) per insert.
-const SENSOR_READINGS_TRIM_SLACK = 10000;
-const RAW_PAYLOADS_TRIM_SLACK = 1000;
 const LIVE_FETCH_MIN_INTERVAL_MS = 30 * 1000;
+// Beijing-time hours whose hourly row is flagged as the daily snapshot.
+const SNAPSHOT_HOURS = String(process.env.SNAPSHOT_HOURS || '8,14').split(',').map(Number).filter(Number.isInteger);
+// Hourly rows per device included in the app-state snapshot (7 days); charts load more via /device-history.
+const SNAPSHOT_ROWS_PER_DEVICE = 168;
 const MINI_AGENT_RATE_WINDOW_MS = 10 * 60 * 1000;
 const MINI_AGENT_RATE_LIMIT = 30;
 const CLOUD_POLL_INTERVAL_MS = Number(process.env.CLOUD_POLL_INTERVAL_MS || 5 * 60 * 1000);
@@ -177,6 +187,18 @@ const AGENT_TOOL_DEFS = [
     {
         type: 'function',
         function: {
+            name: 'identify_pest',
+            description: '根据照片里的检测区域，在全平台已确认的病虫草样本中做相似图比对，返回每个区域的候选种类（含 confidence 投票占比、名称、症状、防治方法），以及视觉模型的 aiGuess 和用户已确认的种类。用于"这是什么虫"、"该打什么药"。使用前必须先调用 get_photo_records 拿到 recordId；如果区域为空，提示用户先做区域检测。给出打药建议时要说明依据和置信度，置信度低时建议人工确认，NEVER 把候选说成确定结论。',
+            parameters: {
+                type: 'object',
+                properties: { recordId: { type: 'string', description: '照片记录ID，必须先调用 get_photo_records 获取，NEVER 猜测或编造此值。' } },
+                required: ['recordId'],
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
             name: 'search_pest_library',
             description: '按关键词搜索病虫害及杂草知识库，匹配范围包括名称、症状或识别要点、防治方法。返回匹配的条目数组，每条包含 key、name、type、symptoms、control。当用户问"蚜虫怎么防治"、"叶子发黄是什么病"、"香附子怎么识别"时使用。比 get_pest_library 更精准，优先使用此工具搜索特定条目。',
             parameters: {
@@ -196,7 +218,6 @@ let writeTimeout = null;
 let isDirty = false;
 let isShuttingDown = false;
 let isFlushing = false;
-let signatureSet = new Set();
 let tmpFileCounter = 0;
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -400,11 +421,28 @@ function normalizeState(raw = {}) {
             changed = true;
         }
     });
+    // Readings live in PostgreSQL now (backfilled by scripts/backfill-from-json.js before the first start).
+    if (state.sensorReadings.length || state.rawIngestPayloads.length || Object.keys(state.history || {}).length) {
+        state.sensorReadings = [];
+        state.rawIngestPayloads = [];
+        state.history = {};
+        changed = true;
+    }
+
     ['history', 'serverRealtime', 'realtimeState', 'collector'].forEach(key => {
         if (!state[key] || typeof state[key] !== 'object' || Array.isArray(state[key])) {
             state[key] = {};
             changed = true;
         }
+    });
+    // Empty realtime entries were written for offline devices before that bug was fixed; drop them.
+    ['serverRealtime', 'realtimeState'].forEach(key => {
+        Object.entries(state[key]).forEach(([deviceId, entry]) => {
+            if (!Object.keys(entry?.values || {}).length) {
+                delete state[key][deviceId];
+                changed = true;
+            }
+        });
     });
 
     state.locations = state.locations.map(item => {
@@ -476,7 +514,6 @@ function readState() {
     const raw = fs.existsSync(STATE_FILE) ? readJsonFileOrExit(STATE_FILE) : emptyState();
     const { state, changed } = normalizeState(raw);
     cachedState = state;
-    signatureSet = new Set((cachedState.sensorReadings || []).map(item => item.signature).filter(Boolean));
     if (changed) writeState(state);
     return cachedState;
 }
@@ -560,20 +597,12 @@ function defaultPestLibrary() {
     };
 }
 
-const pestLibraryStore = createJsonStore(PEST_LIBRARY_FILE, defaultPestLibrary, data => {
-    if (!Array.isArray(data.entries)) data.entries = [];
-    data.entries.forEach(item => {
-        if (item && !item.tenantId) item.tenantId = DEFAULT_TENANT_ID;
-    });
-    return data;
-});
-
-function readPestLibrary() {
-    return pestLibraryStore.read();
-}
-
-function writePestLibrary(data) {
-    pestLibraryStore.write(data);
+// Seeds the (platform-wide) pest library on a fresh database.
+async function seedPestLibraryIfEmpty() {
+    if ((await pestStore.list()).length) return;
+    for (const entry of defaultPestLibrary().entries) {
+        await pestStore.create(entry);
+    }
 }
 
 function normalizePestLibraryKey(key) {
@@ -587,9 +616,9 @@ function normalizePestLibraryKey(key) {
     return text;
 }
 
-const photoRecordStore = createJsonStore(PHOTO_RECORDS_FILE, () => ({ crops: [], records: [], config: {} }), data => {
-    if (!Array.isArray(data.crops)) data.crops = [];
-    if (!Array.isArray(data.records)) data.records = [];
+// photo-records.json now only supplies `config` (API keys, model names). Its old crops/records arrays are
+// left untouched as a pre-migration backup; crops and photos live in PostgreSQL.
+const photoConfigStore = createJsonStore(PHOTO_RECORDS_FILE, () => ({ config: {} }), data => {
     data.config = {
         amapKey: '',
         visionApiKey: '',
@@ -597,31 +626,15 @@ const photoRecordStore = createJsonStore(PHOTO_RECORDS_FILE, () => ({ crops: [],
         textModel: 'qwen-turbo',
         ...(data.config || {}),
     };
-    data.crops.forEach(item => {
-        if (item && !item.tenantId) item.tenantId = DEFAULT_TENANT_ID;
-    });
-    data.records.forEach(item => {
-        if (item && !item.tenantId) item.tenantId = DEFAULT_TENANT_ID;
-    });
     return data;
 });
 
-function readPhotoRecords() {
-    return photoRecordStore.read();
+function readPhotoConfig() {
+    return photoConfigStore.read().config;
 }
 
-function writePhotoRecords(data) {
-    photoRecordStore.write(data);
-}
-
-function deletePhotoRecordFile(record) {
-    if (!record?.imagePath) return;
-    try {
-        const imgPath = path.join(__dirname, record.imagePath);
-        if (fs.existsSync(imgPath)) fs.unlinkSync(imgPath);
-    } catch (error) {
-        console.warn('[Photos] image delete failed:', error.message);
-    }
+function savePhotoConfig() {
+    photoConfigStore.write(photoConfigStore.read());
 }
 
 function flushSyncBeforeExit(signal) {
@@ -673,27 +686,37 @@ function scopedTenantRows(user, rows = []) {
     return rows.filter(item => !item.tenantId || item.tenantId === tenantId);
 }
 
-function operationalSnapshot(state, user) {
+// Tenant filter for PostgreSQL queries: null means "all farms" (platform admins).
+function dbTenantId(user) {
+    return user?.role === 'platform_admin' ? null : userTenantId(user);
+}
+
+function findVisibleDevice(state, user, deviceId) {
+    return scopedTenantRows(user, state.devices || []).find(item => item.id === deviceId) || null;
+}
+
+async function operationalSnapshot(state, user) {
     const tenantId = user.role === 'platform_admin' ? null : user.tenantId;
     const scoped = rows => tenantId ? rows.filter(item => !item.tenantId || item.tenantId === tenantId) : rows;
     const devices = scoped(state.devices);
     const deviceIds = new Set(devices.map(item => item.id));
-    // history/serverRealtime/realtimeState are keyed by deviceId and carry no tenantId of their own.
+    // serverRealtime/realtimeState are keyed by deviceId and carry no tenantId of their own.
     const byVisibleDevice = map => tenantId
         ? Object.fromEntries(Object.entries(map || {}).filter(([deviceId]) => deviceIds.has(deviceId)))
         : (map || {});
+    const sensorDeviceIds = devices.filter(item => item.type === 'sensor_soil_api').map(item => item.id);
+    const readings = await sensorStore.recentPerDevice({ deviceIds: sensorDeviceIds, tenantId, perDevice: SNAPSHOT_ROWS_PER_DEVICE });
     return {
         locations: scoped(state.locations),
         devices,
         automations: scoped(state.automations),
         autoLog: scoped(state.autoLog),
-        history: byVisibleDevice(state.history),
+        // Server-side per-device history moved to PostgreSQL (see sensorReadings / /device-history).
+        history: {},
         serverRealtime: byVisibleDevice(state.serverRealtime),
         realtimeState: byVisibleDevice(state.realtimeState),
         channels: scoped(state.channels || []),
-        sensorReadings: tenantId
-            ? (state.sensorReadings || []).filter(item => item.tenantId === tenantId).slice(-1000)
-            : (state.sensorReadings || []).slice(-1000),
+        sensorReadings: readings.map(sensorStore.toReading),
     };
 }
 
@@ -728,12 +751,11 @@ function mergeOperationalState(current, incoming, user) {
             next.devices = [...foreign, ...incomingDevices.map(item => ({ ...item, tenantId }))];
         }
 
+        // Readings of removed devices stay in PostgreSQL (hidden, recoverable by re-adding the device).
         if (removedIds.length) {
             const removed = new Set(removedIds);
             next.channels = (next.channels || []).filter(item => !removed.has(item.deviceId));
-            next.sensorReadings = (next.sensorReadings || []).filter(item => !removed.has(item.deviceId));
-            next.rawIngestPayloads = (next.rawIngestPayloads || []).filter(item => !removed.has(item.deviceId));
-            ['history', 'serverRealtime', 'realtimeState'].forEach(key => {
+            ['serverRealtime', 'realtimeState'].forEach(key => {
                 const bucket = next[key] || {};
                 removedIds.forEach(id => delete bucket[id]);
                 next[key] = bucket;
@@ -795,28 +817,6 @@ function readBodyOnce(req, limit) {
     });
 }
 
-function requestJson(targetUrl, options, bodyStr = null) {
-    return new Promise((resolve, reject) => {
-        const client = targetUrl.startsWith('https') ? https : http;
-        const req = client.request(targetUrl, { ...options, timeout: options.timeout || 15000 }, (res) => {
-            res.setEncoding('utf8');
-            let data = '';
-            res.on('data', chunk => data += chunk);
-            res.on('end', () => {
-                try {
-                    const cleaned = data.trim().replace(/^\uFEFF/, '').replace(/^[^{[]+/, '').replace(/[^}\]]+$/, '');
-                    if (!cleaned) throw new Error('Empty');
-                    resolve({ status: res.statusCode, data: JSON.parse(cleaned) });
-                } catch (e) { reject(new Error('Invalid JSON')); }
-            });
-        });
-        req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
-        req.on('error', reject);
-        if (bodyStr) req.write(bodyStr);
-        req.end();
-    });
-}
-
 function cleanAiJsonContent(value) {
     let text = String(value || '').trim();
     text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
@@ -864,14 +864,14 @@ async function fetchWeatherData(amapKey, lat, lng) {
 }
 
 async function runPhotoAnnotation(recordId, user, requestBody = {}) {
-    const pr = readPhotoRecords();
-    const record = pr.records.find(r => r.id === recordId && canAccessTenantItem(user, r));
+    const config = readPhotoConfig();
+    const record = await photoStore.getRecord(recordId, dbTenantId(user));
     if (!record) throw httpError(404, 'record not found');
-    const visionApiKey = String(pr.config.visionApiKey || '').trim();
-    const textModel = String(pr.config.textModel || 'qwen-turbo').trim();
+    const visionApiKey = String(config.visionApiKey || '').trim();
+    const textModel = String(config.textModel || 'qwen-turbo').trim();
     if (!visionApiKey) throw httpError(503, 'vision_api_not_configured');
 
-    const crop = (pr.crops || []).find(item => item.id === record.cropId) || {};
+    const crop = (record.cropId && await photoStore.getCrop(record.cropId, null)) || {};
     const weather = record.weather || {};
     const weatherText = [
         weather.condition || '',
@@ -893,7 +893,7 @@ async function runPhotoAnnotation(recordId, user, requestBody = {}) {
     const severityTextMap = ['正常', '轻微', '中等', '严重'];
     const labelLines = [];
     const labels = record.labels || null;
-    const libraryEntries = readPestLibrary().entries || [];
+    const libraryEntries = await pestStore.list();
     const pestNameMap = Object.fromEntries(libraryEntries.filter(item => item.type === 'pest').map(item => [item.key, item.name]));
     const diseaseNameMap = Object.fromEntries(libraryEntries.filter(item => item.type === 'disease').map(item => [item.key, item.name]));
     const weedNameMap = Object.fromEntries(libraryEntries.filter(item => item.type === 'weed').map(item => [item.key, item.name]));
@@ -980,13 +980,14 @@ async function runPhotoAnnotation(recordId, user, requestBody = {}) {
     }, body);
     const content = result.data?.choices?.[0]?.message?.content || '';
     const cleanedContent = cleanAiJsonContent(content);
+    let aiAnalysis;
     try {
-        record.aiAnalysis = JSON.parse(cleanedContent);
+        aiAnalysis = JSON.parse(cleanedContent);
     } catch {
-        record.aiAnalysis = content;
+        aiAnalysis = content;
     }
-    writePhotoRecords(pr);
-    return { ok: true, aiAnalysis: record.aiAnalysis };
+    await photoStore.setAiAnalysis(recordId, aiAnalysis);
+    return { ok: true, aiAnalysis };
 }
 
 async function executeAgentTool(name, args = {}, user) {
@@ -1004,37 +1005,59 @@ async function executeAgentTool(name, args = {}, user) {
             const deviceId = String(args.deviceId || '');
             const device = (state.devices || []).find(item => item.id === deviceId && canAccessTenantItem(user, item));
             if (!device) return JSON.stringify({ error: 'device not found' });
-            const startTs = parseQueryTime(args.startTime, Number.NEGATIVE_INFINITY);
-            const endTs = parseQueryTime(args.endTime, Number.POSITIVE_INFINITY);
-            const readings = scopedTenantRows(user, state.sensorReadings || [])
-                .filter(item => item.deviceId === deviceId)
-                .map(item => ({ ...item, _ts: Number(item.ts || item.deviceTimestamp) }))
-                .filter(item => Number.isFinite(item._ts) && item._ts >= startTs && item._ts <= endTs)
-                .sort((a, b) => a._ts - b._ts)
-                .slice(-200)
-                .map(({ _ts, ...item }) => item);
+            const rows = await sensorStore.deviceHistory({
+                deviceId,
+                tenantId: dbTenantId(user),
+                start: parseQueryTime(args.startTime, NaN),
+                end: parseQueryTime(args.endTime, NaN),
+                limit: 200,
+            });
+            const readings = rows.map(sensorStore.toReading);
             return JSON.stringify({ deviceId, startTime: args.startTime, endTime: args.endTime, readings });
         }
         case 'get_photo_records': {
-            const pr = readPhotoRecords();
-            let records = scopedTenantRows(user, pr.records || []);
-            if (args.cropId) records = records.filter(item => item.cropId === args.cropId);
-            records = records
-                .slice()
-                .sort((a, b) => String(b.createdAt || b.uploadedAt || '').localeCompare(String(a.createdAt || a.uploadedAt || '')))
-                .slice(0, 20)
-                .map(({ imageBase64, ...item }) => item);
-            return JSON.stringify({ records });
+            const records = await photoStore.listPhotos({
+                tenantId: dbTenantId(user),
+                cropId: args.cropId ? String(args.cropId) : null,
+                limit: 20,
+            });
+            // Compact view for the model: full records (weather, sensor snapshots, raw boxes) blow up the context.
+            // Species keys are resolved to library names so the model does not invent them.
+            const names = Object.fromEntries((await pestStore.list()).map(e => [e.key, e.name]));
+            const named = key => (key ? { key, name: names[key] || null } : undefined);
+            const speciesOf = labels => {
+                const list = value => (Array.isArray(value) ? value : (value ? [value] : []));
+                const keys = [...list(labels?.pestDetail?.species), ...list(labels?.diseaseDetail?.types), ...list(labels?.weedDetail?.types)];
+                return keys.length ? keys.map(named) : undefined;
+            };
+            return JSON.stringify({
+                records: records.map(r => ({
+                    id: r.id,
+                    cropId: r.cropId,
+                    cropName: r.cropName,
+                    takenAt: r.createdAt || r.uploadedAt,
+                    hasIssue: r.hasIssue,
+                    visualLabels: r.labels?.visual,
+                    confirmedSpecies: speciesOf(r.labels),
+                    severity: r.labels?.severity ?? undefined,
+                    userNotes: r.userNotes || undefined,
+                    farmNotes: r.farmNotes || undefined,
+                    detections: Array.isArray(r.aiDetections?.detections)
+                        ? r.aiDetections.detections.map(d => ({ label: d.label, confidence: d.confidence, pestGuess: d.pestGuess?.name, species: named(d.libraryKey) }))
+                        : undefined,
+                    confirmedBoxes: r.annotations.map(a => ({ label: a.label, species: named(a.libraryKey) })),
+                    aiAnalysis: r.aiAnalysis ? { possibleCause: r.aiAnalysis.possibleCause, severity: r.aiAnalysis.severity } : undefined,
+                })),
+            });
         }
         case 'get_pest_library': {
             const type = String(args.type || '').trim();
-            let entries = scopedTenantRows(user, readPestLibrary().entries || []);
-            if (type) entries = entries.filter(item => item.type === type);
+            const entries = await pestStore.list(['pest', 'disease', 'weed'].includes(type) ? type : '');
             return JSON.stringify({ entries });
         }
         case 'get_weather': {
-            const pr = readPhotoRecords();
-            const weather = await fetchWeatherData(pr.config.amapKey || pr.config.qweatherKey || '', args.lat, args.lng);
+            const config = readPhotoConfig();
+            const weather = await fetchWeatherData(config.amapKey || config.qweatherKey || '', args.lat, args.lng);
             return JSON.stringify({ weather });
         }
         case 'get_farm_tasks': {
@@ -1045,8 +1068,30 @@ async function executeAgentTool(name, args = {}, user) {
             return JSON.stringify({ tasks });
         }
         case 'get_crops': {
-            const crops = scopedTenantRows(user, readPhotoRecords().crops || []);
+            const crops = await photoStore.listCrops(dbTenantId(user));
             return JSON.stringify({ crops });
+        }
+        case 'identify_pest': {
+            const recordId = String(args.recordId || '');
+            const record = await photoStore.getRecord(recordId, dbTenantId(user));
+            if (!record) return JSON.stringify({ error: 'record not found' });
+            const regions = await vision.identifyPhoto(recordId);
+            const keys = [...new Set(regions.flatMap(r => [r.confirmedKey, ...r.candidates.map(c => c.libraryKey)]).filter(Boolean))];
+            const library = Object.fromEntries((await pestStore.getByKeys(keys)).map(e => [e.key, { name: e.name, type: e.type, symptoms: e.symptoms, control: e.control }]));
+            return JSON.stringify({
+                recordId,
+                regions: regions.map(r => ({
+                    label: r.label,
+                    category: r.category,
+                    confirmedSpecies: r.confirmedKey ? { key: r.confirmedKey, ...(library[r.confirmedKey] || {}) } : null,
+                    aiGuess: r.aiGuess,
+                    embedded: r.embedded,
+                    candidates: r.candidates.map(c => ({ ...c, ...(library[c.libraryKey] || {}) })),
+                })),
+                note: regions.length
+                    ? `候选来自全平台已确认样本的相似度投票（相似度低于 ${vision.MIN_SIMILARITY} 的样本不参与），confidence 为投票占比，samples 为参与投票的样本数，样本少时结论不可靠；candidates 为空表示库里还没有足够相似的已确认样本；embedded=false 表示该区域向量还在生成中。`
+                    : '这张照片没有虫/病/草类检测区域，请先做区域检测。',
+            });
         }
         case 'analyze_photo': {
             const result = await runPhotoAnnotation(String(args.recordId || ''), user);
@@ -1101,12 +1146,7 @@ async function executeAgentTool(name, args = {}, user) {
             const keyword = String(args.keyword || '').trim().toLowerCase();
             if (!keyword) return JSON.stringify({ entries: [] });
             const type = String(args.type || '').trim();
-            let entries = scopedTenantRows(user, readPestLibrary().entries || []);
-            if (type) entries = entries.filter(item => item.type === type);
-            entries = entries.filter(item => {
-                const hay = [item.name, item.key, item.symptoms, item.control].filter(Boolean).join(' ').toLowerCase();
-                return hay.includes(keyword);
-            });
+            const entries = await pestStore.search(keyword, ['pest', 'disease', 'weed'].includes(type) ? type : '');
             return JSON.stringify({ keyword, entries });
         }
         default:
@@ -1114,160 +1154,16 @@ async function executeAgentTool(name, args = {}, user) {
     }
 }
 
-async function getCloudToken(loginName, password, apiUrl) {
-    const baseUrl = apiUrl.replace(/\/+$/, '');
-    const key = `${loginName}@${baseUrl}`;
-    if (tokenCache[key] && (Date.now() / 1000) < tokenCache[key].expiry - 60) return tokenCache[key].token;
-    const authUrl = `${baseUrl}/api/getToken?loginName=${encodeURIComponent(loginName)}&password=${encodeURIComponent(password)}`;
-    const res = await requestJson(authUrl, { method: 'GET' });
-    if (res.data?.code === 1000) {
-        tokenCache[key] = { token: res.data.data.token, expiry: res.data.data.expiration };
-        return res.data.data.token;
-    }
-    throw new Error('Auth fail');
-}
-const tokenCache = {};
-
-function formatCloudTime(date) {
-    const pad = value => String(value).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-function parseCloudRecordTime(value) {
-    if (!value) return Date.now();
-    if (typeof value === 'number') return value;
-    const parsed = new Date(String(value).trim().replace(' ', 'T')).getTime();
-    return Number.isFinite(parsed) ? parsed : Date.now();
-}
-
+// Query-string times: epoch ms, ISO with zone, or zone-less "YYYY-MM-DD HH:mm[:ss]" read as Beijing time.
 function parseQueryTime(value, fallback) {
-    if (value === undefined || value === null || value === '') return fallback;
-    const text = String(value).trim();
-    if (!text) return fallback;
-    const asNumber = Number(text);
-    if (Number.isFinite(asNumber)) return asNumber;
-    const parsed = new Date(text.replace(' ', 'T')).getTime();
+    if (value === undefined || value === null || String(value).trim() === '') return fallback;
+    const parsed = parseBeijing(String(value).trim());
     return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-async function fetchCloudRealtime(dev, token) {
-    const c = dev.apiConfig;
-    const url = `${c.apiUrl.replace(/\/+$/, '')}/api/data/getRealTimeDataByDeviceAddr?deviceAddrs=${encodeURIComponent(c.deviceAddr)}`;
-    const rt = await requestJson(url, { method: 'GET', headers: { 'authorization': token } });
-    return rt.data?.code === 1000 && rt.data.data?.[0] ? rt.data.data[0] : null;
-}
-
-async function fetchLatestCloudHistoryRecord(dev, token, realtimeRow = null) {
-    const c = dev.apiConfig;
-    const baseUrl = c.apiUrl.replace(/\/+$/, '');
-    const row = realtimeRow || await fetchCloudRealtime(dev, token);
-    const nodeIds = row?.dataItem?.length ? row.dataItem.map(item => item.nodeId) : [1];
-    const end = new Date();
-    const start = new Date(end.getTime() - 36 * 60 * 60 * 1000);
-    const grouped = {};
-
-    const historyResults = await Promise.allSettled(nodeIds.map(async nodeId => {
-        const url = `${baseUrl}/api/data/historyList?deviceAddr=${encodeURIComponent(c.deviceAddr)}&nodeId=${encodeURIComponent(nodeId)}&startTime=${encodeURIComponent(formatCloudTime(start))}&endTime=${encodeURIComponent(formatCloudTime(end))}&pageSize=10`;
-        const res = await requestJson(url, { method: 'GET', headers: { 'authorization': token } });
-        return { nodeId, res };
-    }));
-
-    historyResults.forEach(result => {
-        if (result.status !== 'fulfilled') return;
-        const { nodeId, res } = result.value;
-        if (res.data?.code !== 1000 || !Array.isArray(res.data.data)) return;
-        res.data.data.forEach(box => {
-            const time = box.recordTimeStr || box.recordTime || box.time;
-            if (!time) return;
-            if (!grouped[time]) grouped[time] = { recordTimeStr: time, dataItemsByNode: {} };
-            grouped[time].dataItemsByNode[nodeId] = grouped[time].dataItemsByNode[nodeId] || { nodeId, registerItem: [] };
-            (box.data || []).forEach(item => {
-                if (!item.registerName) return;
-                const numeric = item.value !== undefined ? Number(item.value) : Number(item.data);
-                grouped[time].dataItemsByNode[nodeId].registerItem.push({
-                    registerId: item.registerId,
-                    registerName: item.registerName,
-                    data: item.data !== undefined ? String(item.data) : String(numeric),
-                    value: numeric,
-                    alarmLevel: item.alarmLevel || 0,
-                    alarmColor: item.alarmColor || '',
-                    alarmInfo: item.alarmInfo || '',
-                    unit: item.unit || '',
-                });
-            });
-        });
-    });
-
-    const latest = Object.values(grouped).sort((a, b) => parseCloudRecordTime(b.recordTimeStr) - parseCloudRecordTime(a.recordTimeStr))[0];
-    if (!latest) return row;
-    return {
-        systemCode: row?.systemCode,
-        deviceAddr: row?.deviceAddr || Number(c.deviceAddr),
-        deviceName: row?.deviceName || dev.name,
-        lat: row?.lat || dev.lat,
-        lng: row?.lng || dev.lng,
-        deviceStatus: row?.deviceStatus,
-        dataItem: Object.values(latest.dataItemsByNode),
-        timeStamp: parseCloudRecordTime(latest.recordTimeStr),
-        recordTimeStr: latest.recordTimeStr,
-    };
 }
 
 function channelKey(name = '', unit = '') {
     const text = `${name}_${unit}`.trim();
     return 'ch_' + crypto.createHash('sha1').update(text).digest('hex').slice(0, 12);
-}
-
-function inferChannelCategory(name = '') {
-    if (/PH|\u7535\u5bfc|EC|\u542b\u6c34|\u571f\u58e4|\u6e7f\u5ea6|\u6e29\u5ea6/.test(name)) return 'soil';
-    if (/\u5149|\u7167/.test(name)) return 'light';
-    if (/\u6c2e|\u78f7|\u94be|\u517b\u5206/.test(name)) return 'nutrient';
-    if (/\u7535\u91cf|\u4fe1\u53f7|\u72b6\u6001/.test(name)) return 'status';
-    return 'other';
-}
-
-function ensureChannels(state, dev, dataItems = []) {
-    const channels = Array.isArray(state.channels) ? state.channels : [];
-    dataItems.forEach(node => {
-        (node.registerItem || []).forEach(reg => {
-            const externalName = String(reg.registerName || '').trim();
-            if (!externalName) return;
-            const existing = channels.find(item => item.deviceId === dev.id && item.externalName === externalName);
-            if (existing) return;
-            channels.push({
-                id: safeId('channel'),
-                tenantId: dev.tenantId || DEFAULT_TENANT_ID,
-                deviceId: dev.id,
-                key: channelKey(externalName, reg.unit || ''),
-                externalName,
-                displayName: externalName,
-                category: inferChannelCategory(externalName),
-                unit: reg.unit || '',
-                valueType: 'number',
-                precision: Number.isInteger(reg.digits) ? reg.digits : 1,
-                enabled: true,
-                createdAt: new Date().toISOString(),
-            });
-        });
-    });
-    state.channels = channels;
-}
-
-function normalizeCloudRow(dev, row) {
-    const values = {};
-    (row.dataItem || []).forEach(node => {
-        (node.registerItem || []).forEach(item => {
-            if (item.registerName) values[item.registerName] = item.value;
-        });
-    });
-    const deviceTimestamp = Number(row.timeStamp) || Date.now();
-    return {
-        ts: deviceTimestamp,
-        deviceTimestamp,
-        receivedAt: Date.now(),
-        values,
-        source: 'cloud-server',
-    };
 }
 
 function inferPlatformChannelCategory(name = '') {
@@ -1312,143 +1208,61 @@ function ensurePlatformChannels(state, dev, dataItems = []) {
     return channelMap;
 }
 
-function createRawPayload(state, dev, provider, payload) {
-    const raw = {
-        id: safeId('raw'),
-        tenantId: dev.tenantId || DEFAULT_TENANT_ID,
-        provider,
-        externalDeviceId: String(dev.apiConfig?.deviceAddr || dev.externalId || dev.address || dev.id),
-        deviceId: dev.id,
-        receivedAt: Date.now(),
-        payload,
-    };
-    state.rawIngestPayloads.push(raw);
-    if (state.rawIngestPayloads.length > MAX_RAW_PAYLOADS + RAW_PAYLOADS_TRIM_SLACK) {
-        state.rawIngestPayloads = state.rawIngestPayloads.slice(-MAX_RAW_PAYLOADS);
-    }
-    return raw;
-}
-
-function normalizePlatformCloudRow(state, dev, row, source = 'cloud-poll') {
-    const channelMap = ensurePlatformChannels(state, dev, row.dataItem || []);
-    const values = {};
-    const externalValues = {};
-    (row.dataItem || []).forEach(node => {
-        (node.registerItem || []).forEach(item => {
-            const externalName = String(item.registerName || '').trim();
-            if (!externalName) return;
-            externalValues[externalName] = roundReadingValue(item.value);
-            const channel = channelMap[externalName] || state.channels.find(ch => ch.deviceId === dev.id && ch.externalName === externalName);
-            if (channel) values[channel.key] = roundReadingValue(item.value);
-        });
-    });
-    const deviceTimestamp = Number(row.timeStamp) || Date.now();
-    const rawPayload = createRawPayload(state, dev, '0531yun', row);
-    return {
-        id: safeId('reading'),
-        tenantId: dev.tenantId || DEFAULT_TENANT_ID,
-        deviceId: dev.id,
-        externalDeviceId: String(dev.apiConfig?.deviceAddr || dev.externalId || dev.address || dev.id),
-        provider: '0531yun',
-        source,
-        ts: deviceTimestamp,
-        deviceTimestamp,
-        recordTimeStr: row.recordTimeStr ? String(row.recordTimeStr) : null,
-        receivedAt: Date.now(),
-        values,
-        externalValues,
-        rawPayloadId: rawPayload.id,
-    };
-}
-
 function roundReadingValue(value) {
     if (typeof value !== 'number' || !Number.isFinite(value)) return value;
     return Number(value.toFixed(1));
 }
 
-function extractExternalValues(row) {
+function sensorDevices() {
+    return (readState().devices || []).filter(dev => dev.type === 'sensor_soil_api' && dev.apiConfig && SENSOR_PROVIDERS.has(dev.provider || '0531yun'));
+}
+
+// Maps a provider snapshot onto channels and the in-memory realtime state (never stored as a reading here).
+// Returns { values: {channelKey: n}, externalValues: {vendorName: n} } for the collector's hourly row.
+function applySnapshot(dev, snapshot) {
+    const state = readState();
+    const channelMap = ensurePlatformChannels(state, dev, snapshot.nodes);
     const values = {};
-    (row.dataItem || []).forEach(node => {
+    const externalValues = {};
+    snapshot.nodes.forEach(node => {
         (node.registerItem || []).forEach(item => {
-            const externalName = String(item.registerName || '').trim();
-            if (externalName) values[externalName] = roundReadingValue(item.value);
+            const name = String(item.registerName || '').trim();
+            if (!name) return;
+            externalValues[name] = roundReadingValue(item.value);
+            if (channelMap[name]) values[channelMap[name].key] = roundReadingValue(item.value);
         });
     });
-    return values;
-}
-
-function cloudRowChanged(state, dev, row) {
-    const deviceTimestamp = Number(row.timeStamp) || Date.now();
-    const latest = state.realtimeState?.[dev.id];
-    if (!latest) return true;
-    // Cloud history API can lag behind realtime API, so skip records strictly older than
-    // what we already have, otherwise a lagging history poll downgrades serverRealtime.
-    if (deviceTimestamp < latest.deviceTimestamp) return false;
-    if (deviceTimestamp !== latest.deviceTimestamp) return true;
-    const nextValues = extractExternalValues(row);
-    return JSON.stringify(latest.externalValues || {}) !== JSON.stringify(nextValues);
-}
-
-function readingSignature(record) {
-    const body = JSON.stringify(record.values || {});
-    return crypto.createHash('sha1').update(`${record.deviceId}|${record.deviceTimestamp}|${body}`).digest('hex');
-}
-
-function appendPlatformReading(state, record) {
-    const signature = readingSignature(record);
-    if (signatureSet.has(signature)) return false;
-    state.sensorReadings.push({ ...record, signature });
-    signatureSet.add(signature);
-    if (state.sensorReadings.length > MAX_SENSOR_READINGS + SENSOR_READINGS_TRIM_SLACK) {
-        state.sensorReadings = state.sensorReadings.slice(-MAX_SENSOR_READINGS);
-        signatureSet = new Set((state.sensorReadings || []).map(item => item.signature).filter(Boolean));
-    }
-    if (!state.history[record.deviceId]) state.history[record.deviceId] = [];
-    state.history[record.deviceId].push({
-        ts: record.deviceTimestamp,
-        deviceTimestamp: record.deviceTimestamp,
-        recordTimeStr: record.recordTimeStr || null,
-        receivedAt: record.receivedAt,
-        values: record.externalValues,
-        channelValues: record.values,
-        readingId: record.id,
-        source: record.source,
-    });
-    if (state.history[record.deviceId].length > 2880) {
-        state.history[record.deviceId] = state.history[record.deviceId].slice(-2880);
-    }
-    return true;
-}
-
-function updatePlatformRealtime(state, dev, record, dataItems = []) {
+    const receivedAt = Date.now();
+    const provider = dev.provider || '0531yun';
     state.realtimeState[dev.id] = {
         ok: true,
-        tenantId: record.tenantId,
+        tenantId: dev.tenantId || DEFAULT_TENANT_ID,
         deviceId: dev.id,
-        externalDeviceId: record.externalDeviceId,
-        provider: record.provider,
-        deviceTimestamp: record.deviceTimestamp,
-        receivedAt: record.receivedAt,
-        values: record.values,
-        externalValues: record.externalValues,
-        source: record.source,
-        readingId: record.id,
+        externalDeviceId: String(dev.apiConfig?.deviceAddr || dev.id),
+        provider,
+        deviceTimestamp: snapshot.ts,
+        receivedAt,
+        values,
+        externalValues,
+        source: 'realtime',
     };
     state.serverRealtime[dev.id] = {
         ok: true,
-        timestamp: record.deviceTimestamp,
-        deviceTimestamp: record.deviceTimestamp,
-        receivedAt: record.receivedAt,
-        values: record.externalValues,
-        channelValues: record.values,
-        dataItems,
+        timestamp: snapshot.ts,
+        deviceTimestamp: snapshot.ts,
+        recordTimeStr: snapshot.recordTimeStr || null,
+        receivedAt,
+        values: externalValues,
+        channelValues: values,
+        dataItems: snapshot.nodes,
     };
-}
-
-// Offline devices come back as { deviceStatus: 'offline', dataItem: null, timeStamp: 0 }. Storing that would
-// save an empty reading stamped "now", blank out the realtime panel and mark the device online.
-function rowHasReadings(row) {
-    return Array.isArray(row?.dataItem) && row.dataItem.some(node => (node.registerItem || []).length);
+    const target = state.devices.find(x => x.id === dev.id);
+    if (target) {
+        target.online = true;
+        target.lastSeenAt = receivedAt;
+    }
+    writeState(state);
+    return { values, externalValues };
 }
 
 function markDeviceOnline(dev, online) {
@@ -1459,78 +1273,29 @@ function markDeviceOnline(dev, online) {
     writeState(current);
 }
 
-async function fetchAndStoreLiveReading(dev) {
-    const c = dev.apiConfig;
-    const token = await getCloudToken(c.loginName, c.password, c.apiUrl);
-    const realtimeRow = await fetchCloudRealtime(dev, token);
-    if (!realtimeRow) return;
-    if (!rowHasReadings(realtimeRow)) return markDeviceOnline(dev, false);
-    const current = readState();
-    const record = normalizePlatformCloudRow(current, dev, realtimeRow, 'cloud-live-fetch');
-    appendPlatformReading(current, record);
-    updatePlatformRealtime(current, dev, record, realtimeRow.dataItem || []);
-    const dIdx = current.devices.findIndex(x => x.id === dev.id);
-    if (dIdx >= 0) current.devices[dIdx].online = true;
-    writeState(current);
-}
+const collector = createCollector({
+    providers: SENSOR_PROVIDERS,
+    listDevices: sensorDevices,
+    applySnapshot,
+    markOnline: markDeviceOnline,
+    sensorStore,
+    pollIntervalMs: CLOUD_POLL_INTERVAL_MS,
+    snapshotHours: SNAPSHOT_HOURS,
+});
 
 // Viewers polling with force=true share one cloud request per device, at most once per LIVE_FETCH_MIN_INTERVAL_MS.
+// Live values only refresh memory; storage happens on the hourly schedule.
 function liveFetchDevice(dev) {
     const entry = LIVE_FETCHES.get(dev.id);
     if (entry?.promise) return entry.promise;
     if (entry && Date.now() - entry.startedAt < LIVE_FETCH_MIN_INTERVAL_MS) return Promise.resolve();
     const next = { startedAt: Date.now(), promise: null };
-    next.promise = fetchAndStoreLiveReading(dev)
+    next.promise = collector.refreshDevice(dev)
         .catch(error => console.error('[LiveFetch Error]', dev.id, error.message))
         .finally(() => { next.promise = null; });
     LIVE_FETCHES.set(dev.id, next);
     return next.promise;
 }
-
-async function runCollector() {
-    while (true) {
-        try {
-            const state = readState();
-            const cloudDevices = (state.devices || []).filter(d => d.type === 'sensor_soil_api' && d.apiConfig);
-            for (const dev of cloudDevices) {
-                try {
-                    const c = dev.apiConfig;
-                    const token = await getCloudToken(c.loginName, c.password, c.apiUrl);
-                    const realtimeRow = await fetchCloudRealtime(dev, token);
-                    if (!realtimeRow) continue;
-                    const row = await fetchLatestCloudHistoryRecord(dev, token, realtimeRow);
-                    if (!rowHasReadings(row)) {
-                        markDeviceOnline(dev, false);
-                        continue;
-                    }
-                    const current = readState();
-                    if (!cloudRowChanged(current, dev, row)) continue;
-                    const record = normalizePlatformCloudRow(current, dev, row, 'cloud-poll');
-                    const saved = appendPlatformReading(current, record);
-                    if (saved) {
-                        console.log(`[Collector] Record saved for ${dev.name} (${new Date(record.deviceTimestamp).toISOString()})`);
-                    }
-                    updatePlatformRealtime(current, dev, record, row.dataItem || []);
-                    const dIdx = current.devices.findIndex(x => x.id === dev.id);
-                    if (dIdx >= 0) current.devices[dIdx].online = true;
-                    writeState(current);
-                } catch (e) {
-                    console.warn('[Collector Device]', dev.id, e.message);
-                }
-            }
-        } catch (e) {
-            console.warn('[Collector]', e.message);
-        }
-        await new Promise(r => setTimeout(r, CLOUD_POLL_INTERVAL_MS));
-    }
-}
-
-// Load every data file up front so a corrupt file stops startup instead of failing (or being overwritten) later.
-readState();
-readFarmTasks();
-if (!fs.existsSync(PHOTO_RECORDS_FILE)) writePhotoRecords(readPhotoRecords());
-if (!fs.existsSync(PEST_LIBRARY_FILE)) writePestLibrary(readPestLibrary());
-runCollector();
 
 const server = http.createServer(async (req, res) => {
     const myUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
@@ -1706,14 +1471,10 @@ const server = http.createServer(async (req, res) => {
                 if (incomingEmpty && ((auth.state.locations || []).length || (auth.state.devices || []).length)) {
                     return sendJson(200, { ok: true, skipped: 'empty-sync-ignored' });
                 }
-                const next = mergeOperationalState(auth.state, body, auth.user);
-                writeState(next);
-                if (next.sensorReadings !== auth.state.sensorReadings) {
-                    signatureSet = new Set((next.sensorReadings || []).map(item => item.signature).filter(Boolean));
-                }
+                writeState(mergeOperationalState(auth.state, body, auth.user));
                 return sendJson(200, { ok: true });
             }
-            return sendJson(200, operationalSnapshot(auth.state, auth.user));
+            return sendJson(200, await operationalSnapshot(auth.state, auth.user));
         }
 
         if (pathname === '/api/v1/cloud-devices') {
@@ -1723,17 +1484,10 @@ const server = http.createServer(async (req, res) => {
             const apiUrl = String(query.apiUrl || DEFAULT_TARGET_BASE).trim() || DEFAULT_TARGET_BASE;
             if (!accessCode) return sendJson(400, { ok: false, msg: 'accessCode is required' });
             try {
-                const token = await getCloudToken(accessCode, accessCode, apiUrl);
-                const listUrl = `${apiUrl.replace(/\/+$/, '')}/api/device/getDeviceList`;
-                const response = await requestJson(listUrl, {
-                    method: 'GET',
-                    headers: { authorization: token },
-                });
-                if (response.data?.code !== 1000 || !Array.isArray(response.data.data)) {
-                    return sendJson(502, { ok: false, msg: response.data?.message || 'Failed to fetch cloud devices' });
-                }
-                const devices = response.data.data.map(item => ({
+                const list = await cloud0531.listDevices(accessCode, apiUrl);
+                const devices = list.map(item => ({
                     ...item,
+                    provider: cloud0531.id,
                     apiConfig: {
                         deviceAddr: String(item.deviceAddr || ''),
                         loginName: accessCode,
@@ -1753,11 +1507,7 @@ const server = http.createServer(async (req, res) => {
             if (!auth) return;
             const deviceId = String(query.deviceId || '').trim();
             if (!deviceId) return sendJson(400, { ok: false, msg: 'deviceId is required' });
-
-            const scopedDevices = auth.user.role === 'platform_admin'
-                ? (auth.state.devices || [])
-                : (auth.state.devices || []).filter(item => !item.tenantId || item.tenantId === auth.user.tenantId);
-            const dev = scopedDevices.find(d => d.id === deviceId);
+            const dev = findVisibleDevice(auth.state, auth.user, deviceId);
             if (!dev) return sendJson(404, { ok: false, msg: 'Device not found' });
 
             const force = String(query.force || '').toLowerCase() === 'true';
@@ -1773,42 +1523,19 @@ const server = http.createServer(async (req, res) => {
             if (!auth) return;
             const deviceId = String(query.deviceId || '').trim();
             if (!deviceId) return sendJson(400, { ok: false, msg: 'deviceId is required' });
-            const scopedDevices = auth.user.role === 'platform_admin'
-                ? (auth.state.devices || [])
-                : (auth.state.devices || []).filter(item => !item.tenantId || item.tenantId === auth.user.tenantId);
-            const dev = scopedDevices.find(d => d.id === deviceId);
-            if (!dev) return sendJson(404, { ok: false, msg: 'Device not found' });
-            const startTime = parseQueryTime(query.startTime, Number.NEGATIVE_INFINITY);
-            const endTime = parseQueryTime(query.endTime, Number.POSITIVE_INFINITY);
+            if (!findVisibleDevice(auth.state, auth.user, deviceId)) return sendJson(404, { ok: false, msg: 'Device not found' });
             const requestedLimit = Number(query.limit);
-            const limit = Number.isFinite(requestedLimit) && requestedLimit > 0
-                ? Math.min(Math.floor(requestedLimit), 5000)
-                : 500;
-            const order = String(query.order || 'asc').toLowerCase() === 'desc' ? 'desc' : 'asc';
-            const readings = auth.state.sensorReadings || [];
-            let rows = [];
-
-            // Scan from newest to oldest and stop when enough rows are collected.
-            for (let i = readings.length - 1; i >= 0; i -= 1) {
-                const item = readings[i];
-                if (!item || item.deviceId !== deviceId) continue;
-                const ts = Number(item.deviceTimestamp);
-                if (!Number.isFinite(ts) || ts < startTime || ts > endTime) continue;
-                rows.push({
-                    ts,
-                    deviceTimestamp: ts,
-                    recordTimeStr: item.recordTimeStr || null,
-                    receivedAt: item.receivedAt,
-                    values: item.externalValues || {},
-                    channelValues: item.values || {},
-                    readingId: item.id,
-                    source: item.source,
-                });
-                if (rows.length >= limit) break;
-            }
-            rows.sort((a, b) => a.ts - b.ts);
-            if (order === 'desc') rows = rows.reverse();
-            return sendJson(200, { deviceId, rows });
+            // Default covers 30 days of hourly rows, the longest chart range.
+            const limit = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(Math.floor(requestedLimit), 5000) : 1000;
+            const rows = await sensorStore.deviceHistory({
+                deviceId,
+                tenantId: dbTenantId(auth.user),
+                start: parseQueryTime(query.startTime, NaN),
+                end: parseQueryTime(query.endTime, NaN),
+                limit,
+                order: String(query.order || 'asc').toLowerCase() === 'desc' ? 'desc' : 'asc',
+            });
+            return sendJson(200, { deviceId, rows: rows.map(sensorStore.toHistoryRow) });
         }
 
         if (pathname === '/api/v1/readings') {
@@ -1816,17 +1543,10 @@ const server = http.createServer(async (req, res) => {
             if (!auth) return;
             const deviceId = String(query.deviceId || '').trim();
             const limit = Math.min(Number(query.limit) || 500, 5000);
-            const order = String(query.order || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
-            const readings = auth.state.sensorReadings || [];
-            let rows = [];
-            for (let i = readings.length - 1; i >= 0; i -= 1) {
-                const item = readings[i];
-                if (!item) continue;
-                if (deviceId && item.deviceId !== deviceId) continue;
-                rows.push(item);
-                if (rows.length >= limit) break;
-            }
-            if (order === 'asc') rows = rows.reverse();
+            const visible = scopedTenantRows(auth.user, auth.state.devices || []).map(item => item.id);
+            const deviceIds = deviceId ? visible.filter(id => id === deviceId) : visible;
+            let rows = (await sensorStore.recentReadings({ deviceIds, tenantId: dbTenantId(auth.user), limit })).map(sensorStore.toReading);
+            if (String(query.order || 'desc').toLowerCase() === 'asc') rows = rows.reverse();
             return sendJson(200, { ok: true, rows });
         }
 
@@ -1835,89 +1555,52 @@ const server = http.createServer(async (req, res) => {
             if (!auth) return;
             const { deviceId, startTime, endTime } = query;
             if (!deviceId || !startTime || !endTime) return sendJson(400, { ok: false, msg: 'deviceId, startTime and endTime required' });
-            const dev = scopedTenantRows(auth.user, auth.state.devices || []).find(d => d.id === deviceId);
-            if (!dev || !dev.apiConfig) return sendJson(404, { ok: false, msg: 'Device not found' });
+            const start = parseQueryTime(startTime, NaN);
+            const end = parseQueryTime(endTime, NaN);
+            if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) return sendJson(400, { ok: false, msg: 'Invalid time range' });
+            const dev = findVisibleDevice(auth.state, auth.user, deviceId);
+            const provider = dev && SENSOR_PROVIDERS.get(dev.provider || '0531yun');
+            if (!dev || !dev.apiConfig || !provider) return sendJson(404, { ok: false, msg: 'Device not found' });
             if (HISTORY_SYNCS_IN_PROGRESS.has(deviceId)) return sendJson(429, { ok: false, msg: 'Sync already in progress' });
             HISTORY_SYNCS_IN_PROGRESS.add(deviceId);
             try {
-                const token = await getCloudToken(dev.apiConfig.loginName, dev.apiConfig.password, dev.apiConfig.apiUrl);
-                const rtRes = await requestJson(`${dev.apiConfig.apiUrl}/api/data/getRealTimeDataByDeviceAddr?deviceAddrs=${dev.apiConfig.deviceAddr}`, { method: 'GET', headers: { 'authorization': token } });
-                let nodeIds = [1];
-                if (rtRes.data?.code === 1000 && rtRes.data.data?.[0]?.dataItem) nodeIds = rtRes.data.data[0].dataItem.map(i => i.nodeId);
-
-                const grouped = {};
-                const historyResults = await Promise.allSettled(nodeIds.map(async nid => {
-                    const hRes = await requestJson(`${dev.apiConfig.apiUrl}/api/data/historyList?deviceAddr=${dev.apiConfig.deviceAddr}&nodeId=${nid}&startTime=${startTime.replace('T', ' ')}&endTime=${endTime.replace('T', ' ')}&pageSize=1000`, { method: 'GET', headers: { 'authorization': token } });
-                    return { nid, hRes };
-                }));
-
-                historyResults.forEach(result => {
-                    if (result.status !== 'fulfilled') return;
-                    const { nid, hRes } = result.value;
-                    if (hRes.data?.code === 1000 && Array.isArray(hRes.data.data)) {
-                        hRes.data.data.forEach(box => {
-                            if (!box.recordTimeStr) return;
-                            if (!grouped[box.recordTimeStr]) grouped[box.recordTimeStr] = { time: box.recordTimeStr, values: {}, dataItemsByNode: {} };
-                            grouped[box.recordTimeStr].dataItemsByNode[nid] = grouped[box.recordTimeStr].dataItemsByNode[nid] || { nodeId: nid, registerItem: [] };
-                            (box.data || []).forEach(v => {
-                                if (!v.registerName) return;
-                                const numeric = v.value !== undefined ? Number(v.value) : Number(v.data);
-                                grouped[box.recordTimeStr].values[v.registerName] = roundReadingValue(numeric);
-                                grouped[box.recordTimeStr].dataItemsByNode[nid].registerItem.push({
-                                    registerId: v.registerId,
-                                    registerName: v.registerName,
-                                    data: v.data !== undefined ? String(v.data) : String(numeric),
-                                    value: numeric,
-                                    alarmLevel: v.alarmLevel || 0,
-                                    alarmColor: v.alarmColor || '',
-                                    alarmInfo: v.alarmInfo || '',
-                                    unit: v.unit || '',
-                                });
-                            });
-                        });
-                    }
-                });
-
-                // Re-read after the cloud requests: state may have been replaced (e.g. by an app-state PUT) meanwhile,
-                // and writing back the object captured before the awaits would silently undo that change.
+                const snapshots = await provider.fetchHistory(dev, start, end);
+                // Re-check after the cloud requests: the device may have been removed meanwhile.
+                if (!findVisibleDevice(readState(), auth.user, deviceId)) return sendJson(404, { ok: false, msg: 'Device not found' });
                 const state = readState();
-                if (!(state.devices || []).some(d => d.id === deviceId)) return sendJson(404, { ok: false, msg: 'Device not found' });
-                let inserted = 0;
-                const list = Object.values(grouped).sort((a, b) => b.time.localeCompare(a.time));
-                list.forEach(item => {
-                    const row = {
-                        systemCode: rtRes.data?.data?.[0]?.systemCode,
-                        deviceAddr: Number(dev.apiConfig.deviceAddr),
-                        deviceName: dev.name,
-                        lat: dev.lat,
-                        lng: dev.lng,
-                        dataItem: Object.values(item.dataItemsByNode),
-                        timeStamp: parseCloudRecordTime(item.time),
-                        recordTimeStr: item.time,
-                    };
-                    const record = normalizePlatformCloudRow(state, dev, row, 'cloud-history-sync');
-                    if (appendPlatformReading(state, record)) inserted += 1;
+                const rows = snapshots.map(snapshot => {
+                    const channelMap = ensurePlatformChannels(state, dev, snapshot.nodes);
+                    const values = {};
+                    const externalValues = {};
+                    snapshot.nodes.forEach(node => (node.registerItem || []).forEach(item => {
+                        externalValues[item.registerName] = roundReadingValue(item.value);
+                        if (channelMap[item.registerName]) values[channelMap[item.registerName].key] = roundReadingValue(item.value);
+                    }));
+                    return { snapshot, values, externalValues };
                 });
-                if (list.length) {
-                    const latest = list[0];
-                    const latestRow = {
-                        systemCode: rtRes.data?.data?.[0]?.systemCode,
-                        deviceAddr: Number(dev.apiConfig.deviceAddr),
-                        deviceName: dev.name,
-                        lat: dev.lat,
-                        lng: dev.lng,
-                        dataItem: Object.values(latest.dataItemsByNode),
-                        timeStamp: parseCloudRecordTime(latest.time),
-                        recordTimeStr: latest.time,
-                    };
-                    const latestRecord = normalizePlatformCloudRow(state, dev, latestRow, 'cloud-history-sync');
-                    const currentRtTs = Number(state.serverRealtime?.[dev.id]?.deviceTimestamp);
-                    if (latestRecord.deviceTimestamp >= Date.now() - 2 * CLOUD_POLL_INTERVAL_MS && (!Number.isFinite(currentRtTs) || latestRecord.deviceTimestamp >= currentRtTs)) {
-                        updatePlatformRealtime(state, dev, latestRecord, latestRow.dataItem || []);
-                    }
-                }
                 writeState(state);
-                return sendJson(200, { ok: true, list: list.map(item => ({ time: item.time, values: item.values })), inserted });
+                const inserted = await sensorStore.insertReadings(rows.map(({ snapshot, values, externalValues }) => ({
+                    tenantId: dev.tenantId || DEFAULT_TENANT_ID,
+                    deviceId: dev.id,
+                    provider: provider.id,
+                    ts: snapshot.ts,
+                    kind: 'history_sync',
+                    values,
+                    externalValues,
+                })));
+                // A fresh newest record also refreshes the realtime panel (never downgrade to an older one).
+                const newest = snapshots[0];
+                const currentTs = Number(readState().serverRealtime?.[dev.id]?.deviceTimestamp);
+                if (newest && newest.ts >= Date.now() - 2 * CLOUD_POLL_INTERVAL_MS && (!Number.isFinite(currentTs) || newest.ts >= currentTs)) {
+                    applySnapshot(dev, newest);
+                }
+                return sendJson(200, {
+                    ok: true,
+                    list: rows.map(({ snapshot, externalValues }) => ({ time: snapshot.recordTimeStr, values: externalValues })),
+                    inserted,
+                });
+            } catch (error) {
+                return sendJson(502, { ok: false, msg: error.message || 'Cloud request failed' });
             } finally {
                 HISTORY_SYNCS_IN_PROGRESS.delete(deviceId);
             }
@@ -1926,10 +1609,8 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/api/v1/pest-library' && req.method === 'GET') {
             const auth = requireAuth(); if (!auth) return;
             const type = String(query.type || '').trim();
-            const pl = readPestLibrary();
-            let entries = pl.entries || [];
-            if (type === 'pest' || type === 'disease' || type === 'weed') entries = entries.filter(item => item.type === type);
-            entries = [...entries].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN'));
+            const entries = (await pestStore.list(['pest', 'disease', 'weed'].includes(type) ? type : ''))
+                .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN'));
             return sendJson(200, { ok: true, entries });
         }
 
@@ -1941,9 +1622,9 @@ const server = http.createServer(async (req, res) => {
             const type = rawType === 'disease' ? 'disease' : (rawType === 'weed' ? 'weed' : 'pest');
             if (!name) return sendJson(400, { ok: false, msg: 'name required' });
 
-            const pr = readPhotoRecords();
-            const visionApiKey = String(pr.config.visionApiKey || '').trim();
-            const textModel = String(pr.config.textModel || 'qwen3-fast').trim() || 'qwen3-fast';
+            const config = readPhotoConfig();
+            const visionApiKey = String(config.visionApiKey || '').trim();
+            const textModel = String(config.textModel || 'qwen3-fast').trim() || 'qwen3-fast';
             if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
 
             const userPrompt = type === 'disease'
@@ -1992,119 +1673,37 @@ const server = http.createServer(async (req, res) => {
             if (!['pest', 'disease', 'weed'].includes(type) || !key || !name) {
                 return sendJson(400, { ok: false, msg: 'type, key and name required' });
             }
-            const pl = readPestLibrary();
-            const entry = {
-                id: safeId(type === 'disease' ? 'disease' : (type === 'weed' ? 'weed' : 'pest')),
-                type,
-                key,
-                name,
-                symptoms: String(body.symptoms || ''),
-                control: String(body.control || ''),
-                createdAt: new Date().toISOString(),
-                tenantId: userTenantId(auth.user),
-            };
-            pl.entries.push(entry);
-            writePestLibrary(pl);
-            return sendJson(201, { ok: true, entry });
-        }
-
-        /*
-        if (pathname === '/api/v1/pest-library/migrate-keys' && req.method === 'POST') {
-            const auth = requireAuth(); if (!auth) return;
-            if (auth.user.role !== 'platform_admin') return sendJson(403, { ok: false, msg: 'admin only' });
-
-            const pl = readPestLibrary();
-            const oldToNew = {};
-            const migrated = [];
-            const duplicatesRemoved = [];
-            const seenKeys = new Set();
-            const nextEntries = [];
-
-            (pl.entries || []).forEach(entry => {
-                if (!entry) return;
-                const oldKey = String(entry.key || '').trim();
-                const newKey = normalizePestLibraryKey(oldKey);
-                if (oldKey && newKey && oldKey !== newKey) {
-                    oldToNew[oldKey] = newKey;
-                    migrated.push({ oldKey, newKey });
-                    entry.key = newKey;
-                }
-                const finalKey = String(entry.key || '').trim();
-                if (seenKeys.has(finalKey)) {
-                    duplicatesRemoved.push({ id: entry.id, key: finalKey });
-                    return;
-                }
-                seenKeys.add(finalKey);
-                nextEntries.push(entry);
-            });
-
-            pl.entries = nextEntries;
-            if (migrated.length || duplicatesRemoved.length) writePestLibrary(pl);
-
-            const pr = readPhotoRecords();
-            let recordsUpdated = 0;
-            const replaceKeys = list => {
-                if (!Array.isArray(list)) return { list, changed: false };
-                let changed = false;
-                const next = [];
-                const seen = new Set();
-                list.forEach(value => {
-                    const key = String(value || '').trim();
-                    const mapped = oldToNew[key] || key;
-                    if (mapped !== key) changed = true;
-                    if (!seen.has(mapped)) {
-                        seen.add(mapped);
-                        next.push(mapped);
-                    } else {
-                        changed = true;
-                    }
+            try {
+                const entry = await pestStore.create({
+                    id: safeId(type),
+                    type,
+                    key,
+                    name,
+                    symptoms: String(body.symptoms || ''),
+                    control: String(body.control || ''),
+                    updatedBy: auth.user.id,
                 });
-                return { list: next, changed };
-            };
-
-            (pr.records || []).forEach(record => {
-                let changed = false;
-                const pestDetail = record?.labels?.pestDetail;
-                if (pestDetail && Array.isArray(pestDetail.species)) {
-                    const result = replaceKeys(pestDetail.species);
-                    pestDetail.species = result.list;
-                    changed = changed || result.changed;
-                }
-                const diseaseDetail = record?.labels?.diseaseDetail;
-                if (diseaseDetail && Array.isArray(diseaseDetail.types)) {
-                    const result = replaceKeys(diseaseDetail.types);
-                    diseaseDetail.types = result.list;
-                    changed = changed || result.changed;
-                }
-                if (changed) recordsUpdated += 1;
-            });
-            if (recordsUpdated) writePhotoRecords(pr);
-
-            return sendJson(200, {
-                ok: true,
-                migrated,
-                duplicatesRemoved,
-                recordsUpdated,
-                totalEntries: pl.entries.length,
-            });
+                return sendJson(201, { ok: true, entry });
+            } catch (error) {
+                if (error.status === 409) return sendJson(409, { ok: false, msg: error.message });
+                throw error;
+            }
         }
-        */
+
 
         if (pathname.startsWith('/api/v1/pest-library/') && req.method === 'PUT') {
             const auth = requireAuth(); if (!auth) return;
             if (auth.user.role !== 'platform_admin') return sendJson(403, { ok: false, msg: 'admin only' });
             const id = pathname.split('/')[4];
             const body = await readBody(req).catch(() => ({}));
-            const pl = readPestLibrary();
-            const entry = (pl.entries || []).find(item => item.id === id);
+            if (body.name !== undefined && !String(body.name || '').trim()) return sendJson(400, { ok: false, msg: 'key and name required' });
+            const entry = await pestStore.update(id, {
+                type: ['pest', 'disease', 'weed'].includes(String(body.type)) ? String(body.type) : undefined,
+                name: body.name !== undefined ? String(body.name).trim() : undefined,
+                symptoms: body.symptoms !== undefined ? String(body.symptoms || '') : undefined,
+                control: body.control !== undefined ? String(body.control || '') : undefined,
+            }, auth.user.id);
             if (!entry) return sendJson(404, { ok: false, msg: 'entry not found' });
-            const nextName = body.name !== undefined ? String(body.name || '').trim() : entry.name;
-            if (!entry.key || !nextName) return sendJson(400, { ok: false, msg: 'key and name required' });
-            if (body.type !== undefined && ['pest', 'disease', 'weed'].includes(String(body.type))) entry.type = String(body.type);
-            entry.name = nextName;
-            if (body.symptoms !== undefined) entry.symptoms = String(body.symptoms || '');
-            if (body.control !== undefined) entry.control = String(body.control || '');
-            writePestLibrary(pl);
             return sendJson(200, { ok: true, entry });
         }
 
@@ -2112,11 +1711,7 @@ const server = http.createServer(async (req, res) => {
             const auth = requireAuth(); if (!auth) return;
             if (auth.user.role !== 'platform_admin') return sendJson(403, { ok: false, msg: 'admin only' });
             const id = pathname.split('/')[4];
-            const pl = readPestLibrary();
-            const entry = (pl.entries || []).find(item => item.id === id);
-            if (!entry) return sendJson(404, { ok: false, msg: 'entry not found' });
-            pl.entries = (pl.entries || []).filter(item => item.id !== id);
-            writePestLibrary(pl);
+            if (!(await pestStore.remove(id))) return sendJson(404, { ok: false, msg: 'entry not found' });
             return sendJson(200, { ok: true });
         }
 
@@ -2199,38 +1794,29 @@ const server = http.createServer(async (req, res) => {
 
         if (pathname === '/api/v1/photos/crops') {
             const auth = requireAuth(); if (!auth) return;
-            const pr = readPhotoRecords();
 
             if (req.method === 'GET') {
-                return sendJson(200, { ok: true, crops: scopedTenantRows(auth.user, pr.crops || []) });
+                return sendJson(200, { ok: true, crops: await photoStore.listCrops(dbTenantId(auth.user)) });
             }
             if (req.method === 'POST') {
                 const body = await readBody(req);
                 if (!body.name) return sendJson(400, { ok: false, msg: 'name required' });
-                const crop = {
+                const crop = await photoStore.createCrop({
                     id: safeId('crop'),
+                    tenantId: userTenantId(auth.user),
                     name: String(body.name).trim(),
                     variety: String(body.variety || '').trim(),
                     locationId: String(body.locationId || '').trim(),
                     locationDesc: String(body.locationDesc || '').trim(),
-                    createdAt: new Date().toISOString(),
-                    tenantId: userTenantId(auth.user)
-                };
-                pr.crops.push(crop);
-                writePhotoRecords(pr);
+                    createdBy: auth.user.id,
+                });
                 return sendJson(201, { ok: true, crop });
             }
             if (req.method === 'DELETE') {
                 const body = await readBody(req).catch(() => ({}));
                 const cropId = String(query.id || body.id || '').trim();
                 if (!cropId) return sendJson(400, { ok: false, msg: 'id required' });
-                const crop = (pr.crops || []).find(item => item.id === cropId && canAccessTenantItem(auth.user, item));
-                if (!crop) return sendJson(404, { ok: false, msg: 'crop not found' });
-                const removedRecords = (pr.records || []).filter(record => record.cropId === cropId && canAccessTenantItem(auth.user, record));
-                removedRecords.forEach(deletePhotoRecordFile);
-                pr.crops = (pr.crops || []).filter(item => item.id !== cropId);
-                pr.records = (pr.records || []).filter(record => !(record.cropId === cropId && canAccessTenantItem(auth.user, record)));
-                writePhotoRecords(pr);
+                if (!(await photoStore.deleteCrop(cropId, dbTenantId(auth.user)))) return sendJson(404, { ok: false, msg: 'crop not found' });
                 return sendJson(200, { ok: true });
             }
         }
@@ -2241,57 +1827,61 @@ const server = http.createServer(async (req, res) => {
             if (!body.cropId || !body.imageBase64) {
                 return sendJson(400, { ok: false, msg: 'cropId and imageBase64 required' });
             }
-            const pr = readPhotoRecords();
-            const crop = pr.crops.find(c => c.id === body.cropId && canAccessTenantItem(auth.user, c));
+            const crop = await photoStore.getCrop(String(body.cropId), dbTenantId(auth.user));
             if (!crop) {
                 return sendJson(404, { ok: false, msg: 'crop not found' });
             }
 
             // Decode and store the uploaded image.
             const imgBuffer = Buffer.from(
-                body.imageBase64.replace(/^data:image\/\w+;base64,/, ''), 'base64'
+                String(body.imageBase64).replace(/^data:image\/\w+;base64,/, ''), 'base64'
             );
+            let meta;
+            try {
+                meta = await sharp(imgBuffer).metadata();
+            } catch {
+                return sendJson(400, { ok: false, msg: 'invalid image' });
+            }
             const uploadedAt = new Date();
             const observedAt = body.createdAt ? new Date(body.createdAt) : null;
-            const storageDate = observedAt || uploadedAt;
+            const capturedAt = observedAt && Number.isFinite(observedAt.getTime()) ? observedAt : null;
+            const storageDate = capturedAt || uploadedAt;
             const yearMonth = `${storageDate.getFullYear()}-${String(storageDate.getMonth() + 1).padStart(2, '0')}`;
             const dir = path.join(PHOTOS_DIR, yearMonth);
-            fs.mkdirSync(dir, { recursive: true });
+            await fs.promises.mkdir(dir, { recursive: true });
             const id = safeId('photo');
-            const imgPath = path.join(dir, `${id}.jpg`);
-            fs.writeFileSync(imgPath, imgBuffer);
+            await fs.promises.writeFile(path.join(dir, `${id}.jpg`), imgBuffer);
+            const rotated = (meta.orientation || 1) >= 5;
 
-            const record = {
+            const record = await photoStore.createPhoto({
                 id,
-                cropId: body.cropId,
-                cropName: String(crop.name || ''),
-                uploadedAt: uploadedAt.toISOString(),
-                createdAt: observedAt ? observedAt.toISOString() : null,
+                tenantId: crop.tenantId,
+                cropId: crop.id,
+                cropName: crop.name,
+                source: 'upload',
+                uploadedBy: auth.user.id,
+                capturedAt,
+                uploadedAt,
                 imagePath: `server-data/photos/${yearMonth}/${id}.jpg`,
-                imageUrl: `/api/v1/photos/records/${id}/image`,
+                width: rotated ? meta.height : meta.width,
+                height: rotated ? meta.width : meta.height,
+                bytes: imgBuffer.length,
+                sha256: crypto.createHash('sha256').update(imgBuffer).digest('hex'),
                 gps: body.gps || null,
                 weather: body.weather || null,
                 linkedSensors: Array.isArray(body.linkedSensors) ? body.linkedSensors : [],
                 userNotes: String(body.userNotes || ''),
                 farmNotes: String(body.farmNotes || ''),
                 labels: body.labels || null,
-                aiDetections: null,
                 annotations: Array.isArray(body.annotations) ? body.annotations : [],
-                aiAnalysis: null,
-                tenantId: userTenantId(auth.user)
-            };
-            pr.records.push(record);
-            writePhotoRecords(pr);
-            const { imageBase64: _, ...recordWithoutImg } = record; // Do not echo base64 back to the client.
-            return sendJson(201, { ok: true, record: recordWithoutImg });
+                actor: { userId: auth.user.id },
+            });
+            return sendJson(201, { ok: true, record });
         }
 
         if (pathname === '/api/v1/photos/records' && req.method === 'GET') {
             const auth = requireAuth(); if (!auth) return;
-            const pr = readPhotoRecords();
-            let records = scopedTenantRows(auth.user, pr.records || []);
-            if (query.cropId) records = records.filter(r => r.cropId === query.cropId);
-            records = [...records].sort((a, b) => String(b.createdAt || b.uploadedAt || '').localeCompare(String(a.createdAt || a.uploadedAt || '')));
+            const records = await photoStore.listPhotos({ tenantId: dbTenantId(auth.user), cropId: query.cropId || null });
             return sendJson(200, { ok: true, records });
         }
 
@@ -2300,36 +1890,36 @@ const server = http.createServer(async (req, res) => {
             const body = await readBody(req).catch(() => ({}));
             const recordId = String(query.id || body.id || '').trim();
             if (!recordId) return sendJson(400, { ok: false, msg: 'id required' });
-            const pr = readPhotoRecords();
-            const record = (pr.records || []).find(item => item.id === recordId && canAccessTenantItem(auth.user, item));
-            if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
-            if (record) deletePhotoRecordFile(record);
-            pr.records = (pr.records || []).filter(item => item.id !== recordId);
-            writePhotoRecords(pr);
+            if (!(await photoStore.softDeletePhoto(recordId, dbTenantId(auth.user)))) return sendJson(404, { ok: false, msg: 'record not found' });
             return sendJson(200, { ok: true });
         }
 
-        if (pathname.startsWith('/api/v1/photos/records/') && req.method === 'PUT') {
+        if (pathname === '/api/v1/photos/review-queue' && req.method === 'GET') {
+            const auth = requireAdmin(); if (!auth) return;
+            return sendJson(200, { ok: true, records: await photoStore.reviewQueue() });
+        }
+
+        const photoRecordMatch = pathname.match(/^\/api\/v1\/photos\/records\/([^/]+)(?:\/([a-z-]+))?$/);
+
+        if (photoRecordMatch && !photoRecordMatch[2] && req.method === 'PUT') {
             const auth = requireAuth(); if (!auth) return;
-            const id = pathname.split('/')[5];
+            const id = decodeURIComponent(photoRecordMatch[1]);
             const body = await readBody(req).catch(() => ({}));
-            const pr = readPhotoRecords();
-            const record = pr.records.find(r => r.id === id && canAccessTenantItem(auth.user, r));
+            const record = await photoStore.updatePhoto(id, dbTenantId(auth.user), {
+                farmNotes: body.farmNotes,
+                labels: body.labels,
+                annotations: body.annotations === undefined ? undefined : (Array.isArray(body.annotations) ? body.annotations : []),
+            }, { userId: auth.user.id });
             if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
-            if (body.farmNotes !== undefined) record.farmNotes = String(body.farmNotes || '');
-            if (body.labels !== undefined) record.labels = body.labels;
-            if (body.annotations !== undefined) record.annotations = Array.isArray(body.annotations) ? body.annotations : [];
-            writePhotoRecords(pr);
+            void embeddingWorker?.tick(); // newly confirmed boxes become identification samples
             return sendJson(200, { ok: true, record });
         }
 
-        if (pathname.startsWith('/api/v1/photos/records/') && pathname.endsWith('/image')) {
+        if (photoRecordMatch && photoRecordMatch[2] === 'image') {
             const auth = requireAuth(); if (!auth) return;
-            const id = pathname.split('/')[5]; // /api/v1/photos/records/{id}/image
-            const pr = readPhotoRecords();
-            const record = pr.records.find(r => r.id === id && canAccessTenantItem(auth.user, r));
-            if (!record) return sendJson(404, { ok: false, msg: 'not found' });
-            const imgPath = path.join(__dirname, record.imagePath);
+            const photo = await photoStore.getPhotoRow(decodeURIComponent(photoRecordMatch[1]), dbTenantId(auth.user));
+            if (!photo) return sendJson(404, { ok: false, msg: 'not found' });
+            const imgPath = path.join(__dirname, photo.image_path);
             if (!fs.existsSync(imgPath)) return sendJson(404, { ok: false, msg: 'file missing' });
             res.writeHead(200, {
                 'Content-Type': 'image/jpeg',
@@ -2339,32 +1929,48 @@ const server = http.createServer(async (req, res) => {
             return fs.createReadStream(imgPath).pipe(res);
         }
 
-        if (pathname.startsWith('/api/v1/photos/records/') && pathname.endsWith('/annotate') && req.method === 'POST') {
+        if (photoRecordMatch && photoRecordMatch[2] === 'annotate' && req.method === 'POST') {
             const auth = requireAuth(); if (!auth) return;
-            const id = pathname.split('/')[5]; // /api/v1/photos/records/{id}/annotate
             const requestBody = await readBody(req).catch(() => ({}));
             try {
-                const result = await runPhotoAnnotation(id, auth.user, requestBody);
+                const result = await runPhotoAnnotation(decodeURIComponent(photoRecordMatch[1]), auth.user, requestBody);
                 return sendJson(200, result);
             } catch (error) {
                 return sendJson(error.status || 502, { ok: false, msg: error.message || 'Annotation failed' });
             }
         }
 
-        if (pathname.startsWith('/api/v1/photos/records/') && pathname.endsWith('/detect-regions') && req.method === 'POST') {
-            const auth = requireAuth(); if (!auth) return;
-            const id = pathname.split('/')[5]; // /api/v1/photos/records/{id}/detect-regions
-            const pr = readPhotoRecords();
-            const record = pr.records.find(r => r.id === id && canAccessTenantItem(auth.user, r));
+        // 专家审核：只有平台管理员能做。通过 = 给这张照片上所有农户已确认的框盖章；撤销 = 清掉盖章。
+        if (photoRecordMatch && photoRecordMatch[2] === 'expert-review' && req.method === 'POST') {
+            const auth = requireAdmin(); if (!auth) return;
+            const body = await readBody(req).catch(() => ({}));
+            const record = await photoStore.expertReview(decodeURIComponent(photoRecordMatch[1]), body.approve !== false, auth.user.id);
             if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
-            const visionApiKey = String(pr.config.visionApiKey || '').trim();
-            const visionModel = String(pr.config.visionModel || 'qwen3-vl-flash').trim() || 'qwen3-vl-flash';
+            void embeddingWorker?.tick();
+            return sendJson(200, { ok: true, record });
+        }
+
+        if (photoRecordMatch && photoRecordMatch[2] === 'identify' && req.method === 'GET') {
+            const auth = requireAuth(); if (!auth) return;
+            const result = JSON.parse(await executeAgentTool('identify_pest', { recordId: decodeURIComponent(photoRecordMatch[1]) }, auth.user));
+            if (result.error) return sendJson(404, { ok: false, msg: result.error });
+            return sendJson(200, { ok: true, ...result });
+        }
+
+        if (photoRecordMatch && photoRecordMatch[2] === 'detect-regions' && req.method === 'POST') {
+            const auth = requireAuth(); if (!auth) return;
+            const id = decodeURIComponent(photoRecordMatch[1]);
+            const photo = await photoStore.getPhotoRow(id, dbTenantId(auth.user));
+            if (!photo) return sendJson(404, { ok: false, msg: 'record not found' });
+            const config = readPhotoConfig();
+            const visionApiKey = String(config.visionApiKey || '').trim();
+            const visionModel = String(config.visionModel || 'qwen3-vl-flash').trim() || 'qwen3-vl-flash';
             if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
             console.log(`[Detect Regions] record=${id} model=${visionModel}`);
 
-            const imgPath = path.join(__dirname, record.imagePath || '');
+            const imgPath = path.join(__dirname, photo.image_path || '');
             if (!fs.existsSync(imgPath)) return sendJson(404, { ok: false, msg: 'file missing' });
-            const imageDataUrl = `data:image/jpeg;base64,${fs.readFileSync(imgPath).toString('base64')}`;
+            const imageDataUrl = `data:image/jpeg;base64,${(await fs.promises.readFile(imgPath)).toString('base64')}`;
             const allowedLabels = [
                 'insect_visible', 'insect_damage', 'leaf_holes', 'leaf_yellowing',
                 'leaf_browning', 'leaf_wilting', 'leaf_curling', 'disease_spot', 'white_powder',
@@ -2420,19 +2026,43 @@ const server = http.createServer(async (req, res) => {
                 if (result.status >= 400) throw new Error(apiErrorMessage(result, 'Region detection failed'));
                 const content = result.data?.choices?.[0]?.message?.content || '';
                 const cleanedContent = cleanAiJsonContent(content);
+                let parsed;
                 try {
-                    record.aiDetections = JSON.parse(cleanedContent);
+                    parsed = JSON.parse(cleanedContent);
                 } catch {
-                    record.aiDetections = content;
+                    parsed = content;
                 }
+                const record = await photoStore.replaceAiDetections(id, dbTenantId(auth.user), parsed, visionModel);
+                if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
                 const detectionCount = Array.isArray(record.aiDetections?.detections) ? record.aiDetections.detections.length : 0;
                 console.log(`[Detect Regions] parsed detections=${detectionCount}`);
-                writePhotoRecords(pr);
-                return sendJson(200, { ok: true, aiDetections: record.aiDetections });
+                return sendJson(200, { ok: true, aiDetections: record.aiDetections, annotations: record.annotations });
             } catch (error) {
                 console.warn(`[Detect Regions] failed record=${id}:`, error.message || error);
                 return sendJson(502, { ok: false, msg: error.message || 'Region detection failed' });
             }
+        }
+
+        const regionMatch = pathname.match(/^\/api\/v1\/photos\/regions\/(\d+)\/(crop|similar)$/);
+        if (regionMatch && req.method === 'GET') {
+            const auth = requireAuth(); if (!auth) return;
+            const regionId = regionMatch[1];
+            const { rows } = await db.query(
+                `SELECT r.id, r.crop_path, r.photo_id FROM photo_regions r JOIN photos p ON p.id = r.photo_id
+                 WHERE r.id = $1 AND p.deleted_at IS NULL ${dbTenantId(auth.user) ? 'AND p.tenant_id = $2' : ''}`,
+                dbTenantId(auth.user) ? [regionId, dbTenantId(auth.user)] : [regionId]
+            );
+            const region = rows[0];
+            if (!region) return sendJson(404, { ok: false, msg: 'region not found' });
+            if (regionMatch[2] === 'crop') {
+                const cropPath = region.crop_path && path.join(__dirname, region.crop_path);
+                if (!cropPath || !fs.existsSync(cropPath)) return sendJson(404, { ok: false, msg: 'crop not ready' });
+                res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'max-age=86400' });
+                return fs.createReadStream(cropPath).pipe(res);
+            }
+            // 以图搜图：只在本农场内搜（平台管理员可看全部）
+            const limit = Math.min(Math.max(Number(query.limit) || 12, 1), 50);
+            return sendJson(200, { ok: true, regionId, results: await vision.similarRegions(regionId, dbTenantId(auth.user), limit) });
         }
 
         // 小程序“小薯”助手：木薯/红薯 看图识虫草 + 种植问答（展示模式，暂未鉴权，按 IP 限流）
@@ -2446,9 +2076,9 @@ const server = http.createServer(async (req, res) => {
             if (!allowMiniAgentRequest(realClientIp(req))) {
                 return sendJson(429, { ok: false, msg: '请求太频繁，请稍后再试' });
             }
-            const pr = readPhotoRecords();
-            const visionApiKey = String(pr.config.visionApiKey || '').trim();
-            const model = String(pr.config.visionModel || 'qwen-vl-plus').trim() || 'qwen-vl-plus';
+            const config = readPhotoConfig();
+            const visionApiKey = String(config.visionApiKey || '').trim();
+            const model = String(config.visionModel || 'qwen-vl-plus').trim() || 'qwen-vl-plus';
             if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
 
             const SYSTEM = `你是“小薯”，一个只懂木薯和红薯（甘薯）种植的 AI 助手。你只做两件事：
@@ -2489,26 +2119,22 @@ const server = http.createServer(async (req, res) => {
             if (!deviceId || !startTime || !endTime) {
                 return sendJson(400, { ok: false, msg: 'deviceId, startTime and endTime required' });
             }
-            const state = readState();
             const startTs = parseQueryTime(startTime, Number.NaN);
             const endTs = parseQueryTime(endTime, Number.NaN);
             if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) {
                 return sendJson(400, { ok: false, msg: 'Invalid time range' });
             }
-            const channels = (state.channels || []).filter(c => c.deviceId === deviceId);
+            const state = readState();
+            if (!findVisibleDevice(state, auth.user, deviceId)) return sendJson(404, { ok: false, msg: 'Device not found' });
             const units = {};
-            channels.forEach(c => { units[c.displayName] = c.unit; });
-            const readings = (state.sensorReadings || [])
-                .filter(r => r && r.deviceId === deviceId)
-                .map(r => ({ ...r, _ts: Number(r.ts || r.deviceTimestamp) }))
-                .filter(r => Number.isFinite(r._ts) && r._ts >= startTs && r._ts <= endTs)
-                .sort((a, b) => a._ts - b._ts)
-                .map(r => ({
-                    ts: r._ts,
-                    snapshotTimeStr: r.recordTimeStr || new Date(r._ts).toISOString(),
-                    values: r.externalValues || {},
-                    units,
-                }));
+            (state.channels || []).filter(c => c.deviceId === deviceId).forEach(c => { units[c.displayName] = c.unit; });
+            const rows = await sensorStore.deviceHistory({ deviceId, tenantId: dbTenantId(auth.user), start: startTs, end: endTs, limit: 5000 });
+            const readings = rows.map(sensorStore.toHistoryRow).map(r => ({
+                ts: r.ts,
+                snapshotTimeStr: r.recordTimeStr,
+                values: r.values,
+                units,
+            }));
             return sendJson(200, { ok: true, deviceId, startTime, endTime, readings });
         }
 
@@ -2516,36 +2142,35 @@ const server = http.createServer(async (req, res) => {
             const auth = requireAuth(); if (!auth) return;
             const { deviceId, timestamp } = query;
             if (!deviceId || !timestamp) return sendJson(400, { ok: false, msg: 'deviceId and timestamp required' });
+            const targetTs = parseQueryTime(timestamp, Number.NaN);
+            if (!Number.isFinite(targetTs)) return sendJson(400, { ok: false, msg: 'Invalid timestamp' });
             const state = readState();
-            const targetTs = new Date(timestamp).getTime();
-            const readings = state.sensorReadings.filter(r => r.deviceId === deviceId);
-            if (!readings.length) return sendJson(404, { ok: false, msg: 'no readings for device' });
-            const closest = readings.reduce((a, b) =>
-                Math.abs(a.ts - targetTs) <= Math.abs(b.ts - targetTs) ? a : b
-            );
-            const channels = state.channels.filter(c => c.deviceId === deviceId);
+            if (!findVisibleDevice(state, auth.user, deviceId)) return sendJson(404, { ok: false, msg: 'Device not found' });
+            const closest = await sensorStore.closestReading({ deviceId, tenantId: dbTenantId(auth.user), ts: targetTs });
+            if (!closest) return sendJson(404, { ok: false, msg: 'no readings for device' });
+            const reading = sensorStore.toHistoryRow(closest);
             const units = {};
-            channels.forEach(c => { units[c.displayName] = c.unit; });
+            (state.channels || []).filter(c => c.deviceId === deviceId).forEach(c => { units[c.displayName] = c.unit; });
             return sendJson(200, { ok: true,
                 deviceId, selectedTimestamp: timestamp,
-                snapshotTs: closest.ts,
-                snapshotTimeStr: new Date(closest.ts).toISOString(),
-                values: closest.externalValues,
+                snapshotTs: reading.ts,
+                snapshotTimeStr: new Date(reading.ts).toISOString(),
+                values: reading.values,
                 units
             });
         }
 
         if (pathname === '/api/v1/photos/config') {
             const auth = requireAuth(); if (!auth) return;
-            const pr = readPhotoRecords();
+            const config = readPhotoConfig();
 
             if (req.method === 'GET') {
                 // Return masked config values to the frontend.
                 return sendJson(200, { ok: true, config: {
-                    amapKey: (pr.config.amapKey || pr.config.qweatherKey) ? '***' : '',
-                    visionApiKey: pr.config.visionApiKey ? '***' : '',
-                    visionModel: pr.config.visionModel || 'qwen3-vl-flash',
-                    textModel: pr.config.textModel || 'qwen-turbo'
+                    amapKey: (config.amapKey || config.qweatherKey) ? '***' : '',
+                    visionApiKey: config.visionApiKey ? '***' : '',
+                    visionModel: config.visionModel || 'qwen3-vl-flash',
+                    textModel: config.textModel || 'qwen-turbo'
                 }});
             }
             if (req.method === 'PUT') {
@@ -2554,12 +2179,12 @@ const server = http.createServer(async (req, res) => {
                 }
                 const body = await readBody(req);
                 if (body.amapKey !== undefined && body.amapKey !== '***')
-                    pr.config.amapKey = body.amapKey;
+                    config.amapKey = body.amapKey;
                 if (body.visionApiKey !== undefined && body.visionApiKey !== '***')
-                    pr.config.visionApiKey = body.visionApiKey;
-                if (body.visionModel) pr.config.visionModel = body.visionModel;
-                if (body.textModel) pr.config.textModel = body.textModel;
-                writePhotoRecords(pr);
+                    config.visionApiKey = body.visionApiKey;
+                if (body.visionModel) config.visionModel = body.visionModel;
+                if (body.textModel) config.textModel = body.textModel;
+                savePhotoConfig();
                 return sendJson(200, { ok: true });
             }
         }
@@ -2568,8 +2193,8 @@ const server = http.createServer(async (req, res) => {
             const auth = requireAuth(); if (!auth) return;
             const { lat, lng } = query;
             if (!lat || !lng) return sendJson(400, { ok: false, msg: 'lat and lng required' });
-            const pr = readPhotoRecords();
-            const amapKey = pr.config.amapKey || pr.config.qweatherKey || '';
+            const config = readPhotoConfig();
+            const amapKey = config.amapKey || config.qweatherKey || '';
             if (!amapKey) return sendJson(503, { ok: false, error: 'weather_api_not_configured' });
             try {
                 const weather = await fetchWeatherData(amapKey, lat, lng);
@@ -2589,10 +2214,10 @@ const server = http.createServer(async (req, res) => {
             const message = String(body.message || '').trim();
             if (!message) return sendJson(400, { ok: false, msg: 'message required' });
 
-            const pr = readPhotoRecords();
-            const visionApiKey = String(pr.config.visionApiKey || '').trim();
+            const config = readPhotoConfig();
+            const visionApiKey = String(config.visionApiKey || '').trim();
             if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
-            const textModel = String(pr.config.textModel || 'qwen3-fast').trim() || 'qwen3-fast';
+            const textModel = String(config.textModel || 'qwen3-fast').trim() || 'qwen3-fast';
 
             const incomingSessionId = String(body.sessionId || '').trim();
             const candidateSession = incomingSessionId ? AGENT_SESSIONS.get(incomingSessionId) : null;
@@ -2604,7 +2229,7 @@ const server = http.createServer(async (req, res) => {
             if (!session.messages.length) {
                 const state = readState();
                 const devices = scopedTenantRows(auth.user, state.devices || []);
-                const crops = scopedTenantRows(auth.user, pr.crops || []);
+                const crops = await photoStore.listCrops(dbTenantId(auth.user));
                 const deviceNames = devices.map(item => `${item.name || item.id}(${item.id})`).join('、') || '暂无设备';
                 const cropNames = crops.map(item => `${item.name || item.id}(${item.id})`).join('、') || '暂无作物';
                 session.messages.push({
@@ -2655,6 +2280,8 @@ const server = http.createServer(async (req, res) => {
                 const debugLog = [];
                 const WRITE_TOOLS = ['complete_farm_task', 'create_farm_task'];
                 let nudgedForWrite = false;
+                let answerBeforeNudge = '';
+                let nudgeIndex = -1;
                 while (iterations < AGENT_MAX_ITERATIONS) {
                     iterations += 1;
                     console.log(`[Agent Chat] session=${sessionId} iteration=${iterations}`);
@@ -2731,6 +2358,8 @@ const server = http.createServer(async (req, res) => {
                     );
                     if (needsNudge) {
                         nudgedForWrite = true;
+                        answerBeforeNudge = finalContent;
+                        nudgeIndex = session.messages.length;
                         console.log('[Agent Chat] nudge: no write tools called, retrying. toolCallLog:', toolCallLog.map(item => item.tool));
                         session.messages.push({
                             role: 'user',
@@ -2739,6 +2368,14 @@ const server = http.createServer(async (req, res) => {
                         continue;
                     }
                     break;
+                }
+
+                // The nudge only exists to catch "said done without writing". If it did not lead to a write,
+                // the request was a question: keep the original answer and drop the nudge exchange from history
+                // (otherwise the model answers the nudge itself, e.g. "明白了，我会根据您的请求判断…").
+                if (nudgedForWrite && !toolCallLog.some(item => WRITE_TOOLS.includes(item.tool)) && answerBeforeNudge) {
+                    finalContent = answerBeforeNudge;
+                    session.messages.splice(nudgeIndex);
                 }
 
                 finalContent = String(finalContent || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
@@ -2833,7 +2470,46 @@ setInterval(() => {
     }
 }, 5 * 60 * 1000);
 
-server.listen(PORT, '127.0.0.1', () => {
-    console.log(`[SERVER] RUNNING ON ${PORT}`);
-    console.log(`[AUTH] Default admin: admin / ${DEFAULT_ADMIN_PASSWORD}`);
+let embeddingWorker = null;
+
+// Refuses to start when app-state.json still holds readings that were never imported into PostgreSQL:
+// normalizeState() drops them from the JSON file on the first save.
+async function assertReadingsMigrated() {
+    if (!fs.existsSync(STATE_FILE) || process.env.ALLOW_DROP_JSON_READINGS === '1') return;
+    const raw = readJsonFileOrExit(STATE_FILE);
+    const pending = (raw.sensorReadings || []).filter(item => item && Object.keys(item.values || {}).length).length;
+    if (!pending) return;
+    const { rows } = await db.query(`SELECT count(*)::int AS n FROM sensor_readings WHERE kind = 'migrated'`);
+    if (rows[0].n > 0) return;
+    console.error(`[Storage] FATAL: app-state.json still has ${pending} readings that are not in PostgreSQL. `
+        + 'Run `node scripts/backfill-from-json.js` first (or set ALLOW_DROP_JSON_READINGS=1 to discard them).');
+    process.exit(1);
+}
+
+async function start() {
+    await db.migrate();
+    await assertReadingsMigrated();
+    // Load every data file up front so a corrupt file stops startup instead of failing (or being overwritten) later.
+    readState();
+    readFarmTasks();
+    if (!fs.existsSync(PHOTO_RECORDS_FILE)) savePhotoConfig();
+    readPhotoConfig();
+    await seedPestLibraryIfEmpty();
+
+    server.listen(PORT, '127.0.0.1', () => {
+        console.log(`[SERVER] RUNNING ON ${PORT}`);
+        console.log(`[AUTH] Default admin: admin / ${DEFAULT_ADMIN_PASSWORD}`);
+    });
+    collector.start().catch(error => console.error('[Collector] start failed:', error.message));
+    vision.configure({
+        rootDir: __dirname,
+        requestJson,
+        getApiKey: () => String(readPhotoConfig().visionApiKey || '').trim(),
+    });
+    embeddingWorker = vision.startEmbeddingWorker();
+}
+
+start().catch(error => {
+    console.error('[SERVER] startup failed:', error.message);
+    process.exit(1);
 });

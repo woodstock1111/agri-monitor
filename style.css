@@ -6619,6 +6619,45 @@ body::before {
   font-size: 12px;
 }
 
+.region-list-row em.region-expert-badge {
+  color: var(--success, #10b981);
+}
+
+.region-review-controls {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-done-tag {
+  color: var(--success, #10b981);
+  font-size: 12px;
+}
+
+.review-queue-item .review-queue-count {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 6px;
+  margin-left: 4px;
+  border-radius: 9px;
+  background: var(--warning, #f59e0b);
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.region-species-select {
+  max-width: 150px;
+  padding: 3px 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-surface, #fff);
+  color: inherit;
+}
+
 @keyframes regionRowAdded {
   0% {
     background: rgba(16, 185, 129, 0.24);
