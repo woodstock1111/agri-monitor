@@ -1,0 +1,17 @@
+# Paths never uploaded by the deploy rsync (see docs/harvest-deploy.md).
+# server-data is live production data; .env holds the database password (server-side only).
+server-data
+.git
+.env
+node_modules
+pdf
+.venv-soil
+design
+miniprogram
+miniprogram-design
+docs
+tests
+WORKER_CHANGELOG.md
+.DS_Store
+._*
+*.log
