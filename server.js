@@ -1213,6 +1213,23 @@ function roundReadingValue(value) {
     return Number(value.toFixed(1));
 }
 
+// The project directory doubles as the web root, so everything that is not frontend must be refused explicitly:
+// dotfiles (.env holds the database password, .git), server-side code and data, manifests and docs.
+const PRIVATE_DIRS = new Set(['server-data', 'node_modules', 'lib', 'providers', 'db', 'scripts', 'tests', 'docs', 'pdf', 'design', 'miniprogram', 'miniprogram-design']);
+const PRIVATE_FILES = new Set(['server.js', 'china-soil.js', 'clean.js', 'diag-cloud.js', 'package.json', 'package-lock.json']);
+const PRIVATE_EXTENSIONS = new Set(['.md', '.py', '.sql', '.sh', '.txt', '.log', '.bak', '.tmp']);
+
+function isPublicStaticPath(requested) {
+    const segments = requested.split('/').filter(Boolean);
+    if (!segments.length) return true;
+    if (segments.some(segment => segment.startsWith('.'))) return false;
+    if (PRIVATE_DIRS.has(segments[0])) return false;
+    const file = segments[segments.length - 1];
+    if (segments.length === 1 && PRIVATE_FILES.has(file)) return false;
+    if (/\.bak-\d+$/.test(file)) return false;
+    return !PRIVATE_EXTENSIONS.has(path.extname(file).toLowerCase());
+}
+
 function sensorDevices() {
     return (readState().devices || []).filter(dev => dev.type === 'sensor_soil_api' && dev.apiConfig && SENSOR_PROVIDERS.has(dev.provider || '0531yun'));
 }
@@ -1298,7 +1315,8 @@ function liveFetchDevice(dev) {
 }
 
 const server = http.createServer(async (req, res) => {
-    const myUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    // Fixed base: the Host header is client-controlled and a malformed one makes new URL() throw.
+    const myUrl = new URL(req.url, 'http://localhost');
     const pathname = myUrl.pathname.replace(/\/$/, '');
     const query = Object.fromEntries(myUrl.searchParams);
 
@@ -2443,6 +2461,10 @@ const server = http.createServer(async (req, res) => {
             return res.end();
         }
         const requested = pathname === '' ? 'index.html' : pathname.replace(/^\/+/, '');
+        if (!isPublicStaticPath(requested)) {
+            res.writeHead(404);
+            return res.end();
+        }
         const resolved = path.resolve(__dirname, requested);
         if (!resolved.startsWith(path.resolve(__dirname))) {
             res.writeHead(403);
