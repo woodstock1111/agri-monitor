@@ -1,6 +1,8 @@
 {
   "pages": [
+    "pages/cover/cover",
     "pages/parkmap/parkmap",
+    "pages/agent/agent",
     "pages/farmtasks/farmtasks",
     "pages/dashboard/dashboard"
   ],

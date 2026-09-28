@@ -2,7 +2,7 @@
   "description": "Agri Monitor 微信小程序",
   "projectname": "agri-monitor-mp",
   "miniprogramRoot": "./",
-  "appid": "wx8ea6821e5d804626",
+  "appid": "wxf8a730c56844e54c",
   "compileType": "miniprogram",
   "libVersion": "latest",
   "setting": {

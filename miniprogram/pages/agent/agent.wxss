@@ -1,0 +1,191 @@
+/* ============================================================
+   小薯聊天页 —— 对齐「编辑插画庄园图 / 详情抽屉」纸质调
+   纸 #efe6d3 / 卡 #f7f1e3 ｜ 墨 #3a3026 ｜ 苔绿（人）｜ 赤陶（小薯）
+   ============================================================ */
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: linear-gradient(180deg, #f1e9d8 0%, #e9e0cc 100%);
+  /* 整页轻柔升起：打开自然一点 */
+  animation: chatRise 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes chatRise {
+  from { opacity: 0; transform: translateY(22rpx); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.chat__list {
+  flex: 1;
+  min-height: 0;
+  padding: 0 28rpx;
+  box-sizing: border-box;
+}
+.chat__pad { height: 24rpx; }
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16rpx;
+  margin-bottom: 28rpx;
+}
+.row--user { justify-content: flex-end; }
+.row--assistant { justify-content: flex-start; }
+
+/* 小薯头像：纸圈 + 细墨边；出现时「跳出来」 */
+.ava {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+  background: #efe6d3;
+  border: 1rpx solid rgba(70, 58, 44, 0.16);
+  flex-shrink: 0;
+  box-shadow: 0 4rpx 12rpx rgba(70, 58, 44, 0.12);
+  transform-origin: center bottom;
+  animation: potatoPop 620ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@keyframes potatoPop {
+  0%   { opacity: 0; transform: scale(0.2) translateY(24rpx); }
+  60%  { opacity: 1; transform: scale(1.12) translateY(-6rpx); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.bubble {
+  max-width: 74%;
+  padding: 20rpx 24rpx;
+  border-radius: 26rpx;
+  font-size: 30rpx;
+  line-height: 1.6;
+  letter-spacing: 0.3rpx;
+  word-break: break-word;
+  /* 气泡柔升入场 */
+  animation: bubbleIn 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes bubbleIn {
+  from { opacity: 0; transform: translateY(14rpx); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.bubble--assistant {
+  background: #f7f1e3;
+  color: #3a3026;
+  border: 1rpx solid rgba(70, 58, 44, 0.14);
+  border-top-left-radius: 8rpx;
+  box-shadow: 0 6rpx 18rpx rgba(70, 58, 44, 0.08);
+}
+.bubble--user {
+  background: linear-gradient(160deg, #6f8a57, #5a7349);
+  color: #fbf7ee;
+  border-top-right-radius: 8rpx;
+  box-shadow: 0 8rpx 20rpx rgba(70, 90, 50, 0.24);
+}
+.bubble__text { display: block; white-space: pre-wrap; }
+.bubble__img {
+  width: 360rpx;
+  max-width: 100%;
+  border-radius: 16rpx;
+  margin-bottom: 8rpx;
+  display: block;
+}
+.bubble--user .bubble__img:last-child { margin-bottom: 0; }
+
+/* 思考中三点 —— 暖墨调 */
+.dots { display: flex; gap: 10rpx; padding: 6rpx 2rpx; }
+.dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: #c0a07a;
+  animation: blink 1.2s infinite ease-in-out both;
+}
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink {
+  0%, 80%, 100% { opacity: 0.3; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-4rpx); }
+}
+
+/* 输入区 —— 纸面 + 细墨边 */
+.inputbar {
+  flex-shrink: 0;
+  background: rgba(243, 236, 219, 0.94);
+  border-top: 1rpx solid rgba(70, 58, 44, 0.14);
+  padding: 16rpx 24rpx 0;
+  box-sizing: border-box;
+}
+.attach {
+  position: relative;
+  width: 120rpx;
+  height: 120rpx;
+  margin-bottom: 14rpx;
+}
+.attach__img {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 16rpx;
+  border: 1rpx solid rgba(70, 58, 44, 0.14);
+}
+.attach__rm {
+  position: absolute;
+  top: -10rpx;
+  right: -10rpx;
+  width: 36rpx;
+  height: 36rpx;
+  border-radius: 50%;
+  background: rgba(58, 48, 38, 0.7);
+  color: #fbf7ee;
+  font-size: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.inputbar__row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding-bottom: 16rpx;
+}
+.iconbtn {
+  width: 72rpx;
+  height: 72rpx;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #efe6d3;
+  border: 1rpx solid rgba(70, 58, 44, 0.12);
+  color: #c0824f;
+  font-size: 44rpx;
+  font-weight: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 180ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.iconbtn--press { transform: scale(0.92); background: #e7dcc6; }
+.textinput {
+  flex: 1;
+  min-width: 0;
+  height: 72rpx;
+  padding: 0 26rpx;
+  background: #efe6d3;
+  border: 1rpx solid rgba(70, 58, 44, 0.12);
+  border-radius: 36rpx;
+  font-size: 30rpx;
+  letter-spacing: 0.3rpx;
+  color: #3a3026;
+  box-sizing: border-box;
+}
+.ph { color: #a8987f; }
+.sendbtn {
+  flex-shrink: 0;
+  padding: 0 30rpx;
+  height: 72rpx;
+  line-height: 72rpx;
+  border-radius: 36rpx;
+  background: #5f7a4e;
+  color: #fbf7ee;
+  font-size: 28rpx;
+  font-weight: 700;
+  letter-spacing: 2rpx;
+  transition: transform 180ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.sendbtn--off { background: #cdc3aa; color: #f3ece0; }
+.sendbtn--press { transform: scale(0.96); }

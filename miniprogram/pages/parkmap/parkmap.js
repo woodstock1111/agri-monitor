@@ -4,6 +4,16 @@ function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v
 }
 
+let chatSeq = 0
+function chatUid() { return 'm' + (++chatSeq) }
+function chatWelcome() {
+  return {
+    id: chatUid(),
+    role: 'assistant',
+    text: '你好，我是小薯🍠 木薯和红薯的事都可以问我～也可以拍张照片发我，帮你看看是什么虫、什么草，怎么防治。'
+  }
+}
+
 Page({
   data: {
     plots: [],
@@ -13,19 +23,89 @@ Page({
     initTx: 0,
     initTy: 0,
     focusId: '',
+    // 平移边界对应的地块坐标范围（rpx），随实际地块动态计算
+    extMinCx: 200,
+    extMaxCx: 1050,
+    extMinCy: 200,
+    extMaxCy: 860,
     statusBarHeight: 20,
     safeBottom: 0,
     detailScrollH: 400,
     decos: [],
+    agentOpen: false,
     detailOpen: false,
+    // 智能管家 / 成熟度面板（演示数据，纯前端）
+    aiOpen: false,
+    ripeOpen: false,
+    panelScrollH: 400,
+    aiTip: '今天午后高温少云，建议傍晚 17:30 给地块一补一轮水；地块二钾肥窗口期还剩 3 天，已提醒小张。',
+    aiActions: [
+      { id: 'a1', plot: '地块一', device: '滴灌阀门', state: 'run', statusText: '正在浇水', desc: '土壤湿度 41% 偏低，AI 已自动开启 · 预计 18 分钟后完成', progress: 65 },
+      { id: 'a2', plot: '地块三', device: '喷灌系统', state: 'wait', statusText: '待浇水', desc: '计划今日 16:00 自动开启 · 时长 25 分钟', progress: 0 },
+      { id: 'a3', plot: '地块二', device: '滴灌阀门', state: 'done', statusText: '浇水完毕', desc: '今早 07:30 完成 · 用水 2.4 吨，湿度已回到 58%', progress: 100 },
+      { id: 'a4', plot: '地块四', device: '水肥一体机', state: 'wait', statusText: '待施肥', desc: '低浓度水溶肥已配好，明早 06:30 随滴灌下肥', progress: 0 }
+    ],
+    aiHumanTasks: [
+      { id: 'h1', plot: '地块二', title: '追施钾肥', state: 'wait', statusText: '待完成', desc: 'AI 检测叶色偏淡，建议每亩 8kg 硫酸钾，今明两天完成', owner: '小张' },
+      { id: 'h2', plot: '地块五', title: '田埂人工除草', state: 'wait', statusText: '待完成', desc: '边缘杂草盖度超 30%，机器进不去，需人工清一遍', owner: '小王' },
+      { id: 'h3', plot: '地块一', title: '滴灌带巡检', state: 'done', statusText: '已完成', desc: '第 3 行有滴头堵塞，已疏通', owner: '小张' }
+    ],
+    ripePlots: [
+      {
+        id: 'plot-1', name: '地块一', progress: 72, harvest: '7 月中旬', expanded: true,
+        blocks: [
+          { id: 'b11', name: '区块一', variety: '品种A', owner: '小张', progress: 80 },
+          { id: 'b12', name: '区块二', variety: '品种A', owner: '小张', progress: 70 },
+          { id: 'b13', name: '区块三', variety: '品种B', owner: '小王', progress: 65 }
+        ]
+      },
+      {
+        id: 'plot-2', name: '地块二', progress: 58, harvest: '8 月上旬', expanded: false,
+        blocks: [
+          { id: 'b21', name: '区块一', variety: '品种B', owner: '小王', progress: 60 },
+          { id: 'b22', name: '区块二', variety: '品种C', owner: '小李', progress: 55 }
+        ]
+      },
+      {
+        id: 'plot-3', name: '地块三', progress: 64, harvest: '7 月下旬', expanded: false,
+        blocks: [
+          { id: 'b31', name: '区块一', variety: '品种A', owner: '小张', progress: 68 },
+          { id: 'b32', name: '区块二', variety: '品种B', owner: '小李', progress: 62 },
+          { id: 'b33', name: '区块三', variety: '品种B', owner: '小王', progress: 61 }
+        ]
+      },
+      {
+        id: 'plot-4', name: '地块四', progress: 35, harvest: '9 月中旬', expanded: false,
+        blocks: [
+          { id: 'b41', name: '区块一', variety: '品种C', owner: '小李', progress: 38 },
+          { id: 'b42', name: '区块二', variety: '品种C', owner: '小李', progress: 32 }
+        ]
+      },
+      {
+        id: 'plot-5', name: '地块五', progress: 46, harvest: '8 月下旬', expanded: false,
+        blocks: [
+          { id: 'b51', name: '区块一', variety: '品种B', owner: '小王', progress: 50 },
+          { id: 'b52', name: '区块二', variety: '品种A', owner: '小张', progress: 42 }
+        ]
+      }
+    ],
     detailShown: false,
-    detail: { plot: {}, devices: [], tasks: [] }
+    detail: { plot: {}, devices: [], tasks: [] },
+    // 小薯聊天（内联进 page-container）
+    messages: [],
+    text: '',
+    pendingImage: '',
+    pendingDataUrl: '',
+    sending: false,
+    scrollTo: '',
+    kbHeight: 0
   },
 
   _activePlotId: '',
   _closeTimer: null,
 
-  onLoad() {
+  onLoad(options) {
+    this._focusOnLoad = (options && options.focus) || ''
     const info = wx.getSystemInfoSync()
     const vw = info.windowWidth
     const vh = info.windowHeight
@@ -33,6 +113,7 @@ Page({
     const rawSafe = info.screenHeight - (info.safeArea ? info.safeArea.bottom : info.screenHeight)
     const safeBottom = rawSafe > 0 ? rawSafe : 0
     const detailScrollH = Math.round(vh * 0.8 - 190 * ratio - safeBottom)
+    const panelScrollH = Math.round(vh * 0.8 - 170 * ratio - safeBottom)
     this.setData({
       vw,
       vh,
@@ -40,6 +121,7 @@ Page({
       statusBarHeight: info.statusBarHeight || 20,
       safeBottom,
       detailScrollH: detailScrollH > 200 ? detailScrollH : 200,
+      panelScrollH: panelScrollH > 200 ? panelScrollH : 200,
       decos: this.buildDecos()
     })
     this.loadPlots()
@@ -58,16 +140,16 @@ Page({
     return spots.map((p, i) => ({ idx: i, x: p.x, y: p.y, variant: p.v }))
   },
 
-  // 平移边界，和 gesture.wxs 保持一致
+  // 平移边界，和 gesture.wxs 保持一致（范围随实际地块动态）
   bounds() {
     const r = this.data.ratio
     const cx = this.data.vw / 2
     const cy = this.data.vh * 0.46
     return {
-      minX: cx - 1050 * r,
-      maxX: cx - 200 * r,
-      minY: cy - 860 * r,
-      maxY: cy - 200 * r
+      minX: cx - this.data.extMaxCx * r,
+      maxX: cx - this.data.extMinCx * r,
+      minY: cy - this.data.extMaxCy * r,
+      maxY: cy - this.data.extMinCy * r
     }
   },
 
@@ -114,8 +196,24 @@ Page({
           cy: p.py
         }
       })
-      // 初始聚焦：居中“地块三”，没有就取第一个
-      const center = geo.find(p => p.id === 'plot-3') || geo[0]
+
+      // 按实际地块算出平移边界（任意数量都能拖到中心）
+      let ext = { extMinCx: 200, extMaxCx: 1050, extMinCy: 200, extMaxCy: 860 }
+      if (geo.length) {
+        const xs = geo.map(p => p.cx)
+        const ys = geo.map(p => p.cy)
+        ext = {
+          extMinCx: Math.min(...xs),
+          extMaxCx: Math.max(...xs),
+          extMinCy: Math.min(...ys),
+          extMaxCy: Math.max(...ys)
+        }
+      }
+      this.setData(ext)
+
+      // 初始聚焦：跳转指定地块 → 居中它；否则取第一个
+      const focusUid = this._focusOnLoad
+      const center = (focusUid && geo.find(p => p.id === focusUid)) || geo[0]
       const b = this.bounds()
       const initTx = center ? clamp(this.data.vw / 2 - center.cx * this.data.ratio, b.minX, b.maxX) : 0
       const initTy = center ? clamp(this.data.vh * 0.46 - center.cy * this.data.ratio, b.minY, b.maxY) : 0
@@ -126,6 +224,12 @@ Page({
         initTx,
         initTy
       })
+
+      // 从台账「地图查看」进来：渲染完成后自动展开该地块详情
+      if (focusUid && center) {
+        this._focusOnLoad = ''
+        setTimeout(() => this.openPlotDetail(focusUid), 360)
+      }
     } catch (err) {
       wx.showToast({ title: err.message || '加载失败', icon: 'none' })
     }
@@ -144,8 +248,12 @@ Page({
     })
   },
 
-  async onTapPlot(event) {
+  onTapPlot(event) {
     const id = event.currentTarget.dataset.id
+    if (id) this.openPlotDetail(id)
+  },
+
+  async openPlotDetail(id) {
     if (!id) return
     this._activePlotId = id
     try {
@@ -154,13 +262,11 @@ Page({
         wx.showToast({ title: (res && res.msg) || '加载失败', icon: 'none' })
         return
       }
-      // 先渲染内容（面板仍在屏幕外），渲染完成后再启动上滑动画，避免首帧掉帧
+      // page-container 自带上滑动画，直接 show 即可
       this.setData({
         focusId: id,
         detail: { plot: res.plot, devices: res.devices || [], tasks: res.tasks || [] },
         detailOpen: true
-      }, () => {
-        setTimeout(() => this.setData({ detailShown: true }), 40)
       })
     } catch (err) {
       wx.showToast({ title: err.message || '加载失败', icon: 'none' })
@@ -168,9 +274,12 @@ Page({
   },
 
   closeDetail() {
-    this.setData({ detailShown: false })
-    clearTimeout(this._closeTimer)
-    this._closeTimer = setTimeout(() => this.setData({ detailOpen: false }), 460)
+    this.setData({ detailOpen: false })
+  },
+
+  // 系统返回键触发：page-container afterleave 调用，关闭详情
+  onDetailBack() {
+    this.setData({ detailOpen: false })
   },
 
   async refreshDetail() {
@@ -231,6 +340,140 @@ Page({
         }
       }
     })
+  },
+
+  // 左上角返回封面；直接进本页（无栈）时兜底跳转
+  onBackCover() {
+    const pages = getCurrentPages()
+    if (pages.length > 1) {
+      wx.navigateBack()
+    } else {
+      wx.redirectTo({ url: '/pages/cover/cover' })
+    }
+  },
+
+  onOpenAgent() {
+    if (!this.data.messages.length) this.setData({ messages: [chatWelcome()] })
+    this.setData({ agentOpen: true })
+  },
+
+  onCloseAgent() {
+    this.setData({ agentOpen: false })
+  },
+
+  // 合并后的 page-container 返回处理：关掉当前打开的那层
+  onSheetLeave() {
+    if (this.data.agentOpen) this.setData({ agentOpen: false })
+    if (this.data.detailOpen) this.setData({ detailOpen: false })
+    if (this.data.aiOpen) this.setData({ aiOpen: false })
+    if (this.data.ripeOpen) this.setData({ ripeOpen: false })
+  },
+
+  onOpenAiPanel() {
+    this.setData({ aiOpen: true })
+  },
+
+  onCloseAiPanel() {
+    this.setData({ aiOpen: false })
+  },
+
+  onOpenRipePanel() {
+    this.setData({ ripeOpen: true })
+  },
+
+  onCloseRipePanel() {
+    this.setData({ ripeOpen: false })
+  },
+
+  onToggleRipePlot(event) {
+    const id = event.currentTarget.dataset.id
+    const ripePlots = this.data.ripePlots.map(p => (p.id === id ? { ...p, expanded: !p.expanded } : p))
+    this.setData({ ripePlots })
+  },
+
+  clearChat() {
+    this.setData({ messages: [chatWelcome()], text: '', pendingImage: '', pendingDataUrl: '' })
+  },
+
+  onChatInput(e) {
+    this.setData({ text: e.detail.value })
+  },
+
+  onKbHeight(e) {
+    this.setData({ kbHeight: (e.detail && e.detail.height) || 0 })
+    if (e.detail && e.detail.height) {
+      this.scrollChat(this.data.messages.length ? this.data.messages[this.data.messages.length - 1].id : '')
+    }
+  },
+
+  onInputBlur() {
+    this.setData({ kbHeight: 0 })
+  },
+
+  scrollChat(id) {
+    if (id) this.setData({ scrollTo: 'msg-' + id })
+  },
+
+  chooseChatImage() {
+    if (this.data.sending) return
+    wx.chooseMedia({
+      count: 1,
+      mediaType: ['image'],
+      sizeType: ['compressed'],
+      sourceType: ['album', 'camera'],
+      success: (res) => {
+        const file = res.tempFiles[0]
+        wx.getFileSystemManager().readFile({
+          filePath: file.tempFilePath,
+          encoding: 'base64',
+          success: (r) => {
+            this.setData({ pendingImage: file.tempFilePath, pendingDataUrl: 'data:image/jpeg;base64,' + r.data })
+          },
+          fail: () => wx.showToast({ title: '读取图片失败', icon: 'none' })
+        })
+      }
+    })
+  },
+
+  removeChatImage() {
+    this.setData({ pendingImage: '', pendingDataUrl: '' })
+  },
+
+  async sendChat() {
+    if (this.data.sending) return
+    const text = (this.data.text || '').trim()
+    const dataUrl = this.data.pendingDataUrl
+    if (!text && !dataUrl) return
+
+    const userMsg = { id: chatUid(), role: 'user', text, image: this.data.pendingImage || '' }
+    const thinkId = chatUid()
+    const history = this.data.messages
+      .filter(m => m.text && !m.thinking)
+      .map(m => ({ role: m.role, text: m.text }))
+
+    this.setData({
+      messages: this.data.messages.concat([userMsg, { id: thinkId, role: 'assistant', thinking: true }]),
+      text: '',
+      pendingImage: '',
+      pendingDataUrl: '',
+      sending: true
+    })
+    this.scrollChat(thinkId)
+
+    try {
+      const res = await api.agentChat({ text, image: dataUrl || undefined, history })
+      const reply = (res && res.reply) || '（没有返回内容）'
+      this.replaceChatMsg(thinkId, { id: thinkId, role: 'assistant', text: reply })
+    } catch (err) {
+      this.replaceChatMsg(thinkId, { id: thinkId, role: 'assistant', text: '小薯开小差了：' + (err.message || '请求失败') })
+    } finally {
+      this.setData({ sending: false })
+      this.scrollChat(thinkId)
+    }
+  },
+
+  replaceChatMsg(id, msg) {
+    this.setData({ messages: this.data.messages.map(m => (m.id === id ? msg : m)) })
   },
 
   onUnload() {

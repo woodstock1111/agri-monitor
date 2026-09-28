@@ -1,0 +1,56 @@
+<view class="agent-body">
+  <view class="agent-head">
+    <text class="agent-head__title">小薯智能Agent</text>
+    <view class="agent-head__clear" hover-class="agent-head__clear--press" hover-stay-time="80" catchtap="clearChat">清空</view>
+    <view class="agent-close" hover-class="agent-close--press" hover-stay-time="80" catchtap="close">✕</view>
+  </view>
+
+  <view class="chat">
+    <scroll-view scroll-y class="chat__list" scroll-into-view="{{scrollTo}}" scroll-with-animation>
+      <view class="chat__pad"></view>
+      <block wx:for="{{messages}}" wx:key="id">
+        <view id="msg-{{item.id}}" class="row row--{{item.role}}">
+          <image wx:if="{{item.role === 'assistant' && !item.thinking}}" class="ava" src="/assets/agent-sweet-potato.png" mode="aspectFit"></image>
+          <view class="bubble bubble--{{item.role}} {{item.thinking ? 'bubble--think' : ''}}">
+            <image wx:if="{{item.image}}" class="bubble__img" src="{{item.image}}" mode="widthFix"></image>
+            <text wx:if="{{item.text}}" class="bubble__text" selectable>{{item.text}}</text>
+            <view wx:if="{{item.thinking}}" class="think">
+              <image class="think__spud" src="/assets/agent-sweet-potato.png" mode="aspectFit"></image>
+              <view class="think__texts">
+                <text class="think__line">小薯思考中…</text>
+                <text class="think__line">正在翻土找资料…</text>
+                <text class="think__line">翻翻虫草图鉴…</text>
+                <text class="think__line">马上就有答案啦…</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </block>
+      <view class="chat__pad"></view>
+    </scroll-view>
+
+    <view class="inputbar" style="padding-bottom:{{kbHeight ? kbHeight : safeBottom}}px">
+      <view wx:if="{{pendingImage}}" class="attach">
+        <image class="attach__img" src="{{pendingImage}}" mode="aspectFill"></image>
+        <view class="attach__rm" catchtap="removeImage">✕</view>
+      </view>
+      <view class="inputbar__row">
+        <view class="iconbtn" hover-class="iconbtn--press" hover-stay-time="80" bindtap="chooseImage">＋</view>
+        <input
+          class="textinput"
+          value="{{text}}"
+          placeholder="问木薯/红薯，或发张照片识虫草"
+          placeholder-class="ph"
+          confirm-type="send"
+          adjust-position="{{false}}"
+          cursor-spacing="20"
+          bindkeyboardheightchange="onKbHeight"
+          bindblur="onInputBlur"
+          bindinput="onInput"
+          bindconfirm="send"
+        />
+        <view class="sendbtn {{(text || pendingImage) && !sending ? '' : 'sendbtn--off'}}" hover-class="sendbtn--press" hover-stay-time="80" bindtap="send">发送</view>
+      </view>
+    </view>
+  </view>
+</view>

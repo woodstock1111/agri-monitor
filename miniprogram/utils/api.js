@@ -2,6 +2,7 @@ const config = require('./config.js')
 
 const TENANT_ID = 'tenant-demo'
 const DAY_MS = 24 * 60 * 60 * 1000
+const COVER_KEY = 'agri_cover_v1' // 封面台账（地块的唯一数据源）
 
 function pad(num) {
   return String(num).padStart(2, '0')
@@ -163,11 +164,60 @@ const mockPlots = [
   { id: 'plot-5', name: '地块五 · 北岭', crop: '烟薯 25', plantDate: '2026-03-08', manager: '阿珍', area: 26, px: 960, py: 260, size: 330, lat: 19.532, lng: 110.361 }
 ]
 
-function plotPendingTasks(plotId) {
-  return mockTasks.filter(task => task.locationId === plotId && task.status === 'pending')
+// 一块地的农事 = 它绑定的 mock 槽位(slot) 的农事 + 用户后来按 uid 新增的
+function plotTasks(slot, uid) {
+  return mockTasks.filter(task => task.locationId === slot || (uid && task.locationId === uid))
+}
+function plotPendingTasks(slot, uid) {
+  return plotTasks(slot, uid).filter(task => task.status === 'pending')
 }
 function plotDevices(plotId) {
   return mockDevices.filter(device => device.locationId === plotId)
+}
+
+// 读取封面台账（用户填写/增删的地块）；没有则回退到内置示例
+function readLedger() {
+  try {
+    const saved = wx.getStorageSync(COVER_KEY)
+    if (saved && saved.plots && saved.plots.length) return saved.plots
+  } catch (e) {}
+  return null
+}
+
+// 按序号给每块地排一个画布位置（两列错落，地块数量任意）
+function layoutFor(index) {
+  const colX = [320, 780]
+  const col = index % 2
+  const row = Math.floor(index / 2)
+  const jitter = (((index * 53) % 9) - 4) * 6 // -24..24 rpx，固定不抖
+  return {
+    px: colX[col] + jitter,
+    py: 300 + row * 360 + (col === 1 ? 140 : 0),
+    size: 280 + (index % 3) * 24
+  }
+}
+
+// 把台账行组合成地图地块：meta 用台账，传感器/农事绑定 mock 槽位
+function composeLedgerPlots(ledger) {
+  return ledger.map((p, i) => {
+    const slot = PLOT_IDS[i % PLOT_IDS.length]
+    const geo = layoutFor(i)
+    return {
+      id: p.uid,
+      slot,
+      name: p.name || `地块${i + 1}`,
+      crop: p.variety || '未填写品种',
+      plantDate: p.plantDate || '—',
+      manager: p.tech || '—',
+      phone: p.phone || '',
+      area: p.area || '—',
+      px: geo.px,
+      py: geo.py,
+      size: geo.size,
+      lat: 0,
+      lng: 0
+    }
+  })
 }
 function plotSensorBrief(plotId) {
   const devs = plotDevices(plotId)
@@ -182,20 +232,25 @@ function plotSensorBrief(plotId) {
   }).filter(Boolean)
   return { online: dev.online, metrics, alarmLevel }
 }
+// 当前地图的地块清单：优先用封面台账，否则用内置示例
+function currentPlots() {
+  const ledger = readLedger()
+  if (ledger) return composeLedgerPlots(ledger)
+  return mockPlots.map(p => ({ ...p, slot: p.id }))
+}
 function buildMockPlots() {
-  return mockPlots.map(plot => ({
+  return currentPlots().map(plot => ({
     ...plot,
-    unfinishedCount: plotPendingTasks(plot.id).length,
-    sensor: plotSensorBrief(plot.id)
+    unfinishedCount: plotPendingTasks(plot.slot, plot.id).length,
+    sensor: plotSensorBrief(plot.slot)
   }))
 }
 function buildMockPlotDetail(plotId) {
-  const plot = mockPlots.find(p => p.id === plotId)
+  const plot = currentPlots().find(p => p.id === plotId)
   if (!plot) return { ok: false, msg: '地块不存在' }
-  const tasks = mockTasks
-    .filter(task => task.locationId === plotId)
+  const tasks = plotTasks(plot.slot, plot.id)
     .sort((a, b) => (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0) || a.createdAt - b.createdAt)
-  const devices = plotDevices(plotId).slice(0, 2).map(d => {
+  const devices = plotDevices(plot.slot).slice(0, 2).map(d => {
     const rt = buildMockRealtime(d.id)
     const items = (rt.dataItems[0] && rt.dataItems[0].registerItem) || []
     return { id: d.id, name: d.name, online: d.online, deviceTimestamp: rt.deviceTimestamp, factors: items }
@@ -427,6 +482,27 @@ function getDeviceHistory(deviceId, options = {}) {
   return request(`/device-history?deviceId=${encodeURIComponent(deviceId)}&limit=${limit}&order=${order}`)
 }
 
+// “小薯”助手：直连真实服务器的 /agent/chat（不走 mock）
+function agentChat(payload) {
+  return new Promise((resolve, reject) => {
+    wx.request({
+      url: `${config.agentBaseUrl}${config.apiPrefix}/agent/chat`,
+      method: 'POST',
+      data: payload,
+      header: { 'Content-Type': 'application/json' },
+      timeout: 60000,
+      success(res) {
+        if (res.statusCode >= 200 && res.statusCode < 300 && res.data && res.data.ok) {
+          resolve(res.data)
+        } else {
+          reject(new Error((res.data && res.data.msg) || '请求失败'))
+        }
+      },
+      fail: (err) => reject(new Error(err.errMsg || '网络错误'))
+    })
+  })
+}
+
 function getPlots() {
   return request('/park/plots')
 }
@@ -456,5 +532,6 @@ module.exports = {
   getDeviceRealtime,
   getDeviceHistory,
   getPlots,
-  getPlotDetail
+  getPlotDetail,
+  agentChat
 }

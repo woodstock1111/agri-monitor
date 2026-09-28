@@ -7,7 +7,8 @@ var state = {
   bx: 0, by: 0,        // 本次手势起点的平移基准
   sx: 0, sy: 0,        // 触摸起点
   moved: 0,
-  vw: 375, vh: 700
+  vw: 375, vh: 700,
+  minCx: 200, maxCx: 1050, minCy: 200, maxCy: 860
 }
 
 function clamp(v, lo, hi) {
@@ -20,14 +21,14 @@ function ratio() { return state.vw / 750 }
 function centerX() { return state.vw / 2 }
 function centerY() { return state.vh * 0.46 }
 
-// 平移边界：保证 cx∈[200,1050]、cy∈[200,860] 的地块都能被拖到中心
+// 平移边界：保证范围内的地块都能被拖到中心（范围由 JS 按实际地块算好传入）
 function bounds() {
   var r = ratio()
   return {
-    minX: centerX() - 1050 * r,
-    maxX: centerX() - 200 * r,
-    minY: centerY() - 860 * r,
-    maxY: centerY() - 200 * r
+    minX: centerX() - state.maxCx * r,
+    maxX: centerX() - state.minCx * r,
+    minY: centerY() - state.maxCy * r,
+    maxY: centerY() - state.minCy * r
   }
 }
 
@@ -91,6 +92,10 @@ function ensureInit(e) {
   if (d.vh) state.vh = d.vh
   if (d.initx !== undefined) state.tx = d.initx
   if (d.inity !== undefined) state.ty = d.inity
+  if (d.mincx !== undefined) state.minCx = d.mincx
+  if (d.maxcx !== undefined) state.maxCx = d.maxcx
+  if (d.mincy !== undefined) state.minCy = d.mincy
+  if (d.maxcy !== undefined) state.maxCy = d.maxcy
   state.inited = true
 }
 
@@ -140,15 +145,20 @@ function onTouchEnd(e, owner) {
   if (!state.dragging) return
   state.dragging = false
   applyFlowers(owner, 0, true)
-  // 松手吸附到最近地块中心
+  // 松手只在最近地块已经很靠近中心时才吸附（吸附范围越小越不容易被拉过去）
   var nearest = applyPlots(owner, true)
   if (nearest) {
     var r = ratio()
-    var b = bounds()
-    state.tx = clamp(centerX() - nearest.cx * r, b.minX, b.maxX)
-    state.ty = clamp(centerY() - nearest.cy * r, b.minY, b.maxY)
-    applyStage(owner, true)
-    applyPlots(owner, true)
+    var nx = nearest.cx * r + state.tx
+    var ny = nearest.cy * r + state.ty
+    var dist = Math.sqrt((nx - centerX()) * (nx - centerX()) + (ny - centerY()) * (ny - centerY()))
+    if (dist < state.vw * 0.16) {
+      var b = bounds()
+      state.tx = clamp(centerX() - nearest.cx * r, b.minX, b.maxX)
+      state.ty = clamp(centerY() - nearest.cy * r, b.minY, b.maxY)
+      applyStage(owner, true)
+      applyPlots(owner, true)
+    }
   }
   owner.callMethod('syncOffset', { tx: state.tx, ty: state.ty })
 }

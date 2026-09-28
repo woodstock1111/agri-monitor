@@ -1,0 +1,88 @@
+<view class="cover" style="padding-top:{{statusBarHeight + 28}}px">
+  <!-- 抬头：公司名可改，系统名固定 -->
+  <view class="head">
+    <input
+      class="head__company"
+      value="{{company}}"
+      placeholder="点击填写公司名称"
+      placeholder-class="head__company-ph"
+      bindinput="onCompany"
+    />
+    <text class="head__title">地瓜智能管理系统</text>
+    <view class="head__rule"></view>
+  </view>
+
+  <!-- 地块台账：全部可编辑 -->
+  <view class="ledger">
+    <view class="ledger__bar">
+      <text class="ledger__label">地块台账</text>
+      <text class="ledger__count">{{plots.length}} 个地块</text>
+    </view>
+
+    <block wx:for="{{plots}}" wx:key="uid">
+      <view class="card">
+        <view class="card__top">
+          <input
+            class="card__name"
+            value="{{item.name}}"
+            placeholder="地块名称/编号"
+            placeholder-class="f-ph"
+            data-idx="{{index}}"
+            data-field="name"
+            bindinput="onField"
+          />
+          <view class="card__del" hover-class="card__del--press" hover-stay-time="80" data-idx="{{index}}" catchtap="onDelPlot">✕</view>
+        </view>
+
+        <view class="card__grid">
+          <view class="f">
+            <text class="f__label">面积（亩）</text>
+            <input class="f__input" type="digit" value="{{item.area}}" placeholder="—" placeholder-class="f-ph"
+              data-idx="{{index}}" data-field="area" bindinput="onField" />
+          </view>
+          <view class="f">
+            <text class="f__label">品种</text>
+            <input class="f__input" value="{{item.variety}}" placeholder="—" placeholder-class="f-ph"
+              data-idx="{{index}}" data-field="variety" bindinput="onField" />
+          </view>
+          <view class="f">
+            <text class="f__label">种植时间</text>
+            <picker mode="date" value="{{item.plantDateRaw}}" data-idx="{{index}}" bindchange="onPlantDate">
+              <view class="f__input f__picker {{item.plantDate ? '' : 'f__picker--empty'}}">{{item.plantDate || '选择日期'}}</view>
+            </picker>
+          </view>
+          <view class="f">
+            <text class="f__label">技术员</text>
+            <input class="f__input" value="{{item.tech}}" placeholder="—" placeholder-class="f-ph"
+              data-idx="{{index}}" data-field="tech" bindinput="onField" />
+          </view>
+          <view class="f f--wide">
+            <text class="f__label">联系电话</text>
+            <input class="f__input" type="number" value="{{item.phone}}" placeholder="—" placeholder-class="f-ph"
+              data-idx="{{index}}" data-field="phone" bindinput="onField" />
+          </view>
+        </view>
+
+        <view class="card__foot">
+          <view class="card__map" hover-class="card__map--press" hover-stay-time="80" data-uid="{{item.uid}}" catchtap="onViewOnMap">
+            <text class="card__map-pin">◉</text>
+            <text>地图查看</text>
+            <text class="card__map-arrow">›</text>
+          </view>
+        </view>
+      </view>
+    </block>
+
+    <view class="add" hover-class="add--press" hover-stay-time="80" bindtap="onAddPlot">＋ 添加地块</view>
+  </view>
+
+  <view class="cover__pad"></view>
+</view>
+
+<!-- 正下方：整条页脚都可点，进入地图（不透明，挡住后面卡片，避免误触） -->
+<view class="enter" style="padding-bottom:{{safeBottom + 20}}px" catchtouchmove="noop" catchtap="noop">
+  <view class="enter__btn" hover-class="enter__btn--press" hover-stay-time="80" catchtap="onEnterMap">
+    <text class="enter__text">进入地图</text>
+    <text class="enter__arrow">›</text>
+  </view>
+</view>

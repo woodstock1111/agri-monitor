@@ -7,6 +7,10 @@
     data-vh="{{vh}}"
     data-initx="{{initTx}}"
     data-inity="{{initTy}}"
+    data-mincx="{{extMinCx}}"
+    data-maxcx="{{extMaxCx}}"
+    data-mincy="{{extMinCy}}"
+    data-maxcy="{{extMaxCy}}"
     bind:touchstart="{{gm.onTouchStart}}"
     bind:touchmove="{{gm.onTouchMove}}"
     bind:touchend="{{gm.onTouchEnd}}"
@@ -16,8 +20,6 @@
       <!-- 铺满的农田底图（无可见边界） -->
       <view class="land">
         <view class="land__rows"></view>
-        <view class="land__patch land__patch--a"></view>
-        <view class="land__patch land__patch--b"></view>
       </view>
       <view class="sea"></view>
       <view class="coast"></view>
@@ -56,25 +58,27 @@
 
           <!-- 悬浮标签卡 -->
           <view class="pin">
-            <view class="pin__card">
-              <view class="pin__row">
-                <text class="pin__name">{{item.name}}</text>
-                <view wx:if="{{item.sensor.alarmLevel > 0}}" class="pin__alarm"></view>
-              </view>
-              <text class="pin__crop">{{item.crop}}</text>
+            <view class="pin__shell">
+              <view class="pin__card">
+                <view class="pin__row">
+                  <text class="pin__name">{{item.name}}</text>
+                  <view wx:if="{{item.sensor.alarmLevel > 0}}" class="pin__alarm"></view>
+                </view>
+                <text class="pin__crop">{{item.crop}}</text>
 
-              <view class="pin__info">
-                <view class="ichip">
-                  <text class="ichip__num">{{item.unfinishedCount}}</text>
-                  <text class="ichip__label">待办</text>
-                </view>
-                <view wx:if="{{item.sensor.metrics[0]}}" class="ichip">
-                  <text class="ichip__num">{{item.sensor.metrics[0].value}}<text class="ichip__unit">{{item.sensor.metrics[0].unit}}</text></text>
-                  <text class="ichip__label">{{item.sensor.metrics[0].name}}</text>
-                </view>
-                <view wx:if="{{item.sensor.metrics[1]}}" class="ichip">
-                  <text class="ichip__num">{{item.sensor.metrics[1].value}}<text class="ichip__unit">{{item.sensor.metrics[1].unit}}</text></text>
-                  <text class="ichip__label">{{item.sensor.metrics[1].name}}</text>
+                <view class="pin__info">
+                  <view class="ichip">
+                    <text class="ichip__num">{{item.unfinishedCount}}</text>
+                    <text class="ichip__label">待办</text>
+                  </view>
+                  <view wx:if="{{item.sensor.metrics[0]}}" class="ichip">
+                    <text class="ichip__num">{{item.sensor.metrics[0].value}}<text class="ichip__unit">{{item.sensor.metrics[0].unit}}</text></text>
+                    <text class="ichip__label">{{item.sensor.metrics[0].name}}</text>
+                  </view>
+                  <view wx:if="{{item.sensor.metrics[1]}}" class="ichip">
+                    <text class="ichip__num">{{item.sensor.metrics[1].value}}<text class="ichip__unit">{{item.sensor.metrics[1].unit}}</text></text>
+                    <text class="ichip__label">{{item.sensor.metrics[1].name}}</text>
+                  </view>
                 </view>
               </view>
             </view>
@@ -85,15 +89,57 @@
     </view>
   </view>
 
+  <!-- 纸质颗粒：屏幕固定层，不随地图移动，拖动时不参与合成 -->
+  <view class="paper-grain"></view>
+
   <!-- 顶部信息条 -->
   <view class="topbar" style="padding-top:{{statusBarHeight}}px">
-    <text class="topbar__title">地瓜产业园区</text>
-    <text class="topbar__sub">{{plots.length}} 个地块 · 拖动浏览，点击进入</text>
+    <view class="topbar__back" hover-class="topbar__back--press" hover-stay-time="80" bindtap="onBackCover">‹</view>
+    <view class="topbar__wrap">
+      <text class="topbar__title">地瓜产业园区</text>
+      <text class="topbar__sub">{{plots.length}} 个地块 · 拖动浏览，点击进入</text>
+    </view>
   </view>
 
-  <!-- 地块详情 -->
-  <view wx:if="{{detailOpen}}" class="detail-mask {{detailShown ? 'detail-mask--in' : ''}}" catchtap="closeDetail"></view>
-  <view wx:if="{{detailOpen}}" class="detail {{detailShown ? 'detail--in' : ''}}">
+  <!-- 底部三键：智能管家 · 问小薯 · 成熟度 -->
+  <view wx:if="{{!detailOpen && !aiOpen && !ripeOpen}}" class="agent-dock" style="padding-bottom:{{safeBottom}}px">
+    <view class="side-btn" hover-class="side-btn--press" hover-stay-time="80" bindtap="onOpenAiPanel">
+      <view class="side-btn__orb">
+        <view class="icon-drop"></view>
+        <view class="icon-drop icon-drop--small"></view>
+      </view>
+      <text class="side-btn__label">智能管家</text>
+    </view>
+
+    <view class="agent-btn" hover-class="agent-btn--press" hover-stay-time="80" bindtap="onOpenAgent">
+      <view class="agent-btn__orb">
+        <image class="agent-btn__body" src="/assets/agent-sweet-potato.png" mode="aspectFit"></image>
+        <image class="agent-btn__desk" src="/assets/agent-spud-desk.png" mode="aspectFit"></image>
+      </view>
+      <text class="agent-btn__label">问小薯</text>
+    </view>
+
+    <view class="side-btn" hover-class="side-btn--press" hover-stay-time="80" bindtap="onOpenRipePanel">
+      <view class="side-btn__orb">
+        <view class="icon-gauge">
+          <view class="icon-gauge__hole"></view>
+        </view>
+      </view>
+      <text class="side-btn__label">成熟度</text>
+    </view>
+  </view>
+
+  <!-- 详情 + 小薯 共用一个 page-container（同页多个 page-container 只有第一个生效，故合并） -->
+  <page-container
+    show="{{detailOpen || agentOpen || aiOpen || ripeOpen}}"
+    position="bottom"
+    round="{{true}}"
+    overlay="{{true}}"
+    duration="200"
+    bind:afterleave="onSheetLeave"
+    custom-style="height:{{agentOpen ? '86vh' : '80vh'}};background:#f1e9d8"
+  >
+   <block wx:if="{{detailOpen}}">
     <view class="detail__grab"></view>
     <view class="detail__head">
       <view class="detail__title-wrap">
@@ -161,5 +207,180 @@
       <view class="detail__pad"></view>
      </view>
     </scroll-view>
-  </view>
+   </block>
+
+   <block wx:elif="{{agentOpen}}">
+    <view class="agent-body">
+      <view class="agent-head">
+        <text class="agent-head__title">小薯智能Agent</text>
+        <view class="agent-head__clear" hover-class="agent-head__clear--press" hover-stay-time="80" catchtap="clearChat">清空</view>
+        <view class="agent-close" hover-class="agent-close--press" hover-stay-time="80" catchtap="onCloseAgent">✕</view>
+      </view>
+
+      <view class="chat">
+        <scroll-view scroll-y class="chat__list" scroll-into-view="{{scrollTo}}" scroll-with-animation>
+         <view class="chat__inner">
+          <view class="chat__pad"></view>
+          <block wx:for="{{messages}}" wx:key="id">
+            <view id="msg-{{item.id}}" class="row row--{{item.role}}">
+              <image wx:if="{{item.role === 'assistant' && !item.thinking}}" class="ava" src="/assets/agent-sweet-potato.png" mode="aspectFit"></image>
+              <view class="bubble bubble--{{item.role}} {{item.thinking ? 'bubble--think' : ''}}">
+                <image wx:if="{{item.image}}" class="bubble__img" src="{{item.image}}" mode="widthFix"></image>
+                <text wx:if="{{item.text}}" class="bubble__text" selectable>{{item.text}}</text>
+                <view wx:if="{{item.thinking}}" class="think">
+                  <image class="think__spud" src="/assets/agent-sweet-potato.png" mode="aspectFit"></image>
+                  <view class="think__texts">
+                    <text class="think__line">小薯思考中…</text>
+                    <text class="think__line">正在翻土找资料…</text>
+                    <text class="think__line">翻翻虫草图鉴…</text>
+                    <text class="think__line">马上就有答案啦…</text>
+                  </view>
+                </view>
+              </view>
+            </view>
+          </block>
+          <view class="chat__pad"></view>
+         </view>
+        </scroll-view>
+
+        <view class="inputbar" style="padding-bottom:{{kbHeight ? kbHeight : safeBottom}}px">
+          <view wx:if="{{pendingImage}}" class="attach">
+            <image class="attach__img" src="{{pendingImage}}" mode="aspectFill"></image>
+            <view class="attach__rm" catchtap="removeChatImage">✕</view>
+          </view>
+          <view class="inputbar__row">
+            <view class="iconbtn" hover-class="iconbtn--press" hover-stay-time="80" bindtap="chooseChatImage">＋</view>
+            <input
+              class="textinput"
+              value="{{text}}"
+              placeholder="问木薯/红薯，或发张照片识虫草"
+              placeholder-class="ph"
+              confirm-type="send"
+              adjust-position="{{false}}"
+              cursor-spacing="20"
+              bindkeyboardheightchange="onKbHeight"
+              bindblur="onInputBlur"
+              bindinput="onChatInput"
+              bindconfirm="sendChat"
+            />
+            <view class="sendbtn {{(text || pendingImage) && !sending ? '' : 'sendbtn--off'}}" hover-class="sendbtn--press" hover-stay-time="80" bindtap="sendChat">发送</view>
+          </view>
+        </view>
+      </view>
+    </view>
+   </block>
+
+   <!-- 智能管家：AI 自动执行 + 需要人工 -->
+   <block wx:elif="{{aiOpen}}">
+    <view class="detail__grab"></view>
+    <view class="panel-head">
+      <view class="panel-head__wrap">
+        <view class="panel-head__titlerow">
+          <text class="panel-head__title">小薯智能管家</text>
+          <view class="ai-chip">AI</view>
+        </view>
+        <text class="panel-head__sub">实时调度灌溉 · 施肥 · 人工协同</text>
+      </view>
+      <view class="detail__close" catchtap="onCloseAiPanel">✕</view>
+    </view>
+
+    <scroll-view scroll-y class="panel-scroll" style="height:{{panelScrollH}}px">
+     <view class="detail__inner">
+      <!-- AI 建议卡 -->
+      <view class="ai-tip">
+        <view class="ai-tip__tag">✦ 小薯建议</view>
+        <text class="ai-tip__text">{{aiTip}}</text>
+      </view>
+
+      <view class="detail__section-title detail__section-title--lg detail__section-title--ai">
+        <text>AI 自动执行</text>
+        <view class="ai-chip ai-chip--mini">全自动</view>
+      </view>
+      <block wx:for="{{aiActions}}" wx:key="id">
+        <view class="aiact">
+          <view class="aiact__dot aiact__dot--{{item.state}}"></view>
+          <view class="aiact__body">
+            <view class="aiact__row">
+              <text class="aiact__title">{{item.plot}} · {{item.device}}</text>
+              <text class="aiact__status aiact__status--{{item.state}}">{{item.statusText}}</text>
+            </view>
+            <text class="aiact__desc">{{item.desc}}</text>
+            <view class="aibar-row">
+              <view class="aibar">
+                <view class="aibar__fill {{item.state === 'run' ? 'aibar__fill--run' : ''}} {{item.state === 'done' ? 'aibar__fill--done' : ''}}" style="width:{{item.progress}}%"></view>
+              </view>
+              <text class="aibar__pct">{{item.progress}}%</text>
+            </view>
+          </view>
+        </view>
+      </block>
+
+      <view class="detail__section-title detail__section-title--lg">需要人工完成</view>
+      <block wx:for="{{aiHumanTasks}}" wx:key="id">
+        <view class="aiact aiact--human">
+          <view class="aiact__dot aiact__dot--{{item.state}}"></view>
+          <view class="aiact__body">
+            <view class="aiact__row">
+              <text class="aiact__title">{{item.plot}} · {{item.title}}</text>
+              <text class="aiact__status aiact__status--{{item.state}}">{{item.statusText}}</text>
+            </view>
+            <text class="aiact__desc">{{item.desc}}</text>
+          </view>
+          <view class="aiact__owner">{{item.owner}}</view>
+        </view>
+      </block>
+      <view class="detail__pad"></view>
+     </view>
+    </scroll-view>
+   </block>
+
+   <!-- 成熟度总览：地块 → 区块下拉 -->
+   <block wx:elif="{{ripeOpen}}">
+    <view class="detail__grab"></view>
+    <view class="panel-head">
+      <view class="panel-head__wrap">
+        <text class="panel-head__title">成熟度总览</text>
+        <text class="panel-head__sub">AI 估算 · 按区块细分</text>
+      </view>
+      <view class="detail__close" catchtap="onCloseRipePanel">✕</view>
+    </view>
+
+    <scroll-view scroll-y class="panel-scroll" style="height:{{panelScrollH}}px">
+     <view class="detail__inner">
+      <block wx:for="{{ripePlots}}" wx:key="id">
+        <view class="ripe-card">
+          <view class="ripe-card__head" data-id="{{item.id}}" catchtap="onToggleRipePlot">
+            <view class="ripe-card__top">
+              <text class="ripe-card__name">{{item.name}}</text>
+              <text class="ripe-card__pct">{{item.progress}}%</text>
+              <view class="ripe-card__arrow {{item.expanded ? 'ripe-card__arrow--open' : ''}}"></view>
+            </view>
+            <view class="rbar">
+              <view class="rbar__fill rbar__fill--total" style="width:{{item.progress}}%"></view>
+            </view>
+            <text class="ripe-card__meta">AI 综合估算 · {{item.blocks.length}} 个区块 · 预计 {{item.harvest}} 可收</text>
+          </view>
+
+          <view wx:if="{{item.expanded}}" class="ripe-card__blocks">
+            <block wx:for="{{item.blocks}}" wx:key="id" wx:for-item="b">
+              <view class="rblock">
+                <view class="rblock__row">
+                  <text class="rblock__name">{{b.name}}</text>
+                  <text class="rblock__variety">{{b.variety}}</text>
+                  <text class="rblock__owner">{{b.owner}}</text>
+                  <text class="rblock__pct">{{b.progress}}%</text>
+                </view>
+                <view class="rbar rbar--thin">
+                  <view class="rbar__fill" style="width:{{b.progress}}%"></view>
+                </view>
+              </view>
+            </block>
+          </view>
+        </view>
+      </block>
+      <view class="detail__pad"></view>
+     </view>
+    </scroll-view>
+   </block>
+  </page-container>
 </view>

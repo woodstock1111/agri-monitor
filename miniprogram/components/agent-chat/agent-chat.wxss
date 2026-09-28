@@ -1,0 +1,114 @@
+/* 复用聊天页的纸质风样式（UI 会话继续改 pages/agent/agent.wxss 即生效） */
+@import "../../pages/agent/agent.wxss";
+
+/* 组件本体填满 page-container（外壳/上滑/返回由 page-container 提供，原生顺滑） */
+.agent-body {
+  height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: #f1e9d8;
+  overflow: hidden;
+}
+
+.agent-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 22rpx 24rpx 16rpx;
+  border-bottom: 1rpx solid rgba(70, 58, 44, 0.12);
+}
+.agent-head__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #3a3026;
+  letter-spacing: 0.5rpx;
+}
+.agent-head__clear {
+  font-size: 24rpx;
+  color: #8a7355;
+  padding: 8rpx 20rpx;
+  border-radius: 999rpx;
+  background: rgba(70, 58, 44, 0.06);
+}
+.agent-head__clear--press { background: rgba(70, 58, 44, 0.12); }
+.agent-close {
+  width: 52rpx;
+  height: 52rpx;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(70, 58, 44, 0.06);
+  color: #6a5c46;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28rpx;
+}
+.agent-close--press { background: rgba(70, 58, 44, 0.12); }
+
+/* chat 在组件里按容器高度排版，覆盖 agent.wxss 的 100vh 和整页入场动画 */
+.agent-body .chat {
+  height: auto;
+  flex: 1;
+  min-height: 0;
+  animation: none;
+  background: transparent;
+}
+
+/* ---------- 小薯思考动画：会敲电脑的小薯 + 文案轮换 ---------- */
+.bubble--think {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 6rpx 8rpx;
+}
+.think {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8rpx;
+  padding: 2rpx 0;
+}
+.think__spud {
+  width: 124rpx;
+  height: 124rpx;
+  flex-shrink: 0;
+  transform-origin: center bottom;
+  animation: spudType 0.78s ease-in-out infinite;
+}
+@keyframes spudType {
+  0%, 100% { transform: translateY(0) rotate(-1.6deg); }
+  50%      { transform: translateY(-5rpx) rotate(1.6deg); }
+}
+.think__texts {
+  position: relative;
+  width: 260rpx;
+  height: 38rpx;
+}
+.think__line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  text-align: center;
+  white-space: nowrap;
+  font-size: 26rpx;
+  line-height: 38rpx;
+  letter-spacing: 0.5rpx;
+  color: #8a7355;
+  opacity: 0;
+  animation: phraseCycle 10s linear infinite;
+}
+.think__line:nth-child(1) { animation-delay: 0s; }
+.think__line:nth-child(2) { animation-delay: 2.5s; }
+.think__line:nth-child(3) { animation-delay: 5s; }
+.think__line:nth-child(4) { animation-delay: 7.5s; }
+@keyframes phraseCycle {
+  0%   { opacity: 0; transform: translateY(8rpx); }
+  3%   { opacity: 1; transform: translateY(0); }
+  20%  { opacity: 1; transform: translateY(0); }
+  24%  { opacity: 0; transform: translateY(-8rpx); }
+  100% { opacity: 0; transform: translateY(-8rpx); }
+}
