@@ -69,3 +69,19 @@ test('calibration fits training only, reports held-out results, never self-appro
 test('calibration rejects plot/year leakage, mixed versions, synthetic weather and reused calibrated predictions',()=>{
  for(const mutate of [r=>r[12].fieldId=r[0].fieldId,r=>r[12].seasonYear=2023,r=>r[0].prediction.engineVersion='old',r=>r[0].prediction.sourceKind='demo',r=>r[0].prediction.calibrationId='previous']) {const r=rows();mutate(r);assert.throws(()=>fit(r));}
 });
+test('planting comparison uses matched years and rewards better growing conditions without changing management',()=>{
+ const windows=[{date:'2026-10-15',seasons:[2020,2021,2022,2023].map(year=>({year,daily:weather(0,14)}))},{date:'2027-05-15',seasons:[2021,2022,2023,2024].map(year=>({year,daily:weather(4,26)}))}];
+ const before=JSON.stringify(p),rank=m.rankPlantingWindows(p,windows);
+ assert.equal(rank[0].date,'2027-05-15');assert.deepEqual(rank[0].years,[2021,2022,2023]);assert(rank[0].climateScore>rank[1].climateScore);assert.equal(JSON.stringify(p),before);
+ assert.throws(()=>m.rankPlantingWindows(p,[{...windows[0],seasons:windows[0].seasons.slice(0,2)}]),/3个/);
+});
+test('sufficient irrigation removes water scarcity while conserving water and respecting rainfall',()=>{
+ const dry=m.simulateSeason({...p,water:'sufficient',initialWater:0,irrigationLimit:0,irrigationDailyMax:0},weather(0));
+ assert.equal(dry.stressDays,0);assert.equal(dry.moisture,1);assert(dry.irrigation>0);assert(Math.abs(dry.massBalanceError)<1e-7);
+ const rainy=m.simulateSeason({...p,water:'sufficient'},weather(30));assert(rainy.irrigation<dry.irrigation);
+});
+test('unlimited water does not erase heavy rainfall and poor drainage penalties',()=>{
+ const input={...p,water:'sufficient'},good=m.evaluate(input,weather(40)),poor=m.evaluate({...input,drainage:'poor'},weather(40));
+ assert.equal(poor.simulations[0].stressDays,0);assert(poor.simulations[0].wetDays>0);assert(poor.wly<good.wly);assert(poor.climateScore<good.climateScore);
+ assert(poor.factors.some(x=>x.name==='降雨与排水'&&x.value<1));assert(Math.abs(poor.simulations[0].massBalanceError)<1e-7);
+});

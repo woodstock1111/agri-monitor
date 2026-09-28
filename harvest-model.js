@@ -42,7 +42,7 @@
   function validate(p) {
     const ranges={lat:[-90,90],lng:[-180,180],area:[.01,100000],days:[60,365],ph:[3,10],n:[0,500],p:[0,500],k:[0,1000],budget:[0,100000000],price:[0,1000000],base:[0,100000000],fertPrice:[.0001,1000000]};
     for(const [key,[lo,hi]] of Object.entries(ranges)) if(!Number.isFinite(p[key])||p[key]<lo||p[key]>hi) throw Error('请检查输入：'+key+' 必须在 '+lo+'–'+hi+' 之间');
-    if(!Number.isInteger(p.days)||!crops[p.crop]||!['good','poor'].includes(p.drainage)||!['rain','irrigated'].includes(p.water)||!['cautious','balanced'].includes(p.risk)) throw Error('作物或管理选项无效');
+    if(!Number.isInteger(p.days)||!crops[p.crop]||!['good','poor'].includes(p.drainage)||!['rain','irrigated','sufficient'].includes(p.water)||!['cautious','balanced'].includes(p.risk)) throw Error('作物或管理选项无效');
     if(!/^\d{4}-\d{2}-\d{2}$/.test(p.date)||!Number.isFinite(Date.parse(p.date))||new Date(p.date).toISOString().slice(0,10)!==p.date) throw Error('请选择有效播种日期');
     return p;
   }
@@ -53,7 +53,7 @@
     if(daily.temperature_2m_mean.some((v,i)=>v < -90 || v > 65 || daily.temperature_2m_min[i] > v || daily.temperature_2m_min[i] < -100)) throw Error('气温范围或最高最低关系无效');
     return daily;
   }
-  const VERSION = 'harvest-beta-3.0.0';
+  const VERSION = 'harvest-beta-3.1.0';
   const PARAMETER_VERSION = 'tubers-beta-2026-09-23';
   // Published water parameters + explicitly uncalibrated regional growth assumptions.
   Object.assign(crops.sweetpotato, {id:'sweetpotato', status:'beta', parameterVersion:PARAMETER_VERSION,
@@ -148,7 +148,7 @@
     let storage=capacityPerM*initialDepth*p.initialWater,previousCapacity=capacityPerM*initialDepth;
     const initialStorage=storage,trace=[],stageStats=c.stages.map((_,i)=>({name:['建立期','生长发育期','薯块膨大期','成熟期'][i],days:0,stressDays:0,rain:0,irrigation:0,et:0}));
     let progress=0,survival=1,growth=0,potentialGrowth=0,tempSum=0,weightWater=0,weights=0;
-    let rainTotal=0,runoffTotal=0,drainageTotal=0,irrigationTotal=0,etTotal=0,rootWater=0,frost=0,drySpell=0,longestDry=0,stressDays=0;
+    let rainTotal=0,runoffTotal=0,drainageTotal=0,irrigationTotal=0,etTotal=0,rootWater=0,frost=0,drySpell=0,longestDry=0,stressDays=0,wetDays=0,wetGrowth=0;
     const normalization=c.sink.reduce((v,w,i)=>v+w*(c.stages[i]-(i?c.stages[i-1]:0)),0);
     for(let i=0;i<p.days;i++) {
       const t=daily.temperature_2m_mean[i],minT=daily.temperature_2m_min[i],rain=daily.precipitation_sum[i],et0=daily.et0_fao_evapotranspiration[i];
@@ -163,6 +163,7 @@
       const demand=et0*stage.kc,depletion=clamp(c.depletion+.04*(5-demand),.1,.8);
       let irrigation=0;
       if(p.irrigation)irrigation=p.irrigation[i];
+      else if(p.water==='sufficient') irrigation=Math.max(0,Math.min(capacity,capacity*(1-depletion)+demand)-storage);
       else if(p.water==='irrigated'&&storage<capacity*(1-depletion)) irrigation=Math.max(0,Math.min(capacity-storage,p.irrigationDailyMax,p.irrigationLimit-irrigationTotal));
       storage+=irrigation;
       const drainage=Math.max(0,storage-capacity);storage=Math.min(capacity,storage);
@@ -174,6 +175,7 @@
       // Beta growth integration, NOT a calibrated LINTUL implementation.
       const growthStep=step*stage.sink/normalization*thermal*light;
       const wetPenalty=p.drainage==='poor'&&drainage>5?.65:1;
+      if(drainage>5)wetDays++;wetGrowth+=growthStep*(1-wetPenalty);
       potentialGrowth+=growthStep;growth+=growthStep*ks*survival*wetPenalty;
       progress+=step;tempSum+=thermal;
       const weight=Math.max(step,1/c.days)*stage.sink;weightWater+=ks*weight;weights+=weight;
@@ -185,7 +187,7 @@
     const ph=p.ph<5.5?clamp((p.ph-3)/2.5):p.ph>7?clamp((10-p.ph)/3):1;
     const potentialDry=c.potential*c.dm;
     const wly=potentialDry*clamp(growth)*ph;
-    return {wly,potentialDry,potentialGrowth:clamp(potentialGrowth),maturity:progress,temp:tempSum/p.days,moisture:weightWater/Math.max(weights,1e-9),ph,frost,survival,stressDays,longestDry,
+    return {minimumTemperature:Math.min(...daily.temperature_2m_min),wetDays,wetGrowthLoss:potentialGrowth>0?wetGrowth/potentialGrowth:0,wly,potentialDry,potentialGrowth:clamp(potentialGrowth),maturity:progress,temp:tempSum/p.days,moisture:weightWater/Math.max(weights,1e-9),ph,frost,survival,stressDays,longestDry,
       rain:rainTotal,irrigation:irrigationTotal,runoff:runoffTotal,drainage:drainageTotal,et:etTotal,
       massBalanceError:initialStorage+rootWater+rainTotal+irrigationTotal-runoffTotal-drainageTotal-etTotal-storage,
       trace,stages:stageStats};
@@ -225,17 +227,18 @@
     const baseline=candidates[0],middle=candidates[Math.floor((candidates.length-1)/2)];
     const avg=k=>mean(simulations.map(s=>s[k]));
     const nutrientRatio=mean(simulations.map((s,i)=>s.wly>0?best.years[i].fresh/(s.wly/c.dm/15):0));
-    const climateScore=Math.round(100*Math.min(avg('temp'),avg('moisture'),avg('maturity'),avg('survival')));
+    const climateScore=Math.round(100*Math.min(avg('temp'),avg('moisture'),avg('maturity'),avg('survival'),1-avg('wetGrowthLoss')));
     const score=Math.round(Math.min(climateScore,avg('ph')*100,nutrientRatio*100));
     const factors=[{name:'温度与成熟',value:Math.min(avg('temp'),avg('maturity')),detail:`平均成熟进度 ${Math.round(avg('maturity')*100)}%`},
       {name:'逐日水分',value:avg('moisture'),detail:`平均缺水 ${Math.round(avg('stressDays'))} 天 · 补灌 ${Math.round(avg('irrigation'))} mm`},
-      {name:'霜冻与低温',value:avg('survival'),detail:`${simulations.filter(s=>s.frost>0).length}/${simulations.length} 个情景出现霜冻`},
+      {name:'低温与冻害检查',value:avg('survival'),detail:`所选天气最低 ${Math.min(...simulations.map(s=>s.minimumTemperature)).toFixed(1)}°C；${simulations.some(s=>s.frost)?simulations.filter(s=>s.frost).length+'/'+simulations.length+' 个年份出现≤0°C，提示冻害风险（非实测霜冻）':'未出现≤0°C，不提示冻害'}`},
+      {name:'降雨与排水',value:1-avg('wetGrowthLoss'),detail:`平均 ${Math.round(avg('wetDays'))} 天排水压力较大；${p.drainage==='poor'?'已估算积水对生长的影响':'按排水良好计算'}，非洪水预报`},
       {name:'养分与土壤',value:Math.min(avg('ph'),nutrientRatio),detail:'受供应估计、pH和Beta作物参数影响'}];
     return {version:VERSION,parameterVersion:PARAMETER_VERSION,status:'beta',yieldAvailable:true,calibrationId:options.calibration?.id||null,crop:c.name,score,climateScore,nutrientRatio,factors,frost:avg('frost'),wly:avg('wly'),best,
       rows:[{...baseline,name:'不新增肥料'},{...middle,name:'中档投入'},{...best,name:'候选较优'}],candidates,
       count:seasons.length,yearRange:seasons.map(s=>s.year),rangeMeaning:seasons.length>1?'历史天气情景P10–P90，非预测置信区间':'单一情景，不提供统计区间',
       diagnostics:{maturity:avg('maturity'),stressDays:avg('stressDays'),irrigation:avg('irrigation'),maxMassBalanceError:Math.max(...simulations.map(s=>Math.abs(s.massBalanceError)))},
-      simulations,assumptions:[c.parameterSource,'水分依据FAO-56简化单作物系数；土壤质地/初始水量默认是假设','生长、低温损伤与产量上限待地区标定；非完整LINTUL','土壤化验浓度不等于整季作物可吸收供应','天气区间不包含全部参数误差、病虫害和市场风险']};
+      simulations,assumptions:[p.water==='sufficient'?'假设水源充足并及时适量浇水；模拟水量不是最优灌溉处方':'供水按填写的实际条件计算','积水折减为Beta简化规则；缺少地形、河流水位与排水设施资料，未模拟洪水淹没',c.parameterSource,'水分依据FAO-56简化单作物系数；土壤质地/初始水量默认是假设','生长、低温损伤与产量上限待地区标定；非完整LINTUL','土壤化验浓度不等于整季作物可吸收供应','天气区间不包含全部参数误差、病虫害和市场风险']};
   }
   function evaluateClimate(input,seasons) {
     if(!Array.isArray(seasons)||!seasons.length||seasons.length>30||new Set(seasons.map(s=>s.year)).size!==seasons.length)throw Error('天气情景无效');
@@ -245,8 +248,21 @@
       diagnostics:{maturity:avg('maturity'),stressDays:avg('stressDays'),irrigation:avg('irrigation')},simulations,
       factors:[{name:'温度与成熟',value:Math.min(avg('temp'),avg('maturity')),detail:`平均成熟进度 ${Math.round(avg('maturity')*100)}%`},
       {name:'逐日水分',value:avg('moisture'),detail:`平均缺水 ${Math.round(avg('stressDays'))} 天`},
-      {name:'霜冻与低温',value:avg('survival'),detail:`${simulations.filter(s=>s.frost).length}/${seasons.length} 个情景有霜冻`}],
+      {name:'低温与冻害检查',value:avg('survival'),detail:`所选天气最低 ${Math.min(...simulations.map(s=>s.minimumTemperature)).toFixed(1)}°C；${simulations.some(s=>s.frost)?simulations.filter(s=>s.frost).length+'/'+seasons.length+' 个年份出现≤0°C，提示冻害风险（非实测霜冻）':'未出现≤0°C，不提示冻害'}`},
+      {name:'降雨与排水',value:1-avg('wetGrowthLoss'),detail:`平均 ${Math.round(avg('wetDays'))} 天排水压力较大；按所选排水条件计算，非洪水预报`}],
       assumptions:['缺少养分供应，暂不计算产量或施肥收益','土壤持水参数和作物生长参数均为Beta假设']};
+  }
+  // Compare planting windows using identical management and matched historical years.
+  function rankPlantingWindows(input,windows) {
+    if(!Array.isArray(windows)||!windows.length)throw Error('没有可比较的播期');
+    const common=windows[0].seasons.map(s=>s.year).filter(y=>windows.every(w=>w.seasons.some(s=>s.year===y)));
+    if(common.length<3)throw Error('播期比较至少需要3个共同完整历史年景');
+    return windows.map(w=>{
+      const p=normalize({...input,date:w.date}),seasons=w.seasons.filter(s=>common.includes(s.year));
+      const output=evaluateClimate(p,seasons),simulations=output.simulations;
+      return {date:w.date,objective:mean(simulations.map(s=>s.wly)),climateScore:output.climateScore,
+        stressDays:output.diagnostics.stressDays,maturity:output.diagnostics.maturity,years:common};
+    }).sort((a,b)=>b.objective-a.objective||a.date.localeCompare(b.date));
   }
   function evaluate(p,daily,options={}) {return evaluateEnsemble(p,[{year:Number(p.date.slice(0,4)),daily}],options);}
   function soilSupply(data, fractions) {
@@ -264,7 +280,7 @@
     if(!Number.isFinite(f.ph?.value)) throw Error('pH 数据缺失');
     return {n:supply[0],p:supply[1],k:supply[2],ph:f.ph.value,depthCm:data.depthCm,fractions};
   }
-  const api={VERSION,PARAMETER_VERSION,crops,textures,quefts,validate,normalize,climate,evaluate,evaluateEnsemble,evaluateClimate,simulateSeason,soilSupply,quantile,historicalSeasons,seasonDates,extractSeasons,validateCalibration};
+  const api={rankPlantingWindows,VERSION,PARAMETER_VERSION,crops,textures,quefts,validate,normalize,climate,evaluate,evaluateEnsemble,evaluateClimate,simulateSeason,soilSupply,quantile,historicalSeasons,seasonDates,extractSeasons,validateCalibration};
   if(typeof module!=='undefined'&&module.exports) module.exports=api;
   else root.HarvestModel=api;
 })(typeof window!=='undefined'?window:globalThis);
