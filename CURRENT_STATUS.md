@@ -15,7 +15,7 @@ The frontend is served by the same backend from static files:
 ```text
 index.html
 app.js
-style.css
+app.css
 logo.jpg
 ```
 
@@ -168,7 +168,7 @@ cloud-hist-factor-box
 server.js          Backend, auth, cloud API, storage, history sync
 app.js             Frontend app logic
 index.html         Page structure and modals
-style.css          UI styling
+app.css            UI styling (single stylesheet: tokens, components, pages)
 server-data/       Runtime local database
 ARCHITECTURE.md    Architecture and data model
 DEPLOYMENT.md      Server deployment guide

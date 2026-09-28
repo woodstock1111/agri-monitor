@@ -232,7 +232,9 @@
     const factors=[{name:'温度与成熟',value:Math.min(avg('temp'),avg('maturity')),detail:`平均成熟进度 ${Math.round(avg('maturity')*100)}%`},
       {name:'逐日水分',value:avg('moisture'),detail:`平均缺水 ${Math.round(avg('stressDays'))} 天 · 补灌 ${Math.round(avg('irrigation'))} mm`},
       {name:'低温与冻害检查',value:avg('survival'),detail:`所选天气最低 ${Math.min(...simulations.map(s=>s.minimumTemperature)).toFixed(1)}°C；${simulations.some(s=>s.frost)?simulations.filter(s=>s.frost).length+'/'+simulations.length+' 个年份出现≤0°C，提示冻害风险（非实测霜冻）':'未出现≤0°C，不提示冻害'}`},
-      {name:'降雨与排水',value:1-avg('wetGrowthLoss'),detail:`平均 ${Math.round(avg('wetDays'))} 天排水压力较大；${p.drainage==='poor'?'已估算积水对生长的影响':'按排水良好计算'}，非洪水预报`},
+      {name:'降雨与排水',value:1-avg('wetGrowthLoss'),detail:p.drainage==='poor'
+        ?`平均 ${Math.round(avg('wetDays'))} 天雨水偏多，已按「易积水」估算积水对生长的影响。不是洪水预报。`
+        :`平均 ${Math.round(avg('wetDays'))} 天雨水偏多。当前按「排水良好」计算：假设多余雨水能及时排走，所以不扣分。如果这块地容易积水，请在「调整种植条件 → 排水」里选「较差 / 易积水」重新计算。不是洪水预报。`},
       {name:'养分与土壤',value:Math.min(avg('ph'),nutrientRatio),detail:'受供应估计、pH和Beta作物参数影响'}];
     return {version:VERSION,parameterVersion:PARAMETER_VERSION,status:'beta',yieldAvailable:true,calibrationId:options.calibration?.id||null,crop:c.name,score,climateScore,nutrientRatio,factors,frost:avg('frost'),wly:avg('wly'),best,
       rows:[{...baseline,name:'不新增肥料'},{...middle,name:'中档投入'},{...best,name:'候选较优'}],candidates,

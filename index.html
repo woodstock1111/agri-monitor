@@ -7,10 +7,11 @@
     <meta name="description" content="基于LoRa无线技术的智慧农业监测与控制平台">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="style.css?v=20260924-1">
-    <link rel="stylesheet" href="palette-override.css">
-    <link rel="stylesheet" href="harvest.css?v=20260927-7">
-    <link rel="stylesheet" href="mobile.css?v=20260924-1">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="app.css?v=20260928-3">
+    <link rel="stylesheet" href="harvest.css?v=20260928-4">
 </head>
 <body class="auth-pending">
     <section class="login-screen" id="login-screen">
@@ -205,19 +206,46 @@
                 <div class="page active" id="page-dashboard">
                     <div class="kpi-row" id="kpi-row"></div>
                     <div class="dash-grid">
-                        <div class="glass-panel span-2">
-                            <div class="panel-header">
-                                <span class="panel-title"><i class="fa-solid fa-map-location-dot"></i> 农田设备分布地图</span>
-                                <div id="map-toolbar" style="display:flex;align-items:center;gap:10px;">
-                                    <select class="select-input" id="map-location-filter" onchange="app.filterMapByLocation(this.value)" style="font-size:12px;padding:5px 28px 5px 10px;width:auto;">
-                                        <option value="all">🗺️ 全部地块</option>
-                                    </select>
-                                    <button class="panel-btn" id="map-add-device-btn" onclick="app.addDeviceFromMap()"><i class="fa-solid fa-plus" style="margin-right:4px"></i>添加设备</button>
-                                    <button class="panel-btn" id="map-fullscreen-btn" onclick="app.toggleMapFullscreen()" title="全屏地图"><i class="fa-solid fa-expand"></i></button>
-                                    <button class="panel-btn map-close-btn" id="map-close-focus-btn" onclick="app.filterMapByLocation('all')" style="display:none;" title="返回全部地块"><i class="fa-solid fa-xmark"></i></button>
+                        <div class="glass-panel span-2 map-panel" id="dash-map-panel">
+                            <div class="panel-header map-panel-header">
+                                <div class="panel-heading">
+                                    <span class="panel-title"><i class="fa-solid fa-map-location-dot"></i> 农田设备分布</span>
+                                    <span class="panel-sub" id="map-summary"></span>
+                                </div>
+                                <div class="seg" id="map-plot-seg" role="group" aria-label="选择地块"><span class="seg-thumb"></span></div>
+                                <button class="btn-primary btn-sm map-add-btn" onclick="app.addDeviceFromMap()" title="添加设备"><i class="fa-solid fa-plus"></i><span>添加设备</span></button>
+                            </div>
+                            <div class="map-wrap">
+                                <div id="dash-map" class="map-box"></div>
+                                <div class="map-ctl">
+                                    <div class="map-ctl-group">
+                                        <button type="button" onclick="app.dashMap && app.dashMap.zoomIn()" title="放大" aria-label="放大"><i class="fa-solid fa-plus"></i></button>
+                                        <button type="button" onclick="app.dashMap && app.dashMap.zoomOut()" title="缩小" aria-label="缩小"><i class="fa-solid fa-minus"></i></button>
+                                    </div>
+                                    <div class="map-ctl-group">
+                                        <button type="button" onclick="app.focusMapPlot('all')" title="显示全部地块" aria-label="显示全部地块"><i class="fa-solid fa-expand"></i></button>
+                                        <button type="button" id="map-layer-btn" onclick="app.toggleMapLayer()" title="切换卫星图" aria-label="切换卫星图" aria-pressed="false"><i class="fa-solid fa-layer-group"></i></button>
+                                        <button type="button" id="map-fullscreen-btn" onclick="app.toggleMapFullscreen()" title="全屏" aria-label="全屏"><i class="fa-solid fa-up-right-and-down-left-from-center"></i></button>
+                                    </div>
+                                </div>
+                                <div class="map-legend" aria-hidden="true">
+                                    <span><i style="background:var(--accent)"></i>地块</span>
+                                    <span><i style="background:var(--success)"></i>在线</span>
+                                    <span><i style="background:var(--warning)"></i>离线</span>
+                                </div>
+                                <div class="map-focus" id="map-focus" aria-live="polite">
+                                    <div class="map-focus-head">
+                                        <strong id="map-focus-name"></strong>
+                                        <button type="button" class="map-focus-close" onclick="app.focusMapPlot('all')" title="返回全部地块" aria-label="返回全部地块"><i class="fa-solid fa-xmark"></i></button>
+                                    </div>
+                                    <div class="map-focus-meta" id="map-focus-meta"></div>
+                                    <div class="map-focus-actions">
+                                        <button type="button" class="btn-ghost btn-sm" id="map-focus-list-btn" onclick="app.toggleMapDeviceList()" aria-expanded="false">设备 <i class="fa-solid fa-chevron-down"></i></button>
+                                        <button type="button" class="btn-primary btn-sm" onclick="app.addDeviceFromMap()"><i class="fa-solid fa-plus"></i> 添加</button>
+                                    </div>
+                                    <div class="map-focus-list" id="map-focus-list"><div><ul id="map-focus-devices"></ul></div></div>
                                 </div>
                             </div>
-                            <div id="dash-map" class="map-box"></div>
                         </div>
                         <div class="glass-panel">
                             <div class="panel-header">
@@ -819,8 +847,8 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="harvest-model.js?v=20260927-7"></script>
-    <script src="harvest.js?v=20260927-7"></script>
-    <script src="app.js?v=20260924-2"></script>
+    <script src="harvest-model.js?v=20260928-1"></script>
+    <script src="harvest.js?v=20260928-4"></script>
+    <script src="app.js?v=20260928-3"></script>
 </body>
 </html>

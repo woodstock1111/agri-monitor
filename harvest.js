@@ -2,7 +2,7 @@
 (function(){
   'use strict';
   const M=window.HarvestModel;
-  const presets=[['海南 · 海口',20.045,110.198],['山东 · 潍坊',36.71,119.1],['广西 · 南宁',22.82,108.32],['尼日利亚 · 示例区域',8,8],['坦桑尼亚 · 示例区域',-6,35],['泰国 · 示例区域',15,101],['越南 · 示例区域',12,108]];
+  const presets=[['海南 · 海口',20.045,110.198],['山东 · 潍坊',36.71,119.1],['广西 · 南宁（武鸣）',23.16,108.27],['尼日利亚 · 示例区域',8,8],['坦桑尼亚 · 示例区域',-6,35],['泰国 · 示例区域',15,101],['越南 · 示例区域',12,108]];
   const $=id=>document.getElementById('hv-'+id);
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const num=(x,d=0)=>Number.isFinite(x)?x.toLocaleString('zh-CN',{maximumFractionDigits:d}):'—';
@@ -86,20 +86,34 @@
     $('map-expand').addEventListener('click',()=>expandMap(!mapExpanded));
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&mapExpanded)expandMap(false);});
     if(window.L){
-      map=L.map($('map'),{scrollWheelZoom:false}).setView([20.045,110.198],9);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',maxZoom:18}).addTo(map);
-      marker=L.marker([20.045,110.198],{draggable:true,icon:L.divIcon({className:'hv-pin',html:'<span></span>',iconSize:[28,28],iconAnchor:[14,14]})}).addTo(map);
-      const pick=latlng=>{$('lat').value=latlng.lat.toFixed(5);$('lng').value=(((latlng.lng+540)%360)-180).toFixed(5);$('location').value='custom';pointChanged(false);};
+      // Same Amap basemap as the dashboard. Amap draws in GCJ-02, so points are converted on the way in and out;
+      // the inputs, soil lookup and model all stay in WGS84.
+      map=L.map($('map'),{scrollWheelZoom:false}).setView(toMap(20.045,110.198),9);
+      map.attributionControl.setPrefix(false);
+      L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',{subdomains:'1234',attribution:'© 高德地图',maxZoom:18,keepBuffer:4}).addTo(map);
+      marker=L.marker(toMap(20.045,110.198),{draggable:true,icon:L.divIcon({className:'hv-pin',html:'<span></span>',iconSize:[28,28],iconAnchor:[14,14]})}).addTo(map);
+      const pick=latlng=>{const [lat,lng]=fromMap(latlng.lat,(((latlng.lng+540)%360)-180));$('lat').value=lat.toFixed(5);$('lng').value=lng.toFixed(5);$('location').value='custom';pointChanged(false);};
       map.on('click',e=>pick(e.latlng));marker.on('dragend',()=>pick(marker.getLatLng()));
     }else $('map').innerHTML='<div class="hv-map-fallback">地图暂时未加载，仍可在上方选择地区或输入坐标。</div>';
     loadSoil();
   }
   function cropNote(){$('crop-note').textContent=M.crops[$('crop').value].parameterSource+'。填写品种名用于记录，不会自动生成该品种的已验证参数。';}
+  // WGS84 <-> GCJ-02 (the offset Chinese basemaps apply). Outside mainland China both are the same.
+  function gcjOffset(lat,lng){
+    const a=6378245,ee=0.00669342162296594323,x=lng-105,y=lat-35;
+    let dLat=-100+2*x+3*y+0.2*y*y+0.1*x*y+0.2*Math.sqrt(Math.abs(x))+(20*Math.sin(6*x*Math.PI)+20*Math.sin(2*x*Math.PI))*2/3+(20*Math.sin(y*Math.PI)+40*Math.sin(y/3*Math.PI))*2/3+(160*Math.sin(y/12*Math.PI)+320*Math.sin(y*Math.PI/30))*2/3;
+    let dLng=300+x+2*y+0.1*x*x+0.1*x*y+0.1*Math.sqrt(Math.abs(x))+(20*Math.sin(6*x*Math.PI)+20*Math.sin(2*x*Math.PI))*2/3+(20*Math.sin(x*Math.PI)+40*Math.sin(x/3*Math.PI))*2/3+(150*Math.sin(x/12*Math.PI)+300*Math.sin(x/30*Math.PI))*2/3;
+    const rad=lat/180*Math.PI,magic=1-ee*Math.sin(rad)**2,sq=Math.sqrt(magic);
+    return [dLat*180/((a*(1-ee))/(magic*sq)*Math.PI),dLng*180/(a/sq*Math.cos(rad)*Math.PI)];
+  }
+  function outsideChina(lat,lng){return lng<72.004||lng>137.8347||lat<0.8293||lat>55.8271;}
+  function toMap(lat,lng){if(outsideChina(lat,lng))return [lat,lng];const [dy,dx]=gcjOffset(lat,lng);return [lat+dy,lng+dx];}
+  function fromMap(lat,lng){if(outsideChina(lat,lng))return [lat,lng];let w=[lat,lng];for(let i=0;i<3;i++){const g=toMap(w[0],w[1]);w=[w[0]-(g[0]-lat),w[1]-(g[1]-lng)];}return w;}
   function expandMap(expand){mapExpanded=expand;host.classList.toggle('hv-map-expanded',expand);$('map-expand').textContent=expand?'收起地图 · Esc':'展开地图 ↗';$('map-expand').setAttribute('aria-expanded',String(expand));if(map){expand?map.scrollWheelZoom.enable():map.scrollWheelZoom.disable();setTimeout(()=>map.invalidateSize(),80);}if(!expand)$('map-expand').focus();}
   function pointChanged(recenter=true){
     invalidate();const lat=number('lat'),lng=number('lng');
     if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180){clearSoil();status('请输入有效经纬度');return;}
-    marker?.setLatLng([lat,lng]);if(recenter)map?.setView([lat,lng],9);
+    marker?.setLatLng(toMap(lat,lng));if(recenter)map?.setView(toMap(lat,lng),9);
     $('point').textContent=`${lat.toFixed(5)}, ${lng.toFixed(5)} · WGS84`;
     let reset='';if(nutrientOrigin?.kind==='soil'&&nutrientOrigin.key!==pointKey(lat,lng)){Object.entries(NUTRIENT_DEFAULTS).forEach(([id,v])=>$(id).value=v);nutrientOrigin=null;reset='手填养分已恢复为示例值（原数值来自上一个地点的土壤），请按当前地块核对。';}
     const domestic=lat>=17.8&&lat<=54&&lng>=73&&lng<=136;
@@ -125,8 +139,9 @@
     const key=pointKey(lat,lng),token=soilRevision,controller=new AbortController();soilController=controller;soilLoadingKey=key;const timer=setTimeout(()=>controller.abort(),22000);
     soilStatus('正在读取内置国内土壤…');$('soil-retry').disabled=true;
     try{const data=await requestSoil(String(lat),String(lng),controller.signal);if(token!==soilRevision)return;if(!data.ok)throw Error(data.msg||'此点暂无土壤数据');soil=data;soilKey=key;applySoil();
-      soilStatus('内置土壤已就绪 · pH '+num(data.fields.ph.value,2)+' · 氮 '+num(data.fields.availableN.value,1)+' / 磷 '+num(data.fields.availableP.value,1)+' / 钾 '+num(data.fields.availableK.value,1)+' mg/kg（表层背景）');
-      $('soil-values').innerHTML='<div class="hv-soil-grid">'+Object.values(data.fields).map(f=>`<div><span>${esc(f.label)}</span><b>${num(f.value,2)} <small>${esc(f.unit)}</small></b></div>`).join('')+'</div><p class="hv-hint">约1km背景值，不是实时测土。<a href="https://doi.org/10.11888/Soil.tpdc.270281" target="_blank" rel="noopener">来源</a></p>';
+      const nearby=data.nearest?`已使用附近约 ${num(data.nearest.distanceKm,1)} km 处的数据（原点位没有土壤值，可能是城区或水面）`:'';
+      soilStatus((nearby?nearby+' · ':'内置土壤已就绪 · ')+'pH '+num(data.fields.ph.value,2)+' · 氮 '+num(data.fields.availableN.value,1)+' / 磷 '+num(data.fields.availableP.value,1)+' / 钾 '+num(data.fields.availableK.value,1)+' mg/kg（表层背景）');
+      $('soil-values').innerHTML='<div class="hv-soil-grid">'+Object.values(data.fields).map(f=>`<div><span>${esc(f.label)}</span><b>${num(f.value,2)} <small>${esc(f.unit)}</small></b></div>`).join('')+'</div>'+(nearby?`<p class="hv-hint hv-nearby">📍 ${esc(nearby)}。</p>`:'')+'<p class="hv-hint">约1km背景值，不是实时测土。<a href="https://doi.org/10.11888/Soil.tpdc.270281" target="_blank" rel="noopener">来源</a></p>';
     }catch(e){if(token===soilRevision){soil=null;soilError=e.name==='AbortError'?'土壤读取超时，请点击读取内置土壤重试。':e.message;soilStatus(soilError);}}
     finally{clearTimeout(timer);if(token===soilRevision){soilLoadingKey='';$('soil-retry').disabled=false;}}
   }
@@ -191,10 +206,31 @@
     finally{clearTimeout(timer);if(token===revision){$('run').disabled=false;$('run').textContent='重新分析 →';$('quick-run').disabled=false;$('quick-run').innerHTML='<span>重新分析这个位置</span><span>↗</span>';host.classList.remove('hv-is-running');}}
   }
   function download(name,data){const url=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
+  // One bar per historical weather year, same planting plan. Labels carry the value, unit, average and extremes
+  // so the chart reads on its own.
   function yieldChart(o,f){
     if(!o.yieldAvailable)return '';
-    const values=o.best.years,max=Math.max(1,...values.map(y=>y.fresh)),width=600,height=145,gap=width/values.length;
-    return `<svg class="hv-chart" viewBox="0 0 ${width} 185" role="img" aria-label="不同历史天气情景下的鲜薯产量"><line x1="0" y1="145" x2="600" y2="145" stroke="#d7e2d8"/>${values.map((y,i)=>`<g><rect x="${i*gap+gap*.18}" y="${height-y.fresh/max*110}" width="${gap*.64}" height="${y.fresh/max*110}" rx="3" fill="#65917c"><title>${y.year}: ${num(y.fresh*f)} kg/${per()}</title></rect><text x="${i*gap+gap/2}" y="166" text-anchor="middle">${y.year}</text></g>`).join('')}</svg>`;
+    const values=o.best.years,n=values.length,width=600,top=34,base=150,span=base-top,gap=width/n;
+    const max=Math.max(1,...values.map(y=>y.fresh)),min=Math.min(...values.map(y=>y.fresh));
+    const avg=values.reduce((a,y)=>a+y.fresh,0)/n,avgY=base-avg/max*span;
+    const flat=max>0&&(max-min)/max<0.03;
+    const hi=values.findIndex(y=>y.fresh===max),lo=values.findIndex(y=>y.fresh===min);
+    const short=v=>{const x=v*f;return x>=10000?num(x/1000,1)+'k':num(x);};
+    const bars=values.map((y,i)=>{
+      const h=y.fresh/max*span,x=i*gap+gap*.18,w=gap*.64,cx=i*gap+gap/2;
+      const tone=flat?'#8fb3a0':i===hi?'#3f7d62':i===lo?'#d98a5b':'#8fb3a0';
+      const tag=flat?'':i===hi?'最好':i===lo?'最差':'';
+      return `<g><rect x="${x}" y="${base-h}" width="${w}" height="${h}" rx="4" fill="${tone}"><title>${y.year} 年天气：${num(y.fresh*f)} kg/${per()}</title></rect>`+
+        `<text x="${cx}" y="${base-h-6}" text-anchor="middle" class="hv-bar-val">${short(y.fresh)}</text>`+
+        (tag?`<text x="${cx}" y="${base-h-19}" text-anchor="middle" class="hv-bar-tag" fill="${tone}">${tag}</text>`:'')+
+        `<text x="${cx}" y="${base+18}" text-anchor="middle">${y.year}</text></g>`;
+    }).join('');
+    return `<p class="hv-chart-legend"><span class="hv-key" style="background:#8fb3a0"></span>每根柱子：用这一年的真实天气、同一套种植方案重算的鲜薯产量（kg/${per()}）`+
+      `<span class="hv-key hv-key-line"></span>平均 ${num(avg*f)}${flat?'':` · <b style="color:#3f7d62">最好 ${values[hi].year}</b> · <b style="color:#c07a4f">最差 ${values[lo].year}</b>`}</p>`+
+      `<svg class="hv-chart" viewBox="0 0 ${width} 176" role="img" aria-label="不同历史天气年份下的鲜薯产量，平均 ${num(avg*f)} kg/${per()}">`+
+      `<line x1="0" y1="${base}" x2="${width}" y2="${base}" stroke="#d7e2d8"/>`+
+      `<line x1="0" y1="${avgY}" x2="${width}" y2="${avgY}" stroke="#35584a" stroke-width="1.2" stroke-dasharray="5 5" opacity=".45"/>${bars}</svg>`+
+      (flat?'<p class="hv-hint">这几年天气对这块地影响很小，各年产量几乎一样；限制产量的主要是下面的因素。</p>':'');
   }
   function render(r){
     const o=r.output,p=r.input,f=r.display.unit==='ha'?15:1,area=p.area/f,label=r.display.unit==='ha'?'公顷':'亩',b=o.best;

@@ -890,6 +890,24 @@ const HistoryStore = {
 };
 
 const UI = {
+  reducedMotion() {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  },
+
+  // Eases a number from 0 to its data-count value once (~650ms), then stops.
+  countUp(el, duration = 650) {
+    const to = Number(el.dataset.count);
+    if (!Number.isFinite(to) || to <= 0 || this.reducedMotion()) return;
+    const start = performance.now();
+    const step = now => {
+      const k = Math.min(1, (now - start) / duration);
+      el.textContent = Math.round(to * (1 - Math.pow(1 - k, 3)));
+      if (k < 1) requestAnimationFrame(step);
+    };
+    el.textContent = '0';
+    requestAnimationFrame(step);
+  },
+
   toast(message, type = 'info') {
     const host = document.getElementById('toast-stack');
     if (!host) return;
@@ -1106,6 +1124,10 @@ const TYPE_LABELS = {
   sensor_pest:'\ud83e\udd9f \u866b\u60c5\u76d1\u6d4b\u4eea', camera:'\ud83d\udcf9 \u6444\u50cf\u5934', controller_water:'\ud83d\udca7 \u704c\u6e89\u63a7\u5236\u5668',
   controller_light:'\ud83d\udca1 \u8865\u5149\u63a7\u5236\u5668', controller_fan:'\ud83c\udf00 \u98ce\u673a\u63a7\u5236\u5668'
 };
+const DEVICE_MARKER_ICONS = {
+  sensor_env: 'fa-temperature-half', sensor_soil: 'fa-seedling', sensor_soil_api: 'fa-seedling', sensor_pest: 'fa-bug',
+  camera: 'fa-video', controller_water: 'fa-droplet', controller_light: 'fa-lightbulb', controller_fan: 'fa-fan',
+};
 
 // ====================================================
 // MAIN APP
@@ -1266,16 +1288,26 @@ const app = {
     this.startBackendHealthPolling();
   },
 
+  // Timers that only feed the screen stop while the tab is hidden and catch up on return.
   startClock() {
     const el = document.getElementById('live-time');
     const tick = () => { el.textContent = new Date().toLocaleTimeString('zh-CN'); };
-    tick(); setInterval(tick, 1000);
+    let timer = null;
+    const run = () => {
+      clearInterval(timer);
+      timer = null;
+      if (document.hidden) return;
+      tick();
+      timer = setInterval(tick, 1000);
+    };
+    document.addEventListener('visibilitychange', run);
+    run();
   },
 
   startBackendHealthPolling() {
     if (this._backendHealthInterval) clearInterval(this._backendHealthInterval);
     this.refreshBackendHealth(true);
-    this._backendHealthInterval = setInterval(() => this.refreshBackendHealth(), 60000);
+    this._backendHealthInterval = setInterval(() => { if (!document.hidden) this.refreshBackendHealth(); }, 60000);
   },
 
   async refreshBackendHealth(force = false) {
@@ -1330,18 +1362,12 @@ const app = {
       accounts:'\u8d26\u53f7\u7ba1\u7406'
     };
     document.getElementById('page-title').textContent = titles[page] || '';
-    document.querySelectorAll('.page').forEach(p => {
-      p.style.willChange = '';
-      p.classList.remove('active');
-    });
-    const el = document.getElementById('page-'+page);
-    if (el) {
-      el.style.willChange = 'transform, opacity';
-      const clearWillChange = () => { el.style.willChange = ''; };
-      el.addEventListener('transitionend', clearWillChange, { once: true });
-      setTimeout(clearWillChange, 400);
-      el.classList.add('active');
-    }
+    this._moveNavIndicator();
+    if (page !== 'dashboard') this.exitMapFullscreen();
+    if (page === 'dashboard') this._animateKpis = true;
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-' + page)?.classList.add('active');
+    document.querySelector('.main-wrap')?.scrollTo({ top: 0 });
     this.stopLive();
     const init = {
       harvest: () => window.HarvestUI.init(Store.getLocations(), {
@@ -1373,9 +1399,31 @@ const app = {
     if (init[page]) init[page]();
   },
 
-  // Phones (<= 600px, see style.css) use an off-canvas sidebar (.mobile-open); wider screens collapse it to icons.
+  // Phones (<= 760px, see app.css) use an off-canvas sidebar (.mobile-open); wider screens collapse it to icons.
   _isPhoneLayout() {
-    return window.matchMedia('(max-width: 600px)').matches;
+    return window.matchMedia('(max-width: 760px)').matches;
+  },
+
+  // One highlight element slides between nav links instead of each link painting its own background.
+  _moveNavIndicator() {
+    const nav = document.querySelector('.sidebar-nav');
+    const active = nav?.querySelector('.nav-link.active');
+    let ind = nav?.querySelector('.nav-indicator');
+    if (!nav) return;
+    if (!ind) {
+      ind = document.createElement('span');
+      ind.className = 'nav-indicator';
+      ind.setAttribute('aria-hidden', 'true');
+      nav.prepend(ind);
+      nav.classList.add('has-indicator');
+    }
+    if (!active || !active.offsetParent) { ind.style.opacity = '0'; return; }
+    ind.style.opacity = '';
+    ind.style.setProperty('--x', active.offsetLeft + 'px');
+    ind.style.setProperty('--y', active.offsetTop + 'px');
+    ind.style.setProperty('--w', active.offsetWidth + 'px');
+    ind.style.setProperty('--h', active.offsetHeight + 'px');
+    if (!ind.classList.contains('ready')) requestAnimationFrame(() => ind.classList.add('ready'));
   },
 
   _setMobileSidebar(open) {
@@ -1400,6 +1448,11 @@ const app = {
       if (this._isPhoneLayout()) this._setMobileSidebar(!sidebar.classList.contains('mobile-open'));
       else sidebar.classList.toggle('collapsed');
     });
+    // Re-measure the nav highlight once the sidebar finishes resizing.
+    document.getElementById('sidebar').addEventListener('transitionend', event => {
+      if (event.propertyName === 'width') this._moveNavIndicator();
+    });
+    window.addEventListener('resize', () => this._moveNavIndicator());
   },
 
   bindAlertDrawer() {
@@ -2300,271 +2353,319 @@ const app = {
     const locs = DataRepository.listLocations();
     const online = devices.filter(d => d.online).length;
     const alerts = this.getAlerts();
+    const totalArea = locs.reduce((a, l) => a + (+l.area || 0), 0);
 
     document.getElementById('kpi-row').innerHTML = `
-    <div class="kpi-card accent" onclick="app.navigate('devices')" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u8bbe\u5907\u7ba1\u7406">
+    <div class="kpi-card accent" onclick="app.navigate('devices')" title="点击查看设备管理">
       <div class="kpi-icon"><i class="fa-solid fa-microchip"></i></div>
-      <div><div class="kpi-label">\u5728\u7ebf\u8bbe\u5907</div><div class="kpi-value">${online}<span class="kpi-unit">/${devices.length}</span></div><div class="kpi-sub">\u70b9\u51fb\u7ba1\u7406\u8bbe\u5907 \u2192</div></div></div>
-    <div class="kpi-card ${alerts.length ? 'danger' : 'success'}" onclick="document.getElementById('alertToggle').click()" style="cursor:pointer" title="\u70b9\u51fb\u67e5\u770b\u8b66\u62a5\u8be6\u60c5">
+      <div><div class="kpi-label">在线设备</div><div class="kpi-value"><span data-count="${online}">${online}</span><span class="kpi-unit">/${devices.length}</span></div><div class="kpi-sub">点击管理设备 →</div></div></div>
+    <div class="kpi-card ${alerts.length ? 'danger' : 'success'}" onclick="document.getElementById('alertToggle').click()" title="点击查看警报详情">
       <div class="kpi-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
-      <div><div class="kpi-label">\u5f53\u524d\u8b66\u62a5</div><div class="kpi-value">${alerts.length}<span class="kpi-unit">\u6761</span></div><div class="kpi-sub">${alerts.length?'\u70b9\u51fb\u67e5\u770b\u8be6\u60c5 \u2192':'\u6240\u6709\u6307\u6807\u6b63\u5e38 \u2713'}</div></div></div>
-    <div class="kpi-card success" onclick="app.navigate('locations')" style="cursor:pointer" title="\u70b9\u51fb\u7ba1\u7406\u5730\u5757">
+      <div><div class="kpi-label">当前警报</div><div class="kpi-value"><span data-count="${alerts.length}">${alerts.length}</span><span class="kpi-unit">条</span></div><div class="kpi-sub">${alerts.length?'点击查看详情 →':'所有指标正常 ✓'}</div></div></div>
+    <div class="kpi-card success" onclick="app.navigate('locations')" title="点击管理地块">
       <div class="kpi-icon"><i class="fa-solid fa-map"></i></div>
-      <div><div class="kpi-label">\u76d1\u6d4b\u5730\u5757</div><div class="kpi-value">${locs.length}<span class="kpi-unit">\u5757</span></div><div class="kpi-sub">\u5171 ${locs.reduce((a,l)=>a+(+l.area||0),0)} \u4ea9 \u00b7 \u70b9\u51fb\u7ba1\u7406 \u2192</div></div></div>
+      <div><div class="kpi-label">监测地块</div><div class="kpi-value"><span data-count="${locs.length}">${locs.length}</span><span class="kpi-unit">块</span></div><div class="kpi-sub">共 ${totalArea} 亩 · 点击管理 →</div></div></div>
     `;
+    // Count up only on the first render after navigating here, not on every data refresh.
+    if (this._animateKpis) {
+      this._animateKpis = false;
+      document.querySelectorAll('#kpi-row [data-count]').forEach(el => UI.countUp(el));
+    }
     void this._renderDashboardFarmTasks();
 
-    if (!this.dashMap) {
-      this.dashMap = L.map('dash-map', { zoomControl: true, attributionControl: true }).setView([20.044,110.199], 15);
-      // Amap tile layers  - no API key required for these public endpoints
-      this._mapLayers = {
-        standard: L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
-          subdomains: '1234',
-          attribution: '\u00a9 <a href="https://www.amap.com">\u9ad8\u5fb7\u5730\u56fe</a>',
-          maxZoom: 18,
-        }),
-        satellite: L.tileLayer('https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}', {
-          subdomains: '1234',
-          attribution: '\u00a9 <a href="https://www.amap.com">\u9ad8\u5fb7\u5361\u661f\u56fe</a>',
-          maxZoom: 18,
-        }),
-        satelliteLabel: L.tileLayer('https://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}', {
-          subdomains: '1234',
-          maxZoom: 18,
-        }),
-      };
-      this._mapLayers.standard.addTo(this.dashMap);
-      this._currentMapLayer = 'standard';
-      // Add layer switch control
-      this._addMapLayerControl();
-    } else { this.dashMap.eachLayer(l => { if (l instanceof L.Marker || l instanceof L.CircleMarker) this.dashMap.removeLayer(l); }); }
-    // Populate map location filter
-    const mapFilter = document.getElementById('map-location-filter');
-    if (mapFilter) {
-      const curVal = this._dashMapFilterLoc || 'all';
-      mapFilter.innerHTML = '<option value="all">\ud83d\uddfa\ufe0f \u5168\u90e8\u5730\u5757</option>' + locs.map(l => `<option value="${l.id}" ${l.id===curVal?'selected':''}>${l.name}</option>`).join('');
-      mapFilter.value = curVal;
-    }
-    this.addMapMarkers(this.dashMap, this._dashMapFilterLoc);
+    if (!this.dashMap) this._createDashboardMap();
+    this._renderMapPlotPicker(locs);
+    this._renderDashboardMapMarkers();
     this.renderAlerts();
     this.updateSidebarStatus();
   },
 
-  _getMapFocusPoints(filterLocId = 'all') {
+  _createDashboardMap() {
+    this.dashMap = L.map('dash-map', { zoomControl: false, attributionControl: true }).setView([20.044, 110.199], 13);
+    this.dashMap.attributionControl.setPrefix(false);
+    // Amap tile layers  - no API key required for these public endpoints
+    const amap = (host, style, extra = {}) => L.tileLayer(`https://${host}0{s}.is.autonavi.com/appmaptile?${style}&x={x}&y={y}&z={z}`, { subdomains: '1234', maxZoom: 18, keepBuffer: 4, updateWhenZooming: false, ...extra });
+    this._mapLayers = {
+      standard: amap('webrd', 'lang=zh_cn&size=1&scale=1&style=8', { attribution: '© 高德地图' }),
+      satellite: L.layerGroup([
+        amap('webst', 'style=6', { attribution: '© 高德地图' }),
+        amap('webst', 'style=8'),
+      ]),
+    };
+    this._mapLayers.standard.addTo(this.dashMap);
+    this._currentMapLayer = 'standard';
+    this._mapMarkerLayer = L.layerGroup().addTo(this.dashMap);
+    // Device names appear once zoomed in close enough to tell devices apart.
+    const syncZoomClass = () => document.querySelector('#dash-map-panel .map-wrap')?.classList.toggle('zoomed', this.dashMap.getZoom() >= 15);
+    this.dashMap.on('zoomend', syncZoomClass);
+    syncZoomClass();
+
+    // One observer keeps tiles aligned whenever the box changes size (sidebar, window, fullscreen, rotation).
+    const wrap = document.querySelector('#dash-map-panel .map-wrap');
+    let frame = 0;
+    let lastWidth = 0;
+    new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      const firstLayout = !lastWidth && width > 0;
+      lastWidth = width;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (!this.dashMap) return;
+        this.dashMap.invalidateSize({ pan: false });
+        // The initial fit can run while the page is still hidden (zero size); redo it once there is a box.
+        if (firstLayout) this._fitDashboardMap(this._dashMapFilterLoc || 'all', false);
+      });
+    }).observe(wrap);
+    // Pause the marker pulse while the map is scrolled out of view.
+    new IntersectionObserver(([entry]) => wrap.classList.toggle('paused', !entry.isIntersecting)).observe(wrap);
+
+    document.getElementById('map-scrim')?.remove();
+    const scrim = document.createElement('div');
+    scrim.id = 'map-scrim';
+    scrim.className = 'map-scrim';
+    scrim.addEventListener('click', () => this.exitMapFullscreen());
+    document.body.appendChild(scrim);
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && document.body.classList.contains('map-overlay-open')) this.exitMapFullscreen();
+    });
+  },
+
+  _mapPlotStats(loc, devices) {
+    const devs = devices.filter(d => d.locationId === loc.id);
+    const on = devs.filter(d => d.online).length;
+    return { total: devs.length, on, off: devs.length - on };
+  },
+
+  _renderMapPlotPicker(locs) {
+    const seg = document.getElementById('map-plot-seg');
+    if (!seg) return;
+    const current = this._dashMapFilterLoc || 'all';
+    if (current !== 'all' && !locs.some(l => l.id === current)) this._dashMapFilterLoc = 'all';
+    const items = [{ id: 'all', name: '全部' }, ...locs];
+    seg.innerHTML = '<span class="seg-thumb no-anim"></span>' + items.map(item =>
+      `<button type="button" data-id="${this.sanitize(item.id)}" aria-pressed="${item.id === this._dashMapFilterLoc}" onclick="app.focusMapPlot(this.dataset.id)">${this.sanitize(item.name)}</button>`
+    ).join('');
+    requestAnimationFrame(() => {
+      this._syncMapPlotPicker(false);
+      seg.querySelector('.seg-thumb')?.classList.remove('no-anim');
+    });
+
+    const devices = DataRepository.listDevices();
+    const summary = document.getElementById('map-summary');
+    if (summary) {
+      const off = devices.filter(d => !d.online).length;
+      summary.textContent = `${locs.length} 块地 · ${devices.length} 台设备${off ? ` · ${off} 台离线` : ''}`;
+    }
+  },
+
+  _syncMapPlotPicker(scroll = true) {
+    const seg = document.getElementById('map-plot-seg');
+    if (!seg) return;
+    const id = this._dashMapFilterLoc || 'all';
+    let active = null;
+    seg.querySelectorAll('button').forEach(btn => {
+      const on = btn.dataset.id === id;
+      btn.setAttribute('aria-pressed', on);
+      if (on) active = btn;
+    });
+    const thumb = seg.querySelector('.seg-thumb');
+    if (!active || !thumb) return;
+    thumb.style.setProperty('--x', active.offsetLeft - 3 + 'px');
+    thumb.style.setProperty('--w', active.offsetWidth + 'px');
+    if (scroll) active.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: UI.reducedMotion() ? 'auto' : 'smooth' });
+  },
+
+  _renderDashboardMapMarkers() {
+    if (!this.dashMap) return;
     const locs = DataRepository.listLocations();
     const devices = DataRepository.listDevices();
-    const targetLocs = (!filterLocId || filterLocId === 'all')
-      ? locs
-      : locs.filter(item => item.id === filterLocId);
+    const selected = this._dashMapFilterLoc || 'all';
+    this._mapMarkerLayer.clearLayers();
+    this._plotMarkers = {};
+    this._devMarkers = {};
+
+    locs.forEach((loc, i) => {
+      if (!loc.lat || !loc.lng) return;
+      const stats = this._mapPlotStats(loc, devices);
+      const cls = ['plot-mk', stats.off ? 'warn' : '', loc.id === selected ? 'selected' : ''].join(' ');
+      const icon = L.divIcon({
+        className: '',
+        iconSize: [0, 0],
+        html: `<div class="${cls}" style="--d:${i * 90}ms"><div class="plot-mk-label"><span class="plot-mk-dot"></span>${this.sanitize(loc.name)}</div><div class="plot-mk-stem"></div><div class="plot-mk-base"></div></div>`,
+      });
+      const marker = L.marker([loc.lat, loc.lng], { icon, riseOnHover: true, title: loc.name })
+        .on('click', () => this.focusMapPlot(loc.id));
+      this._mapMarkerLayer.addLayer(marker);
+      this._plotMarkers[loc.id] = marker;
+    });
+
+    const typeColors = {
+      sensor_env: '#d98a5b', sensor_soil: '#5c9a6f', sensor_soil_api: '#5c9a6f', sensor_pest: '#c97268',
+      camera: '#8b7ab8', controller_water: '#4a7bc1', controller_light: '#d6b25e', controller_fan: '#7e8796',
+    };
+    devices.forEach((dev, i) => {
+      if (!dev.lat || !dev.lng) return;
+      const color = dev.online ? (typeColors[dev.type] || '#5c9a6f') : '#d98a5b';
+      const icon = L.divIcon({
+        className: '',
+        iconSize: [18, 18],
+        html: `<div class="dev-mk ${dev.online ? '' : 'off'}" style="--c:${color};--d:${240 + i * 50}ms"><i class="fa-solid ${DEVICE_MARKER_ICONS[dev.type] || 'fa-microchip'}"></i><span class="dev-mk-label">${this.sanitize(dev.name)}</span></div>`,
+      });
+      const typeName = TYPE_LABELS[dev.type] || dev.type;
+      const locName = locs.find(l => l.id === dev.locationId)?.name || '未分配';
+      const marker = L.marker([dev.lat, dev.lng], { icon }).bindPopup(`
+        <div class="map-pop-title">${this.sanitize(dev.name)}</div>
+        <div class="map-pop-meta">${this.sanitize(typeName)} · ${this.sanitize(locName)}</div>
+        <div class="map-pop-status" style="color:${dev.online ? 'var(--success)' : 'var(--warning)'}">● ${dev.online ? '在线' : '离线'}</div>
+        ${dev.notes ? `<div class="map-pop-meta" style="margin-top:4px">${this.sanitize(dev.notes)}</div>` : ''}`, { closeButton: false, offset: [0, -6] });
+      this._mapMarkerLayer.addLayer(marker);
+      this._devMarkers[dev.id] = marker;
+    });
+
+    this._updateMapFocusCard(false);
+    this._fitDashboardMap(selected, false);
+  },
+
+  _getMapFocusPoints(filterLocId = 'all') {
+    const all = !filterLocId || filterLocId === 'all';
     const points = [];
-
-    targetLocs.forEach(loc => {
-      if (loc.lat && loc.lng) points.push([loc.lat, loc.lng]);
+    DataRepository.listLocations().forEach(loc => {
+      if ((all || loc.id === filterLocId) && loc.lat && loc.lng) points.push([loc.lat, loc.lng]);
     });
-
-    const targetDevices = (!filterLocId || filterLocId === 'all')
-      ? devices
-      : devices.filter(item => item.locationId === filterLocId);
-    targetDevices.forEach(dev => {
-      if (dev.lat && dev.lng) points.push([dev.lat, dev.lng]);
+    DataRepository.listDevices().forEach(dev => {
+      if ((all || dev.locationId === filterLocId) && dev.lat && dev.lng) points.push([dev.lat, dev.lng]);
     });
-
     return points;
   },
 
-  _fitDashboardMap(filterLocId = 'all') {
+  // Keep points clear of the floating controls (right) and the focus card / legend (left, bottom).
+  _mapFitPadding(filterLocId) {
+    const narrow = window.matchMedia('(max-width: 760px)').matches;
+    const focused = filterLocId && filterLocId !== 'all';
+    if (narrow) return { paddingTopLeft: [40, 60], paddingBottomRight: [70, focused ? 120 : 40] };
+    return { paddingTopLeft: [focused ? 270 : 50, 60], paddingBottomRight: [80, 50] };
+  },
+
+  _fitDashboardMap(filterLocId = 'all', animate = true) {
     if (!this.dashMap) return;
     const points = this._getMapFocusPoints(filterLocId);
+    const focused = filterLocId && filterLocId !== 'all';
+    const opts = { ...this._mapFitPadding(filterLocId), maxZoom: focused ? 16 : 14 };
+    const move = animate && !UI.reducedMotion();
     if (!points.length) {
-      this.dashMap.setView([20.044, 110.199], 13);
+      this.dashMap.setView([20.044, 110.199], 13, { animate: false });
       return;
     }
-    if (points.length === 1) {
-      this.dashMap.setView(points[0], filterLocId === 'all' ? 14 : 16);
-      return;
-    }
-    const bounds = L.latLngBounds(points);
-    this.dashMap.fitBounds(bounds, {
-      padding: filterLocId === 'all' ? [36, 36] : [48, 48],
-      maxZoom: filterLocId === 'all' ? 15 : 17,
-    });
+    const bounds = L.latLngBounds(points.length === 1 ? [points[0], points[0]] : points);
+    if (move) this.dashMap.flyToBounds(bounds, { ...opts, duration: 0.9, easeLinearity: 0.2 });
+    else this.dashMap.fitBounds(bounds, { ...opts, animate: false });
   },
 
-  addMapMarkers(map, filterLocId) {
-    const locs = DataRepository.listLocations();
+  _updateMapFocusCard(open) {
+    const card = document.getElementById('map-focus');
+    if (!card) return;
+    const locId = this._dashMapFilterLoc;
+    const loc = locId && locId !== 'all' ? DataRepository.listLocations().find(l => l.id === locId) : null;
+    if (!loc) { card.classList.remove('open'); this.toggleMapDeviceList(false); return; }
     const devices = DataRepository.listDevices();
-    const filteredLocs = (!filterLocId || filterLocId === 'all') ? locs : locs.filter(l => l.id === filterLocId);
-
-    // Location markers (colored circles)
-    filteredLocs.forEach(loc => {
-      if (!loc.lat || !loc.lng) return;
-      const devs = devices.filter(d => d.locationId === loc.id);
-      const hasOff = devs.some(d => !d.online);
-      const bgColor = hasOff ? '#f59e0b' : '#3b82f6';
-      const locIcon = L.divIcon({
-        className: '',
-        html: `<div style="width:28px;height:28px;border-radius:50%;background:${bgColor};border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;font-size:14px;">\ud83c\udff7\ufe0f</div>`,
-        iconSize: [28, 28], iconAnchor: [14, 14], popupAnchor: [0, -18],
-      });
-      const popup = `<div style="font-family:Inter;min-width:180px">
-        <div style="font-weight:700;font-size:14px;margin-bottom:4px">${loc.name}</div>
-        <span style="color:#666;font-size:12px">${loc.type} \u00b7 ${loc.area}\u4ea9</span>
-        <hr style="margin:6px 0;border-color:#eee">
-        <div style="font-size:12px;margin-bottom:6px">${devs.length} \u53f0\u8bbe\u5907 (${devs.filter(d=>d.online).length} \u5728\u7ebf)</div>
-        <button onclick="app.filterMapByLocation('${loc.id}')" style="width:100%;padding:5px;background:#1070e0;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px">\u805a\u7126\u6b64\u5730\u5757</button></div>`;
-      L.marker([loc.lat, loc.lng], {icon: locIcon}).addTo(map).bindPopup(popup);
-    });
-
-    // Device markers (small colored circles)
-    const typeColors = {
-      sensor_env:'#f59e0b', sensor_soil:'#10b981', sensor_pest:'#ef4444',
-      camera:'#8b5cf6', controller_water:'#3b82f6', controller_light:'#eab308', controller_fan:'#64748b'
-    };
-    const filteredDevs = (!filterLocId || filterLocId === 'all') ? devices : devices.filter(d => d.locationId === filterLocId);
-    filteredDevs.forEach(dev => {
-      if (!dev.lat || !dev.lng) return;
-      const fillColor = typeColors[dev.type] || '#94a3b8';
-      const marker = L.circleMarker([dev.lat, dev.lng], {
-        radius: 7, fillColor, fillOpacity: dev.online ? 0.9 : 0.3,
-        color: '#fff', weight: 2,
-      }).addTo(map);
-      const typeName = TYPE_LABELS[dev.type] || dev.type;
-      const locName = locs.find(l => l.id === dev.locationId)?.name || '\u672a\u5206\u914d';
-      marker.bindPopup(`<div style="font-family:Inter;min-width:160px">
-        <div style="font-weight:600;font-size:13px">${dev.name}</div>
-        <div style="font-size:11px;color:#666;margin:4px 0">${typeName}</div>
-        <div style="font-size:11px;color:#888">\ud83d\udccd ${locName}</div>
-        <div style="font-size:11px;margin-top:4px"><span style="color:${dev.online?'#10b981':'#ef4444'}">\u25cf ${dev.online?'\u5728\u7ebf':'\u79bb\u7ebf'}</span></div>
-        ${dev.notes ? `<div style="font-size:11px;color:#999;margin-top:4px">${dev.notes}</div>` : ''}
-      </div>`);
-    });
-    this._fitDashboardMap(filterLocId);
+    const stats = this._mapPlotStats(loc, devices);
+    document.getElementById('map-focus-name').textContent = loc.name;
+    document.getElementById('map-focus-meta').innerHTML = [
+      loc.area ? `${this.sanitize(String(loc.area))} \u4ea9` : this.sanitize(loc.type || ''),
+      `<b>${stats.total}</b> \u53f0\u8bbe\u5907`,
+      stats.off ? `<span class="off">${stats.off} \u79bb\u7ebf</span>` : (stats.total ? '\u5168\u90e8\u5728\u7ebf' : ''),
+    ].filter(Boolean).join(' \u00b7 ');
+    const list = devices.filter(d => d.locationId === loc.id);
+    document.getElementById('map-focus-devices').innerHTML = list.length
+      ? list.map(d => `<li><button type="button" onclick="app.focusMapDevice('${this.sanitize(d.id)}')"><i class="${d.online ? '' : 'off'}"></i><span>${this.sanitize(d.name)}</span><small>${d.online ? '\u5728\u7ebf' : '\u79bb\u7ebf'}</small></button></li>`).join('')
+      : '<li class="map-focus-empty">\u8fd9\u5757\u5730\u8fd8\u6ca1\u6709\u8bbe\u5907</li>';
+    if (open !== false || card.classList.contains('open')) card.classList.add('open');
   },
 
-  _addMapLayerControl() {
-    const ctrl = L.control({ position: 'topright' });
-    ctrl.onAdd = () => {
-      const div = L.DomUtil.create('div', 'map-layer-ctrl');
-      div.innerHTML = `
-        <button id="map-btn-standard" class="map-layer-btn active" onclick="app.switchMapLayer('standard')">\u6807\u51c6\u56fe</button>
-        <button id="map-btn-satellite" class="map-layer-btn" onclick="app.switchMapLayer('satellite')">\u536b\u661f\u56fe</button>
-      `;
-      L.DomEvent.disableClickPropagation(div);
-      return div;
-    };
-    ctrl.addTo(this.dashMap);
+  toggleMapDeviceList(force) {
+    const list = document.getElementById('map-focus-list');
+    const btn = document.getElementById('map-focus-list-btn');
+    if (!list || !btn) return;
+    const open = typeof force === 'boolean' ? force : !list.classList.contains('open');
+    list.classList.toggle('open', open);
+    btn.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', open);
   },
 
-  switchMapLayer(type) {
+  // Fly to one device and open its popup, staying on the dashboard.
+  focusMapDevice(devId) {
+    const marker = this._devMarkers?.[devId];
+    if (!marker || !this.dashMap) return;
+    const target = marker.getLatLng();
+    const zoom = Math.max(this.dashMap.getZoom(), 17);
+    const done = () => {
+      marker.openPopup();
+      const el = marker.getElement()?.firstElementChild;
+      if (el) { el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 600); }
+    };
+    if (UI.reducedMotion()) { this.dashMap.setView(target, zoom); done(); return; }
+    this.dashMap.once('moveend', done);
+    this.dashMap.flyTo(target, zoom, { duration: 0.8 });
+  },
+
+  focusMapPlot(locId = 'all') {
+    this._dashMapFilterLoc = locId || 'all';
+    this._syncMapPlotPicker();
+    Object.entries(this._plotMarkers || {}).forEach(([id, marker]) => {
+      marker.getElement()?.firstElementChild?.classList.toggle('selected', id === this._dashMapFilterLoc);
+    });
+    this._updateMapFocusCard(true);
+    this._fitDashboardMap(this._dashMapFilterLoc);
+  },
+
+  // Kept for older callers (popups, other pages).
+  filterMapByLocation(locId) { this.focusMapPlot(locId); },
+
+  toggleMapLayer() {
     if (!this.dashMap || !this._mapLayers) return;
-    // Remove current base layers
-    ['standard','satellite','satelliteLabel'].forEach(k => {
-      if (this.dashMap.hasLayer(this._mapLayers[k])) this.dashMap.removeLayer(this._mapLayers[k]);
-    });
-    if (type === 'satellite') {
-      this._mapLayers.satellite.addTo(this.dashMap);
-      this._mapLayers.satelliteLabel.addTo(this.dashMap);
-    } else {
-      this._mapLayers.standard.addTo(this.dashMap);
+    const next = this._currentMapLayer === 'satellite' ? 'standard' : 'satellite';
+    this.dashMap.removeLayer(this._mapLayers[this._currentMapLayer]);
+    this._mapLayers[next].addTo(this.dashMap);
+    this._currentMapLayer = next;
+    const btn = document.getElementById('map-layer-btn');
+    if (btn) {
+      btn.setAttribute('aria-pressed', next === 'satellite');
+      btn.title = next === 'satellite' ? '切换标准图' : '切换卫星图';
     }
-    this._currentMapLayer = type;
-    document.querySelectorAll('.map-layer-btn').forEach(b => b.classList.remove('active'));
-    const btn = document.getElementById('map-btn-' + type);
-    if (btn) btn.classList.add('active');
   },
 
-  filterMapByLocation(locId) {
-    this._dashMapFilterLoc = locId;
-    const sel = document.getElementById('map-location-filter');
-    if (sel) sel.value = locId;
-    const closeBtn = document.getElementById('map-close-focus-btn');
-    const addBtn = document.getElementById('map-add-device-btn');
-    const isFocused = locId && locId !== 'all';
-    // Toggle close button visibility
-    if (closeBtn) closeBtn.style.display = isFocused ? '' : 'none';
-    // Update add button text for focused mode
-    if (addBtn && isFocused) {
-      const loc = DataRepository.listLocations().find(l => l.id === locId);
-      addBtn.innerHTML = `<i class="fa-solid fa-plus" style="margin-right:4px"></i>\u6dfb\u52a0\u8bbe\u5907\u5230\u300c${loc?.name || ''}\u300d`;
-    } else if (addBtn) {
-      addBtn.innerHTML = '<i class="fa-solid fa-plus" style="margin-right:4px"></i>\u6dfb\u52a0\u8bbe\u5907';
+  // Fullscreen grows the same card in place (FLIP): measure, switch class, animate from the old box.
+  _setMapFullscreen(on) {
+    const panel = document.getElementById('dash-map-panel');
+    if (!panel || panel.classList.contains('map-fullscreen') === on) return;
+    const first = panel.getBoundingClientRect();
+    panel.classList.toggle('map-fullscreen', on);
+    document.body.classList.toggle('map-overlay-open', on);
+    const last = panel.getBoundingClientRect();
+    if (!UI.reducedMotion() && last.width && last.height) {
+      panel.animate([
+        { transformOrigin: '0 0', transform: `translate(${first.left - last.left}px, ${first.top - last.top}px) scale(${first.width / last.width}, ${first.height / last.height})` },
+        { transformOrigin: '0 0', transform: 'none' },
+      ], { duration: 420, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
     }
-    if (!this.dashMap) return;
-    this.dashMap.eachLayer(l => { if (l instanceof L.Marker || l instanceof L.CircleMarker) this.dashMap.removeLayer(l); });
-    this.addMapMarkers(this.dashMap, locId);
-    // Invalidate size after CSS transition
-    setTimeout(() => {
-      if (!this.dashMap) return;
-      this.dashMap.invalidateSize();
-      this._fitDashboardMap(locId);
-    }, 350);
-  },
-
-  _refreshDashboardMapSize() {
-    if (!this.dashMap) return;
-    this.dashMap.invalidateSize();
-    this._fitDashboardMap(this._dashMapFilterLoc || 'all');
-    setTimeout(() => {
-      if (!this.dashMap) return;
-      this.dashMap.invalidateSize();
-      this._fitDashboardMap(this._dashMapFilterLoc || 'all');
-    }, 350);
-  },
-
-  _getDashboardMapPanel() {
-    return document.getElementById('dash-map')?.closest('.glass-panel');
-  },
-
-  _enterMapFullscreen(mapPanel) {
-    if (!mapPanel || mapPanel.classList.contains('map-fullscreen')) return;
-    if (!this._mapFullscreenPlaceholder) {
-      this._mapFullscreenPlaceholder = document.createComment('dashboard-map-panel');
-      mapPanel.parentElement?.insertBefore(this._mapFullscreenPlaceholder, mapPanel);
-    }
-    document.body.appendChild(mapPanel);
-    mapPanel.classList.add('map-fullscreen');
-    document.body.classList.add('map-overlay-open');
-  },
-
-  _restoreMapPanel(mapPanel) {
-    if (!mapPanel) return;
-    mapPanel.classList.remove('map-fullscreen');
-    document.body.classList.remove('map-overlay-open');
-    if (this._mapFullscreenPlaceholder?.parentElement) {
-      this._mapFullscreenPlaceholder.parentElement.insertBefore(mapPanel, this._mapFullscreenPlaceholder);
-      this._mapFullscreenPlaceholder.remove();
-    }
-    this._mapFullscreenPlaceholder = null;
-  },
-
-  _syncMapFullscreenButton() {
-    const mapPanel = this._getDashboardMapPanel();
     const btn = document.getElementById('map-fullscreen-btn');
-    if (!btn || !mapPanel) return;
-    const isFullscreen = mapPanel.classList.contains('map-fullscreen');
-    btn.title = isFullscreen ? '退出全屏' : '全屏地图';
-    btn.innerHTML = `<i class="fa-solid ${isFullscreen ? 'fa-compress' : 'fa-expand'}"></i>`;
+    if (btn) {
+      btn.title = on ? '退出全屏' : '全屏';
+      btn.innerHTML = `<i class="fa-solid ${on ? 'fa-down-left-and-up-right-to-center' : 'fa-up-right-and-down-left-from-center'}"></i>`;
+    }
+    setTimeout(() => this._fitDashboardMap(this._dashMapFilterLoc || 'all'), 440);
   },
 
   toggleMapFullscreen() {
-    const mapPanel = this._getDashboardMapPanel();
-    if (!mapPanel) return;
-    if (mapPanel.classList.contains('map-fullscreen')) this._restoreMapPanel(mapPanel);
-    else this._enterMapFullscreen(mapPanel);
-    this._syncMapFullscreenButton();
-    this._refreshDashboardMapSize();
+    const panel = document.getElementById('dash-map-panel');
+    this._setMapFullscreen(!panel?.classList.contains('map-fullscreen'));
   },
 
-  exitMapFullscreen() {
-    const mapPanel = this._getDashboardMapPanel();
-    if (!mapPanel) return;
-    this._restoreMapPanel(mapPanel);
-    this._syncMapFullscreenButton();
-    this._refreshDashboardMapSize();
-  },
+  exitMapFullscreen() { this._setMapFullscreen(false); },
 
   addDeviceFromMap() {
     const locId = this._dashMapFilterLoc;
+    this.exitMapFullscreen();
     this.openModal_device_prep();
     this.clearDeviceForm();
     if (locId && locId !== 'all') {
@@ -2614,7 +2715,10 @@ const app = {
       if (liveBadge) liveBadge.style.display = '';
       if (refreshBtn) refreshBtn.style.display = 'none';
       this.updateSensors(id);
-      this.liveInterval = setInterval(() => { this.updateSensors(id); this.renderAlerts(); this.updateSidebarStatus(); }, 3000);
+      this.liveInterval = setInterval(() => {
+        if (document.hidden) return;
+        this.updateSensors(id); this.renderAlerts(); this.updateSidebarStatus();
+      }, 3000);
     }
   },
   stopLive() { if (this.liveInterval) { clearInterval(this.liveInterval); this.liveInterval = null; } },
@@ -3480,6 +3584,8 @@ const app = {
     const el = document.getElementById(t) || document.getElementById('modal-'+t);
     if (!el) return;
     if (el.parentElement !== document.body) document.body.appendChild(el);
+    clearTimeout(el._closeTimer);
+    el.classList.remove('closing');
     el.style.display = '';
     el.classList.add('open');
     if (el.id === 'modal-record-detail') document.body.style.overflow = 'hidden';
@@ -3489,8 +3595,19 @@ const app = {
   closeModal(t) {
     const el = document.getElementById(t) || document.getElementById('modal-'+t);
     if (!el) return;
-    el.classList.remove('open');
-    if (document.getElementById(t)) el.style.display = 'none';
+    // Play a short exit before hiding; state below is reset immediately.
+    const hideDisplay = !!document.getElementById(t);
+    if (el.classList.contains('open') && !UI.reducedMotion()) {
+      el.classList.add('closing');
+      clearTimeout(el._closeTimer);
+      el._closeTimer = setTimeout(() => {
+        el.classList.remove('open', 'closing');
+        if (hideDisplay) el.style.display = 'none';
+      }, 160);
+    } else {
+      el.classList.remove('open');
+      if (hideDisplay) el.style.display = 'none';
+    }
     if ((t === 'confirm' || el.id === 'modal-confirm') && this._confirmResolver) {
       const resolve = this._confirmResolver;
       this._confirmResolver = null;

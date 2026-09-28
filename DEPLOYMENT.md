@@ -10,7 +10,7 @@ node server.js
 
 This backend serves both:
 
-1. Static frontend files such as `index.html`, `app.js`, `style.css`, and `logo.jpg`.
+1. Static frontend files such as `index.html`, `app.js`, `app.css`, `harvest.css`, and `logo.jpg`.
 2. Backend APIs under `/api/v1`.
 
 Do not use Python as the main runtime for the current project. `proxy-server.py` is not the production entry point.
@@ -218,8 +218,12 @@ package.json
 package-lock.json
 index.html
 app.js
-style.css
+app.css
+harvest.css
+harvest.js
+harvest-model.js
 logo.jpg
+assets/
 server-data/
 ARCHITECTURE.md
 DEPLOYMENT.md

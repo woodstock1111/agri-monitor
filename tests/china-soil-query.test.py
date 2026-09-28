@@ -23,8 +23,31 @@ class SoilTests(unittest.TestCase):
         self.assertTrue(r['ok']);self.assertEqual(r['fields']['organicMatter']['value'],20)
         self.assertEqual(r['fields']['availableN']['unit'],'mg/kg')
         self.assertEqual(r['depthCm'],[0,4.5])
-    def test_no_nearest_valid_substitution(self):
-        self.assertEqual(soil.query(self.directory,20,110+1/120)['status'],'no_data')
+    def test_exact_cell_is_not_marked_as_substituted(self):
+        self.assertIsNone(soil.query(self.directory,20,110)['nearest'])
+    def test_empty_cell_uses_nearest_valid_cell_within_radius(self):
+        r=soil.query(self.directory,20,110+1/120)
+        self.assertTrue(r['ok'])
+        self.assertLessEqual(r['nearest']['distanceKm'],soil.MAX_NEAREST_KM)
+        self.assertGreater(r['nearest']['distanceKm'],0)
+        self.assertEqual(r['fields']['availableN']['value'],100)
+    def write_grid(self,size,valid):
+        for key in soil.FIELDS:
+            with Dataset(self.directory/(key+'-surface.nc'),'w') as d:
+                d.createDimension('lat',size);d.createDimension('lon',size)
+                d.createVariable('lat','f4',('lat',))[:]=[20+k/120 for k in range(size)]
+                d.createVariable('lon','f4',('lon',))[:]=[110+k/120 for k in range(size)]
+                v=d.createVariable(key,'f4',('lat','lon'),fill_value=-999)
+                v.units={'PH':'','BD':'g/cm3','SOM':'% of weight'}.get(key,'ppm of weight')
+                grid=np.full((size,size),-999.0)
+                for i,j in valid:grid[i,j]={'PH':6,'BD':1.3,'SOM':2}.get(key,100)
+                v[:]=grid
+    def test_valid_cell_beyond_radius_is_not_used(self):
+        self.write_grid(7,[(6,6)])  # ~4 km diagonal from the corner
+        self.assertEqual(soil.query(self.directory,20,110)['status'],'no_data')
+    def test_no_valid_cells_nearby(self):
+        self.write_grid(3,[])
+        self.assertEqual(soil.query(self.directory,20+1/120,110+1/120)['status'],'no_data')
     def test_outside_grid_and_missing(self):
         self.assertEqual(soil.query(self.directory,49,-123)['status'],'outside_coverage')
         self.assertEqual(soil.query(self.directory,30,120)['status'],'outside_coverage')
