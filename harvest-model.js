@@ -657,7 +657,7 @@
     }
     const soilOnlyRatio=mean(runs.map(s=>{const w=s.storageDryKgHa*ph;return w>0?quefts([p.n,p.p,p.k],[0,0,0],w,c)/w:0;}));
     const shown=plan||best,nutrientRatio=mean(runs.map((s,i)=>s.storageDryKgHa*ph>0?shown.years[i].fresh/toFreshMu(s.storageDryKgHa*ph):0));
-    const a=assess(p,runs,{ph:p.ph,phSource:p.soilOrigin==='china'?'国内0–4.5cm表层背景格网':p.soilOrigin==='manual'?'手填':'输入',nutrientRatio,soilOnlyRatio,fertilizerNeed:need,planName:plan?plan.name:'较优施肥方案',
+    const a=assess(p,runs,{ph:p.ph,phSource:p.soilOrigin==='china'?'国内0–4.5cm表层背景格网':p.soilOrigin==='manual'?'手填':'输入',nutrientRatio,soilOnlyRatio,fertilizerNeed:need,planName:plan?(plan.products.length?'推荐施肥方案':'不另施肥'):'较优施肥方案',
       supply:{n:p.n,p:p.p,k:p.k,unit:'kg/ha 整季供应（估计）'},nutrientSource:p.soilOrigin==='china'?'0–4.5cm表层背景浓度 × 容重 × 20cm耕层（假设）× 假设利用比例':'手填整季供应'});
     const yearly=runs.map((s,i)=>{const y=shown.years[i];return {year:s.year,meanT:s.weather.meanT,meanTmax:s.weather.meanTmax,minTmin:s.weather.minTmin,
       radiation:s.weather.radiation,meanRadiation:s.weather.meanRadiation,rain:s.rain,irrigation:s.irrigation,chillDays:s.temperature.chillDays,frostRiskDays:s.temperature.frostRiskDays,
