@@ -9,15 +9,18 @@ test('climate-only result replaces a previous nutrient result without reading ab
  const window={HarvestModel:M};
  // Expose the real renderer only inside this unit-test sandbox. No browser or live app state.
  vm.runInNewContext(fs.readFileSync(require.resolve('../harvest'),'utf8').replace('window.HarvestUI={init};','window.HarvestUI={init,render};'),{window,document});
- const p={lat:-6,lng:35,area:10,days:150,ph:6,n:60,p:12,k:80,budget:250,price:2,base:1000,fertPrice:3,crop:'sweetpotato',date:'2027-03-15',water:'sufficient',drainage:'good',risk:'cautious',currency:'CNY',soilOrigin:'climate'};
- const daily={temperature_2m_mean:Array(150).fill(26),temperature_2m_min:Array(150).fill(18),precipitation_sum:Array(150).fill(4),et0_fao_evapotranspiration:Array(150).fill(3)};
+ const p={lat:-6,lng:35,area:10,days:150,ph:6,n:60,p:12,k:80,budget:250,price:2,base:1000,fertPrice:3,crop:'sweetpotato',date:'2027-03-15',water:'sufficient',drainage:'unknown',risk:'cautious',currency:'CNY',soilOrigin:'climate'};
+ const daily={temperature_2m_mean:Array(150).fill(26),temperature_2m_min:Array(150).fill(18),temperature_2m_max:Array(150).fill(32),shortwave_radiation_sum:Array(150).fill(18),precipitation_sum:Array(150).fill(4),et0_fao_evapotranspiration:Array(150).fill(3)};
  const base={input:p,display:{unit:'mu'},weather:{kind:'history',source:'test fixture',requested:1,excluded:[]},fieldId:''};
- window.HarvestUI.render({...base,output:M.evaluate(p,daily)});
+ const full=M.evaluate(p,daily),snapshot=JSON.stringify(full);
+ window.HarvestUI.render({...base,output:full});assert.equal(JSON.stringify(full),snapshot,'renderer must not modify the model result');
  assert.match(elements.get('hv-quick-content').innerHTML,/预计收成/);
  window.HarvestUI.render({...base,output:M.evaluateClimate(p,[{year:2020,daily}])});
  const card=elements.get('hv-quick-content').innerHTML,details=elements.get('hv-output').innerHTML;
- assert.match(card,/养分数据待补充/);assert.doesNotMatch(card,/预计收成/);assert.match(card,/100<small> \/ 100/);
- assert.match(details,/18.0°C/);assert.match(details,/不提示冻害/);assert.equal(elements.get('hv-output').hidden,false);
+ assert.match(card,/养分数据待补充/);assert.doesNotMatch(card,/预计收成/);assert.match(card,/气候条件分/);assert.doesNotMatch(card,/种植条件分/);
+ assert.match(card,/按及时灌溉计算/);assert.doesNotMatch(card,/<b>排水<\/b>/);assert.match(card,/未指定 · 通用Beta参数/);
+ assert.match(details,/18\.0℃/);assert.match(details,/未触发冻害风险提示/);assert.match(details,/河流洪水淹没：尚未评估/);assert.match(details,/土壤酸碱度<\/b><span class="hv-chip">未知</);
+ assert.equal(elements.get('hv-output').hidden,false);
 });
 function raceHarness(){
  const elements=new Map(),document={getElementById(id){if(!elements.has(id))elements.set(id,{innerHTML:'',hidden:true,disabled:false,value:'manual',classList:{add(){},remove(){}},addEventListener(){}});return elements.get(id);}};
@@ -25,7 +28,7 @@ function raceHarness(){
  const source=fs.readFileSync(require.resolve('../harvest'),'utf8').replace('window.HarvestUI={init};',`window.HarvestUI={run,invalidate,setInput(p){params=()=>p;},setWeather(w){weather=w;},breakRender(){render=()=>{throw Error('render failure');};},state(){return {result,stale};}};host={classList:{add(){},remove(){}}};`);
  vm.runInNewContext(source,{window,document,AbortController,setTimeout,clearTimeout});
  const input={lat:20,lng:110,area:10,days:150,ph:6,n:60,p:12,k:80,budget:250,price:2,base:1000,fertPrice:3,crop:'sweetpotato',date:'2027-03-15',water:'sufficient',drainage:'good',risk:'cautious',currency:'CNY',soilOrigin:'manual'};
- const daily={temperature_2m_mean:Array(150).fill(26),temperature_2m_min:Array(150).fill(18),precipitation_sum:Array(150).fill(4),et0_fao_evapotranspiration:Array(150).fill(3)};
+ const daily={temperature_2m_mean:Array(150).fill(26),temperature_2m_min:Array(150).fill(18),temperature_2m_max:Array(150).fill(32),shortwave_radiation_sum:Array(150).fill(18),precipitation_sum:Array(150).fill(4),et0_fao_evapotranspiration:Array(150).fill(3)};
  const response={kind:'history',source:'fixture',requested:1,excluded:[],included:[{year:2020,daily}]};
  return {ui:window.HarvestUI,elements,input,response,event:{preventDefault(){}}};
 }

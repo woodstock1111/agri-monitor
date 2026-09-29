@@ -1,5 +1,7 @@
 # AI收成预测 Beta 3：算法、数据与更新
 
+> 2026-09-28：生长、温度、水分、评分与播期比较已由 [Beta 4](harvest-algorithm-v4.md) 取代；本文仅作历史记录。
+
 实现：`harvest-model.js`（纯计算）、`harvest.js`（界面和数据接入）、`scripts/calibrate-harvest.js`（离线校准）。算法版本 `harvest-beta-3.0.0`，参数版本 `tubers-beta-2026-09-23`。
 
 ## 使用顺序

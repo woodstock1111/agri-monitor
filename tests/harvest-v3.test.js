@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 const m=require('../harvest-model');
 const {fit}=require('../scripts/calibrate-harvest');
 const p={lat:20,lng:110,area:10,days:150,ph:6,n:60,p:12,k:80,budget:250,price:2,base:1000,fertPrice:3,crop:'sweetpotato',date:'2026-04-15',water:'rain',drainage:'good',risk:'cautious'};
-const weather=(rain=4,t=26)=>({temperature_2m_mean:Array(150).fill(t),temperature_2m_min:Array(150).fill(t-7),precipitation_sum:Array(150).fill(rain),et0_fao_evapotranspiration:Array(150).fill(3)});
+const weather=(rain=4,t=26)=>({temperature_2m_mean:Array(150).fill(t),temperature_2m_min:Array(150).fill(t-7),temperature_2m_max:Array(150).fill(t+6),shortwave_radiation_sum:Array(150).fill(18),precipitation_sum:Array(150).fill(rain),et0_fao_evapotranspiration:Array(150).fill(3)});
 test('equal seasonal rainfall does not hide a 140-day dry spell',()=>{
  const wet=m.simulateSeason(p,weather()),burst=weather();burst.precipitation_sum=Array.from({length:150},(_,i)=>i<10?60:0);
  const drought=m.simulateSeason(p,burst);assert.equal(wet.rain,drought.rain);assert(drought.wly<wet.wly*.6);assert(drought.longestDry>90);
@@ -13,7 +13,7 @@ test('daily water mass is conserved, including root expansion and capped irrigat
  const d=weather();d.precipitation_sum=d.precipitation_sum.map((_,i)=>i%13===0?120:0);
  const r=m.simulateSeason({...p,texture,water,irrigationLimit:37,irrigationDailyMax:4},d);
  assert(Math.abs(r.massBalanceError)<1e-7);assert(r.irrigation<=37+1e-8);
- r.trace.forEach(day=>{assert(day.storage>=0&&day.storage<=day.capacity);assert(day.irrigation<=4);assert(day.et>=0);});
+ r.trace.forEach(day=>{assert(day.storage>=0&&day.storage<=day.capacity+day.excessCapacity+1e-9&&day.pond>=0);assert(day.irrigation<=4);assert(day.et>=0);});
  }
 });
 test('empty initial storage and no inflow cannot create evapotranspiration or growth',()=>{
@@ -77,11 +77,11 @@ test('planting comparison uses matched years and rewards better growing conditio
 });
 test('sufficient irrigation removes water scarcity while conserving water and respecting rainfall',()=>{
  const dry=m.simulateSeason({...p,water:'sufficient',initialWater:0,irrigationLimit:0,irrigationDailyMax:0},weather(0));
- assert.equal(dry.stressDays,0);assert.equal(dry.moisture,1);assert(dry.irrigation>0);assert(Math.abs(dry.massBalanceError)<1e-7);
+ assert.equal(dry.stressDays,0);assert(dry.irrigation>0);assert(Math.abs(dry.massBalanceError)<1e-7);
  const rainy=m.simulateSeason({...p,water:'sufficient'},weather(30));assert(rainy.irrigation<dry.irrigation);
 });
 test('unlimited water does not erase heavy rainfall and poor drainage penalties',()=>{
  const input={...p,water:'sufficient'},good=m.evaluate(input,weather(40)),poor=m.evaluate({...input,drainage:'poor'},weather(40));
- assert.equal(poor.simulations[0].stressDays,0);assert(poor.simulations[0].wetDays>0);assert(poor.wly<good.wly);assert(poor.climateScore<good.climateScore);
- assert(poor.factors.some(x=>x.name==='降雨与排水'&&x.value<1));assert(Math.abs(poor.simulations[0].massBalanceError)<1e-7);
+ assert.equal(poor.simulations[0].stressDays,0);assert(poor.simulations[0].anoxicDays>0);assert(poor.wly<good.wly);assert(poor.climateScore<good.climateScore);
+ assert(poor.factors.some(x=>x.id==='wetness'&&x.score<100));assert(Math.abs(poor.simulations[0].massBalanceError)<1e-7);
 });

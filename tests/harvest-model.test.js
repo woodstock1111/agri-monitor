@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const m=require('../harvest-model.js');
 const p={lat:20,lng:110,area:10,days:150,ph:6,n:60,p:12,k:80,budget:250,price:2,base:1000,fertPrice:3,crop:'sweetpotato',date:'2026-04-15',water:'rain',drainage:'good',risk:'cautious'};
-const weather=(t=26,min=19,rain=5)=>({temperature_2m_mean:Array(p.days).fill(t),temperature_2m_min:Array(p.days).fill(min),precipitation_sum:Array(p.days).fill(rain),et0_fao_evapotranspiration:Array(p.days).fill(3)});
+const weather=(t=26,min=19,rain=5)=>({temperature_2m_mean:Array(p.days).fill(t),temperature_2m_min:Array(p.days).fill(min),temperature_2m_max:Array(p.days).fill(2*t-min),shortwave_radiation_sum:Array(p.days).fill(18),precipitation_sum:Array(p.days).fill(rain),et0_fao_evapotranspiration:Array(p.days).fill(3)});
 test('QUEFTS finite, nonnegative and bounded for asymmetric nutrients and both crops',()=>{
  for(const crop of Object.values(m.crops)) for(const n of [0,.001,1,50,500]) for(const k of [0,.1,12,500]) for(const w of [0,.001,200,15000]) {
   const y=m.quefts([n,12,k],[0,0,0],w,crop);assert(Number.isFinite(y)&&y>=0&&y<=w);
@@ -31,9 +31,10 @@ test('invalid numeric/date input and incomplete weather rejected',()=>{
 test('zero market value selects zero added fertilizer',()=>{assert.equal(m.evaluate({...p,price:0},weather()).best.rate,0)});
 test('domestic soil concentration converts to surface stock with explicit fractions',()=>{
  const data={ok:true,depthCm:[0,4.5],fields:{availableN:{value:100,unit:'mg/kg'},availableP:{value:10,unit:'mg/kg'},availableK:{value:120,unit:'mg/kg'},bulkDensity:{value:1.3},ph:{value:6.5}}};
- const r=m.soilSupply(data,[.3,.2,.4]);
+ const r=m.soilSupply(data,[.3,.2,.4],{depthCm:null});
  assert(Math.abs(r.n-17.55)<1e-10);assert(Math.abs(r.p-1.17)<1e-10);assert(Math.abs(r.k-28.08)<1e-10);assert.equal(r.ph,6.5);
  assert.throws(()=>m.soilSupply(data,[1.2,.2,.4]));
  assert.throws(()=>m.soilSupply({...data,fields:{...data.fields,availableP:{value:10,unit:'g/kg'}}},[.3,.2,.4]));
- assert.throws(()=>m.soilSupply({...data,depthCm:[4.5,0]},[.3,.2,.4]));
+ assert.throws(()=>m.soilSupply({...data,depthCm:[4.5,0]},[.3,.2,.4],{depthCm:null}));
+ const plough=m.soilSupply(data,[.3,.2,.4]);assert.equal(plough.assumedDepthCm,20);assert(Math.abs(plough.n-r.n*20/4.5)<1e-9);assert(Math.abs(plough.k-r.k*20/4.5)<1e-9);
 });
