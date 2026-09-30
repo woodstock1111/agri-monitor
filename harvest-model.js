@@ -276,13 +276,20 @@
   }
   const interp=(table,x)=>{
     if(x<=table[0][0])return table[0].slice(1);
-    for(let i=1;i<table.length;i++)if(x<=table[i][0]){const [x0,...a]=table[i-1],[x1,...b]=table[i],t=(x-x0)/(x1-x0);return a.map((v,j)=>v+t*(b[j]-v));}
+    for(let i=1;i<table.length;i++)if(x<=table[i][0]){const a=table[i-1],b=table[i],t=(x-a[0])/(b[0]-a[0]),out=new Array(a.length-1);for(let j=1;j<a.length;j++)out[j-1]=a[j]+t*(b[j]-a[j]);return out;}
     return table[table.length-1].slice(1);
   };
   // Continuous trapezoid response: 0 below Tmin, rises to 1 at Topt1, 1 until Topt2, falls to 0 at Tmax.
-  function temperatureResponse(t,[t0,t1,t2,t3]) {return t<=t0||t>=t3?0:t<t1?(t-t0)/(t1-t0):t<=t2?1:(t3-t)/(t3-t2);}
+  function temperatureResponse(t,r) {const t0=r[0],t1=r[1],t2=r[2],t3=r[3];return t<=t0||t>=t3?0:t<t1?(t-t0)/(t1-t0):t<=t2?1:(t3-t)/(t3-t2);}
   const DIURNAL=Array.from({length:24},(_,h)=>Math.cos(2*Math.PI*(h+.5-15)/24));
-  const hourly=(tmin,tmax)=>DIURNAL.map(c=>(tmin+tmax)/2+(tmax-tmin)/2*c);
+  // Clear-sky radiation per season day, cached per date list and latitude: control runs reuse the same weather arrays.
+  const RSO_CACHE=new WeakMap();
+  function clearSkySeries(dates,lat) {
+    let byLat=RSO_CACHE.get(dates);if(!byLat){byLat=new Map();RSO_CACHE.set(dates,byLat);}
+    let series=byLat.get(lat);
+    if(!series){series=dates.map(d=>PARAMETERS.shared.clearSky.value*extraterrestrialRadiation(lat,dayOfYear(d)));byLat.set(lat,series);}
+    return series;
+  }
   function stageAt(progress,c) {
     let s=c.stages.findIndex(end=>progress<end);if(s<0)s=3;
     const begin=s?c.stages[s-1]:0,t=clamp((progress-begin)/(c.stages[s]-begin));
@@ -293,7 +300,9 @@
   /* One season, daily step.
    * Units: radiation MJ m-2 d-1; PAR = 0.5·SW; biomass g DM m-2 (×10 = kg/ha); water mm; LAI m² m-2.
    * options.disable.{temperature,wetness,water}: control runs with that mechanism switched off.
-   * options.clearSky: replace radiation with FAO-56 clear-sky Rso (light reference control). */
+   * options.clearSky: replace radiation with FAO-56 clear-sky Rso (light reference control).
+   * options.trace===false: skip the per-day trace (control runs only read season totals).
+   * Hot loop: hourly sums are plain loops over a reused buffer, summed in the same order as mean(), so results are unchanged. */
   function simulateSeason(input,daily,options={}) {
     const p=normalize(input);climate(daily,p.days);
     const c=crops[p.crop],soil=textures[p.texture],off=options.disable||{};
@@ -309,14 +318,21 @@
     let rainTotal=0,runoffTotal=0,drainageTotal=0,irrigationTotal=0,etTotal=0,rootWater=0,stressDays=0,drySpell=0,longestDry=0;
     let alive=true,deathDay=null,coldMeanRun=0,anoxicDays=0,wetSpell=0,longestWet=0,pondDays=0,maxPond=0,chillDays=0,chillDose=0,frostDays=0,heatDays=0,heatHours=0,frostCanopyLoss=0;
     let parSum=0,fTweighted=0,radSum=0,rsoSum=0,growthLimitedByColdDays=0;
+    const keepTrace=options.trace!==false,hours=new Float64Array(24),rsoSeries=radiationAvailable?clearSkySeries(dates,p.lat):null;
+    const tBaseDev=c.tBaseDev,devSpan=c.tGrowth[2]-c.tBaseDev,tChill=c.tChill,tHeat=c.tHeat;
     for(let i=0;i<p.days;i++) {
       const tmean=daily.temperature_2m_mean[i],tmin=daily.temperature_2m_min[i],rain=daily.precipitation_sum[i],et0=daily.et0_fao_evapotranspiration[i];
       const tmax=tmaxEstimated?Math.max(tmean,2*tmean-tmin):daily.temperature_2m_max[i];
-      const hours=hourly(tmin,tmax),daytime=hours.slice(6,18);
+      let dttSum=0,doseSum=0,hot=0,daySum=0,fTSum=0;
+      for(let h=0;h<24;h++){
+        const v=(tmin+tmax)/2+(tmax-tmin)/2*DIURNAL[h];hours[h]=v;
+        dttSum+=clamp(v-tBaseDev,0,devSpan);doseSum+=Math.max(0,tChill-v);if(v>=tHeat)hot++;
+      }
+      for(let h=6;h<18;h++){daySum+=hours[h];if(!off.temperature)fTSum+=temperatureResponse(hours[h],c.tGrowth);}
       const progress=tsum/c.thermalTarget,stage=stageAt(progress,c);
       // Development: 24-hour mean of degree-hours between base and upper optimum.
       // Temperature control run: development at least as fast as at the middle of the optimum range (not stretched to the plan length).
-      const dttActual=mean(hours.map(h=>clamp(h-c.tBaseDev,0,c.tGrowth[2]-c.tBaseDev)));
+      const dttActual=dttSum/24;
       const dtt=off.temperature?Math.max(dttActual,(c.tGrowth[1]+c.tGrowth[2])/2-c.tBaseDev):dttActual;
       // --- water balance (mm) ---
       const rootDepth=initialDepth+(p.rootDepth-initialDepth)*clamp(progress/.6);
@@ -347,19 +363,19 @@
       if(anoxic){anoxicDays++;wetSpell++;longestWet=Math.max(longestWet,wetSpell);}else wetSpell=0;
       if(pond>0)pondDays++;maxPond=Math.max(maxPond,pond);
       // --- temperature mechanisms (kept separate) ---
-      const fT=off.temperature?1:mean(daytime.map(h=>temperatureResponse(h,c.tGrowth)));
-      const dose=mean(hours.map(h=>Math.max(0,c.tChill-h)));
+      const fT=off.temperature?1:fTSum/12;
+      const dose=doseSum/24;
       if(tmin<c.tChill){chillDays++;chillDose+=dose;}
       if(tmin<=c.frostTmin)frostDays++;
       coldMeanRun=tmean<=c.plantDeath.coldMean?coldMeanRun+1:0;
       if(alive&&!off.temperature&&(tmin<=c.plantDeath.hardFreeze||coldMeanRun>=c.plantDeath.coldDays)){alive=false;deathDay=i+1;}
-      const hot=hours.filter(h=>h>=c.tHeat).length;heatHours+=hot;if(tmax>=c.tHeat)heatDays++;
-      if(mean(daytime)<c.tGrowth[1])growthLimitedByColdDays++;
+      heatHours+=hot;if(tmax>=c.tHeat)heatDays++;
+      if(daySum/12<c.tGrowth[1])growthLimitedByColdDays++;
       // --- growth ---
       let par=null,growth=0;
       if(radiationAvailable&&!alive) {const dlv=wlv;wlv=0;wlvDead+=dlv;lai=0;}
       else if(radiationAvailable) {
-        const rso=PARAMETERS.shared.clearSky.value*extraterrestrialRadiation(p.lat,dayOfYear(dates[i]));
+        const rso=rsoSeries[i];
         const rad=options.clearSky?rso:sw[i];radSum+=rad;rsoSum+=rso;
         par=shared.parFraction.value*rad;
         const fi=1-Math.exp(-c.k*lai);
@@ -385,7 +401,7 @@
       if(ks<.5){stressDays++;drySpell++;longestDry=Math.max(longestDry,drySpell);}else drySpell=0;
       rainTotal+=rain;runoffTotal+=runoff;drainageTotal+=drainage;irrigationTotal+=irrigation;etTotal+=et;
       const stat=stageStats[stage.index];stat.days++;stat.stressDays+=ks<.5?1:0;stat.anoxicDays+=anoxic?1:0;stat.rain+=rain;stat.irrigation+=irrigation;stat.et+=et;stat.growth+=growth;
-      trace.push({day:i+1,date:dates[i],stage:stage.name,progress,rootDepth,capacity:taw,excessCapacity,storage,pond,rain,runoff,drainage,irrigation,et,ks,kw,anoxic,fT,par,lai,growth,storageRoot:wso,tmean,tmin,alive,newRootWater,available:Math.min(storage,taw),availableFraction:taw>0?Math.min(storage,taw)/taw:0,excess:Math.max(0,storage-taw)});
+      if(keepTrace)trace.push({day:i+1,date:dates[i],stage:stage.name,progress,rootDepth,capacity:taw,excessCapacity,storage,pond,rain,runoff,drainage,irrigation,et,ks,kw,anoxic,fT,par,lai,growth,storageRoot:wso,tmean,tmin,alive,newRootWater,available:Math.min(storage,taw),availableFraction:taw>0?Math.min(storage,taw)/taw:0,excess:Math.max(0,storage-taw)});
     }
     const finalProgress=tsum/c.thermalTarget,biomass=radiationAvailable?wlv+wlvDead+wst+wso+wrt:null;
     const t=daily.temperature_2m_mean,tn=daily.temperature_2m_min,tx=daily.temperature_2m_max;
@@ -415,12 +431,12 @@
   }
   // Main run plus single-mechanism control runs for one historical season (kg DM/ha of storage roots).
   function runSeason(p,season) {
-    const sim=simulateSeason(p,season.daily),y=o=>simulateSeason(p,season.daily,o).storageDryKgHa;
+    const sim=simulateSeason(p,season.daily),y=o=>simulateSeason(p,season.daily,{...o,trace:false}).storageDryKgHa;
     const controls=sim.radiationAvailable?{
       temperature:y({disable:{temperature:true}}),wetness:y({disable:{wetness:true}}),light:y({clearSky:true}),
       water:p.water==='sufficient'?null:y({disable:{water:true}}),
       climate:y({disable:{temperature:true,wetness:true,water:true}})}:null;
-    const scenarios=p.drainage==='unknown'?Object.fromEntries(['good','moderate','poor'].map(d=>{const s=d==='moderate'?sim:simulateSeason(p,season.daily,{drainage:d});return [d,{storageDryKgHa:s.storageDryKgHa,anoxicDays:s.anoxicDays,longestWet:s.longestWet,pondDays:s.pondDays}];})):null;
+    const scenarios=p.drainage==='unknown'?Object.fromEntries(['good','moderate','poor'].map(d=>{const s=d==='moderate'?sim:simulateSeason(p,season.daily,{drainage:d,trace:false});return [d,{storageDryKgHa:s.storageDryKgHa,anoxicDays:s.anoxicDays,longestWet:s.longestWet,pondDays:s.pondDays}];})):null;
     return {year:season.year,...sim,controls,drainageScenarios:scenarios};
   }
   const statusOf=(score,bands=[85,60])=>score===null?'unknown':score>=bands[0]?'favorable':score>=bands[1]?'moderate':'unfavorable';
@@ -707,12 +723,17 @@
     const common=windows[0].seasons.map(s=>s.year).filter(y=>windows.every(w=>w.seasons.some(s=>s.year===y)));
     if(common.length<3)throw Error('播期比较至少需要3个共同完整历史年景');
     requireRadiation(windows.flatMap(w=>w.seasons));
+    // Screening runs only what ranking needs: the main run (yield, per-season feasibility) and the wetness control, whose score
+    // feeds the feasibility rule. Temperature/light/climate controls and drainage scenarios only explain the final report,
+    // so they run once for the chosen window (evaluateEnsemble / evaluateClimate), not for all 12 candidates.
     const rows=windows.map(w=>{
       const p=normalize({...input,date:w.date}),c=crops[p.crop],seasons=common.map(y=>w.seasons.find(s=>s.year===y));
-      const output=evaluateClimate(p,seasons,options),byYear=output.simulations.map(s=>s.storageDryKgHa/c.dm/15),f=output.feasibility;
-      return {date:w.date,objective:mean(byYear),p10:quantile(byYear,.1),byYear,climateScore:output.climateScore,
+      const runs=seasons.map(s=>{const sim=simulateSeason(p,s.daily);return {year:s.year,...sim,wetnessControl:sim.radiationAvailable?simulateSeason(p,s.daily,{disable:{wetness:true},trace:false}).storageDryKgHa:null};});
+      const wScore=ratioScore(runs.map(r=>r.storageDryKgHa),runs.map(r=>r.wetnessControl));
+      const byYear=runs.map(s=>s.storageDryKgHa/c.dm/15),f=feasibilityOf(p,runs,options,[{id:'wetness',score:wScore}]);
+      return {date:w.date,objective:mean(byYear),p10:quantile(byYear,.1),byYear,
         feasibility:{status:f.status,label:f.label,reasons:f.reasons,passYears:f.passYears,failYears:f.failYears},
-        stressDays:output.diagnostics.stressDays,anoxicDays:output.diagnostics.anoxicDays,maturity:output.diagnostics.maturity,years:common};
+        stressDays:mean(runs.map(s=>s.stressDays)),anoxicDays:mean(runs.map(s=>s.anoxicDays)),maturity:mean(runs.map(s=>s.progress)),years:common};
     });
     const supported=rows.filter(r=>r.feasibility.status==='supported'),pool=supported.length?supported:rows;
     const top=idx=>pool.reduce((b,r)=>{const v=mean(idx.map(i=>r.byYear[i]));return v>b.v+1e-9?{v,date:r.date}:b;},{v:-Infinity,date:null}).date;
@@ -746,4 +767,4 @@
     simulateSeason,runSeason,assess,feasibilityOf,seasonFeasibility,FEASIBILITY_LABEL,soilSupply,quantile,historicalSeasons,seasonDates,extractSeasons,validateCalibration,extraterrestrialRadiation,temperatureResponse,phFactor};
   if(typeof module!=='undefined'&&module.exports) module.exports=api;
   else root.HarvestModel=api;
-})(typeof window!=='undefined'?window:globalThis);
+})(typeof window!=='undefined'?window:typeof globalThis!=='undefined'?globalThis:this);

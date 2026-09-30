@@ -72,7 +72,7 @@ test('calibration rejects plot/year leakage, mixed versions, synthetic weather a
 test('planting comparison uses matched years and rewards better growing conditions without changing management',()=>{
  const windows=[{date:'2026-10-15',seasons:[2020,2021,2022,2023].map(year=>({year,daily:weather(0,14)}))},{date:'2027-05-15',seasons:[2021,2022,2023,2024].map(year=>({year,daily:weather(4,26)}))}];
  const before=JSON.stringify(p),rank=m.rankPlantingWindows(p,windows);
- assert.equal(rank[0].date,'2027-05-15');assert.deepEqual(rank[0].years,[2021,2022,2023]);assert(rank[0].climateScore>rank[1].climateScore);assert.equal(JSON.stringify(p),before);
+ assert.equal(rank[0].date,'2027-05-15');assert.deepEqual(rank[0].years,[2021,2022,2023]);assert(rank[0].objective>rank[1].objective);assert(!('climateScore' in rank[0]),'ranking screens without the explanation-only controls');assert.equal(JSON.stringify(p),before);
  assert.throws(()=>m.rankPlantingWindows(p,[{...windows[0],seasons:windows[0].seasons.slice(0,2)}]),/3个/);
 });
 test('sufficient irrigation removes water scarcity while conserving water and respecting rainfall',()=>{
