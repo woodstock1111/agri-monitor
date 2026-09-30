@@ -18,6 +18,7 @@ after(()=>{upstream.close();gateway.close();});
 
 function call(method,path,{headers={},body}={}){
   return new Promise((resolve,reject)=>{
+    if(body)headers={...headers,'content-length':Buffer.byteLength(body)};
     const req=http.request({host:'127.0.0.1',port:gateway.address().port,method,path,headers},res=>{let d='';res.on('data',c=>d+=c);res.on('end',()=>resolve({status:res.statusCode,headers:res.headers,body:d?JSON.parse(d):null}));});
     req.on('error',reject);if(body)req.write(body);req.end();
   });
@@ -44,6 +45,12 @@ test('bodies, statuses and Retry-After pass through',async()=>{
   seen=[];
   const r=await call('POST','/api/v1/auth/wechat/bind',{headers:{'content-type':'application/json'},body:JSON.stringify({account:'zhang'})});
   assert.equal(r.status,401);assert.equal(r.headers['retry-after'],'7');assert.equal(seen[0].body,'{"account":"zhang"}');
+});
+
+test('a DELETE with a JSON body (callContainer sends "{}") arrives framed and intact',async()=>{
+  seen=[];
+  const r=await call('DELETE','/api/v1/farm-tasks/task_1',{headers:{'content-type':'application/json'},body:'{}'});
+  assert.equal(r.status,200);assert.equal(seen[0].method,'DELETE');assert.equal(seen[0].body,'{}');assert.equal(seen[0].headers['content-length'],'2');
 });
 
 test('anything outside the allow-list never reaches the main server',async()=>{

@@ -58,10 +58,32 @@ function handler(req, res) {
     const openid = req.headers['x-wx-openid'];
     if (openid && req.headers['x-wx-source']) headers['x-agri-wx-openid'] = String(openid);
 
+    // Read the whole body first and send it with Content-Length: Node does not chunk-encode DELETE bodies, so a streamed
+    // DELETE body (callContainer sends "{}") would reach the main server unframed and be rejected as a bad request.
+    const chunks = [];
+    let size = 0;
+    req.on('data', chunk => {
+        size += chunk.length;
+        if (size > MAX_BODY) {
+            if (!res.headersSent) send(res, 413, { ok: false, msg: '内容太大。' });
+            req.destroy();
+            return;
+        }
+        chunks.push(chunk);
+    });
+    req.on('end', () => {
+        if (size > MAX_BODY) return;
+        const body = Buffer.concat(chunks);
+        if (body.length) headers['content-length'] = body.length;
+        forward(req.method, url.pathname + url.search, headers, body, res);
+    });
+}
+
+function forward(method, path, headers, body, res) {
     const client = UPSTREAM.protocol === 'https:' ? https : http;
     const upstream = client.request({
         protocol: UPSTREAM.protocol, hostname: UPSTREAM.hostname, port: UPSTREAM.port || undefined,
-        method: req.method, path: url.pathname + url.search, headers, timeout: TIMEOUT_MS,
+        method, path, headers, timeout: TIMEOUT_MS,
     }, up => {
         res.writeHead(up.statusCode || 502, {
             'content-type': up.headers['content-type'] || 'application/json',
@@ -71,19 +93,7 @@ function handler(req, res) {
     });
     upstream.on('timeout', () => upstream.destroy(new Error('timeout')));
     upstream.on('error', () => { if (!res.headersSent) send(res, 502, { ok: false, msg: '服务器暂时连不上，请稍后重试。' }); else res.destroy(); });
-
-    let size = 0;
-    req.on('data', chunk => {
-        size += chunk.length;
-        if (size > MAX_BODY) {
-            upstream.destroy();
-            if (!res.headersSent) send(res, 413, { ok: false, msg: '内容太大。' });
-            req.destroy();
-            return;
-        }
-        upstream.write(chunk);
-    });
-    req.on('end', () => upstream.end());
+    upstream.end(body.length ? body : undefined);
 }
 
 if (require.main === module) {

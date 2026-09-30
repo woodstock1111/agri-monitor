@@ -17,7 +17,7 @@ function load(user){
     getStorageSync:k=>storage.get(k)??'',setStorageSync:(k,v)=>storage.set(k,v),removeStorageSync:k=>storage.delete(k),
     login:({success})=>success({code:'c'}),
     request:o=>{calls.push(o.url);const path=o.url.replace(/^.*\/api\/v1/,'');
-      setTimeout(()=>o.success(path==='/app-state'?{statusCode:200,data:serverState}:path.startsWith('/farm-tasks?')?{statusCode:200,data:{ok:true,tasks}}:{statusCode:404,data:{ok:false,msg:'nope'}}),1);},
+      setTimeout(()=>o.success(path==='/agent/chat'?{statusCode:200,data:{ok:true,reply:'你好'}}:path==='/app-state'?{statusCode:200,data:serverState}:path.startsWith('/farm-tasks?')?{statusCode:200,data:{ok:true,tasks}}:{statusCode:404,data:{ok:false,msg:'nope'}}),1);},
   };
   delete require.cache[API];delete require.cache[AUTH];
   require('../miniprogram/utils/config.js').cloud.env=''; // these tests exercise the direct wx.request path
@@ -46,4 +46,10 @@ test('a bound account sees its own plots, sensors and pending tasks',async()=>{
   assert.deepEqual(d.devices.map(x=>[x.id,x.factors.length]),[['dev1',2]]);
   assert.equal((await api.getPlotDetail('missing')).ok,false);
   await assert.rejects(api.getPlotDetail.call(null,'x').then(()=>api.getDeviceHistory('dev1')),/nope/);
+});
+
+test('小薯 chat goes through the same signed-in channel as everything else, for guests too',async()=>{
+  const {api,calls}=load(null);
+  assert.equal((await api.agentChat({text:'hi',history:[]})).reply,'你好');
+  assert.deepEqual(calls,['http://47.116.46.214/api/v1/agent/chat']);
 });

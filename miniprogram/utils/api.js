@@ -534,25 +534,11 @@ function getDeviceHistory(deviceId, options = {}) {
   return request(`/device-history?deviceId=${encodeURIComponent(deviceId)}&limit=${limit}&order=${order}`)
 }
 
-// “小薯”助手：直连真实服务器的 /agent/chat（不走 mock）
-function agentChat(payload) {
-  return new Promise((resolve, reject) => {
-    wx.request({
-      url: `${config.agentBaseUrl}${config.apiPrefix}/agent/chat`,
-      method: 'POST',
-      data: payload,
-      header: { 'Content-Type': 'application/json' },
-      timeout: 60000,
-      success(res) {
-        if (res.statusCode >= 200 && res.statusCode < 300 && res.data && res.data.ok) {
-          resolve(res.data)
-        } else {
-          reject(new Error((res.data && res.data.msg) || '请求失败'))
-        }
-      },
-      fail: (err) => reject(new Error(err.errMsg || '网络错误'))
-    })
-  })
+// “小薯”助手：游客和绑定账号都用真实服务器的 /agent/chat（不走 mock），和其他请求一样经云托管
+async function agentChat(payload) {
+  const res = await auth.request({ path: '/agent/chat', method: 'POST', data: payload, header: { 'Content-Type': 'application/json' }, timeout: 60000 })
+  if (res.statusCode >= 200 && res.statusCode < 300 && res.data && res.data.ok) return res.data
+  throw new Error((res.data && res.data.msg) || '请求失败')
 }
 
 function getPlots() {
