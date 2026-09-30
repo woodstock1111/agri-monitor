@@ -16,6 +16,7 @@ const sessions = createSessionService({ store: createPgSessionStore(db) });
 const { createWechatMini, WechatError } = require('./lib/wechat-mini');
 const wechatMini = createWechatMini();
 const { requestJson } = require('./lib/http');
+const aiModels = require('./lib/ai-models');
 const { parseBeijing } = require('./lib/time');
 const sensorStore = require('./lib/sensor-store');
 const photoStore = require('./lib/photo-store');
@@ -35,9 +36,8 @@ const DEFAULT_TARGET_BASE = 'http://www.0531yun.com';
 const DEFAULT_TENANT_ID = 'tenant_default';
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123456';
 const LIVE_FETCH_MIN_INTERVAL_MS = 30 * 1000;
-// Mini program 小薯 (photo pest ID + Q&A). Its own setting, separate from the web photo analysis visionModel.
-// qwen3.7-plus named the pest consistently in a 2026-09 comparison; thinking is off (on: ~16 s per photo, off: ~3 s).
-const MINI_AGENT_MODEL = process.env.MINI_AGENT_MODEL || 'qwen3.7-plus';
+// Mini program 小薯 (photo pest ID + Q&A); model choice and thinking-off rationale in lib/ai-models.js.
+const MINI_AGENT_MODEL = process.env.MINI_AGENT_MODEL || aiModels.VISION_MODEL;
 // Beijing-time hours whose hourly row is flagged as the daily snapshot.
 const SNAPSHOT_HOURS = String(process.env.SNAPSHOT_HOURS || '8,14').split(',').map(Number).filter(Number.isInteger);
 // Hourly rows per device included in the app-state snapshot (7 days); charts load more via /device-history.
@@ -636,8 +636,8 @@ const photoConfigStore = createJsonStore(PHOTO_RECORDS_FILE, () => ({ config: {}
     data.config = {
         amapKey: '',
         visionApiKey: '',
-        visionModel: 'qwen3-vl-flash',
-        textModel: 'qwen-turbo',
+        visionModel: aiModels.VISION_MODEL,
+        textModel: aiModels.TEXT_MODEL,
         ...(data.config || {}),
     };
     return data;
@@ -948,7 +948,7 @@ async function runPhotoAnnotation(recordId, user, requestBody = {}) {
     const record = await photoStore.getRecord(recordId, dbTenantId(user));
     if (!record) throw httpError(404, 'record not found');
     const visionApiKey = String(config.visionApiKey || '').trim();
-    const textModel = String(config.textModel || 'qwen-turbo').trim();
+    const textModel = aiModels.textModel(config);
     if (!visionApiKey) throw httpError(503, 'vision_api_not_configured');
 
     const crop = (record.cropId && await photoStore.getCrop(record.cropId, null)) || {};
@@ -1045,6 +1045,7 @@ async function runPhotoAnnotation(recordId, user, requestBody = {}) {
 }`;
     const body = JSON.stringify({
         model: textModel,
+        enable_thinking: false,
         messages: [
             { role: 'system', content: '你是农业数据标注专家，负责将农户的田间观察备注转换为结构化标注数据。只输出 JSON，不要任何其他文字。' },
             { role: 'user', content: userPrompt },
@@ -1798,7 +1799,7 @@ const server = http.createServer(async (req, res) => {
 
             const config = readPhotoConfig();
             const visionApiKey = String(config.visionApiKey || '').trim();
-            const textModel = String(config.textModel || 'qwen3-fast').trim() || 'qwen3-fast';
+            const textModel = aiModels.textModel(config);
             if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
 
             const userPrompt = type === 'disease'
@@ -1808,6 +1809,7 @@ const server = http.createServer(async (req, res) => {
                     : `害虫名称：${name}。请输出以下 JSON：{ "key": "英文标识（kebab-case 格式，如 striped-flea-beetle）", "symptoms": "为害症状（1-2句中文描述）", "control": "药剂防治建议（1-2句中文描述）" }`);
             const requestBody = JSON.stringify({
                 model: textModel,
+                enable_thinking: false,
                 messages: [
                     { role: 'system', content: '你是农业植保专家，根据用户提供的中文名称，输出该害虫、病害或杂草的结构化信息。只输出 JSON，不要任何其他文字。' },
                     { role: 'user', content: userPrompt },
@@ -2146,7 +2148,7 @@ const server = http.createServer(async (req, res) => {
             if (!photo) return sendJson(404, { ok: false, msg: 'record not found' });
             const config = readPhotoConfig();
             const visionApiKey = String(config.visionApiKey || '').trim();
-            const visionModel = String(config.visionModel || 'qwen3-vl-flash').trim() || 'qwen3-vl-flash';
+            const visionModel = aiModels.visionModel(config);
             if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
             console.log(`[Detect Regions] record=${id} model=${visionModel}`);
 
@@ -2161,7 +2163,7 @@ const server = http.createServer(async (req, res) => {
             const detectPrompt = `你是农业图像检测专家。请检测照片中所有可见异常区域，并只输出 JSON，不要任何解释文字。
 
 任务要求：
-- 输出每个异常区域的 bbox 矩形框坐标 [x, y, width, height]，坐标基于原始图片像素尺寸。
+- 输出每个异常区域的 bbox：[x1, y1, x2, y2]，即左上角和右下角，坐标为相对图片宽高的 0–1000 归一化值（左上角是 0,0，右下角是 1000,1000）。
 - label 只能从以下标签中选择：${allowedLabels.join(', ')}
 - 可选 category 包括 pest、disease、weed、plant_abnormal、soil、other；检测到杂草时 label 使用 weed，category 使用 weed。不要输出具体杂草种类作为 label，具体种类由用户在标签编辑里选择。
 - bbox 必须是目标的最小外接矩形，紧贴可见边缘，四周留白尽量小于目标宽高的 5%。
@@ -2182,11 +2184,12 @@ const server = http.createServer(async (req, res) => {
 
 输出格式：
 { "detections": [
-  { "label": "insect_visible", "bbox": [x, y, w, h], "confidence": 0.86, "note": "简短描述", "pestGuess": { "name": "斜纹夜蛾", "reasoning": "判断依据" } },
-  { "label": "leaf_holes", "bbox": [x, y, w, h], "confidence": 0.72, "note": "简短描述" }
+  { "label": "insect_visible", "bbox": [x1, y1, x2, y2], "confidence": 0.86, "note": "简短描述", "pestGuess": { "name": "斜纹夜蛾", "reasoning": "判断依据" } },
+  { "label": "leaf_holes", "bbox": [x1, y1, x2, y2], "confidence": 0.72, "note": "简短描述" }
 ] }`;
             const body = JSON.stringify({
                 model: visionModel,
+                enable_thinking: false,
                 messages: [
                     {
                         role: 'user',
@@ -2213,6 +2216,14 @@ const server = http.createServer(async (req, res) => {
                     parsed = JSON.parse(cleanedContent);
                 } catch {
                     parsed = content;
+                }
+                if (Array.isArray(parsed?.detections)) {
+                    const meta = await sharp(imgPath).metadata();
+                    const turned = meta.orientation >= 5; // EXIF 5–8: displayed rotated by 90°
+                    const [w, h] = turned ? [meta.height, meta.width] : [meta.width, meta.height];
+                    parsed.detections = parsed.detections
+                        .map(det => ({ ...det, bbox: aiModels.detectionBoxToPixels(det?.bbox, w, h) }))
+                        .filter(det => det.bbox);
                 }
                 const record = await photoStore.replaceAiDetections(id, dbTenantId(auth.user), parsed, visionModel);
                 if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
@@ -2351,8 +2362,8 @@ const server = http.createServer(async (req, res) => {
                 return sendJson(200, { ok: true, config: {
                     amapKey: (config.amapKey || config.qweatherKey) ? '***' : '',
                     visionApiKey: config.visionApiKey ? '***' : '',
-                    visionModel: config.visionModel || 'qwen3-vl-flash',
-                    textModel: config.textModel || 'qwen-turbo'
+                    visionModel: aiModels.visionModel(config),
+                    textModel: aiModels.textModel(config)
                 }});
             }
             if (req.method === 'PUT') {
@@ -2399,7 +2410,7 @@ const server = http.createServer(async (req, res) => {
             const config = readPhotoConfig();
             const visionApiKey = String(config.visionApiKey || '').trim();
             if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
-            const textModel = String(config.textModel || 'qwen3-fast').trim() || 'qwen3-fast';
+            const textModel = aiModels.textModel(config);
 
             const incomingSessionId = String(body.sessionId || '').trim();
             const candidateSession = incomingSessionId ? AGENT_SESSIONS.get(incomingSessionId) : null;
@@ -2476,6 +2487,7 @@ const server = http.createServer(async (req, res) => {
                         },
                     }, JSON.stringify({
                         model: textModel,
+                        enable_thinking: false,
                         messages: session.messages,
                         tools: AGENT_TOOL_DEFS,
                         tool_choice: 'auto',

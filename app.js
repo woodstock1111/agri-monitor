@@ -4449,7 +4449,7 @@ const app = {
   async _loadPhotoConfigLabel() {
     try {
       const data = await this._photoRequest('/config');
-      this._updatePhotoModelLabel(data.config?.textModel || 'qwen-turbo');
+      this._updatePhotoModelLabel(data.config?.textModel || 'qwen3.7-plus');
     } catch (e) {
       this._updatePhotoModelLabel('');
     }
@@ -6198,9 +6198,9 @@ const app = {
       const data = await this._photoRequest('/config');
       if (data.ok) {
         document.getElementById('cfg-amap-key').placeholder = data.config.amapKey ? '\u5df2\u914d\u7f6e\uff08\u8f93\u5165\u65b0\u503c\u53ef\u66f4\u65b0\uff09' : '\u672a\u914d\u7f6e';
-        document.getElementById('cfg-vision-model').value = data.config.visionModel || 'qwen3-vl-flash';
-        document.getElementById('cfg-text-model').value = data.config.textModel || 'qwen-turbo';
-        this._updatePhotoModelLabel(data.config.textModel || 'qwen-turbo');
+        document.getElementById('cfg-vision-model').value = data.config.visionModel || 'qwen3.7-plus';
+        document.getElementById('cfg-text-model').value = data.config.textModel || 'qwen3.7-plus';
+        this._updatePhotoModelLabel(data.config.textModel || 'qwen3.7-plus');
       }
     } catch(e) {}
     this.openModal('modal-photo-config');
@@ -6211,7 +6211,7 @@ const app = {
       amapKey: document.getElementById('cfg-amap-key').value.trim(),
       visionApiKey: document.getElementById('cfg-vision-key').value.trim(),
       visionModel: document.getElementById('cfg-vision-model').value,
-      textModel: document.getElementById('cfg-text-model').value.trim() || 'qwen-turbo',
+      textModel: document.getElementById('cfg-text-model').value.trim() || 'qwen3.7-plus',
     };
     try {
       await this._photoRequest('/config', {
