@@ -59,6 +59,9 @@ WECHAT_MINI_APPID=wxf8a730c56844e54c
 WECHAT_MINI_SECRET=<AppSecret from 小程序后台 → 开发管理 → 开发设置>
 ```
 
+The mini program's 小薯 assistant uses `qwen3.7-plus` through the same DashScope key as photo analysis. To switch
+models without a code change, set `MINI_AGENT_MODEL` in `.env` (for example when DashScope announces a retirement).
+
 Accounts and sessions live in PostgreSQL. On the first start after upgrading, accounts in `server-data/app-state.json`
 are imported once into the `users` table (only while it is empty); the file is kept as a backup and is no longer read
 for sign-in.

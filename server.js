@@ -35,6 +35,9 @@ const DEFAULT_TARGET_BASE = 'http://www.0531yun.com';
 const DEFAULT_TENANT_ID = 'tenant_default';
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123456';
 const LIVE_FETCH_MIN_INTERVAL_MS = 30 * 1000;
+// Mini program 小薯 (photo pest ID + Q&A). Its own setting, separate from the web photo analysis visionModel.
+// qwen3.7-plus named the pest consistently in a 2026-09 comparison; thinking is off (on: ~16 s per photo, off: ~3 s).
+const MINI_AGENT_MODEL = process.env.MINI_AGENT_MODEL || 'qwen3.7-plus';
 // Beijing-time hours whose hourly row is flagged as the daily snapshot.
 const SNAPSHOT_HOURS = String(process.env.SNAPSHOT_HOURS || '8,14').split(',').map(Number).filter(Number.isInteger);
 // Hourly rows per device included in the app-state snapshot (7 days); charts load more via /device-history.
@@ -2257,7 +2260,7 @@ const server = http.createServer(async (req, res) => {
             }
             const config = readPhotoConfig();
             const visionApiKey = String(config.visionApiKey || '').trim();
-            const model = String(config.visionModel || 'qwen-vl-plus').trim() || 'qwen-vl-plus';
+            const model = MINI_AGENT_MODEL;
             if (!visionApiKey) return sendJson(503, { ok: false, msg: 'vision_api_not_configured' });
 
             const SYSTEM = `你是“小薯”，一个只懂木薯和红薯（甘薯）种植的 AI 助手。你只做两件事：
@@ -2278,7 +2281,7 @@ const server = http.createServer(async (req, res) => {
             userContent.push({ type: 'text', text: String(body.text || (body.image ? '这是什么？帮我看看是什么虫或草，怎么防治。' : '')) });
             messages.push({ role: 'user', content: userContent });
 
-            const payload = JSON.stringify({ model, messages });
+            const payload = JSON.stringify({ model, messages, enable_thinking: false });
             try {
                 const result = await requestJson('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
                     method: 'POST',
