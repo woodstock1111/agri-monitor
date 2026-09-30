@@ -9,6 +9,8 @@ const sharp = require('sharp');
 const pbkdf2Async = promisify(crypto.pbkdf2);
 const chinaSoil = require('./china-soil').createSoilService();
 const db = require('./lib/db');
+const { createWeatherService, createPgWeatherStore } = require('./lib/harvest-weather');
+const harvestWeather = createWeatherService({ store: createPgWeatherStore(db) });
 const { requestJson } = require('./lib/http');
 const { parseBeijing } = require('./lib/time');
 const sensorStore = require('./lib/sensor-store');
@@ -1370,6 +1372,12 @@ const server = http.createServer(async (req, res) => {
             const status = result.ok ? 200 : result.status === 'invalid_coordinates' ? 400
                 : ['outside_coverage', 'no_data'].includes(result.status) ? 422 : 503;
             return sendJson(status, result);
+        }
+
+        if (pathname === '/api/v1/harvest/weather' && req.method === 'GET') {
+            const auth = requireAuth(); if (!auth) return;
+            const result = await harvestWeather.lookup(query);
+            return sendJson(result.status, result.body);
         }
 
         if (pathname === '/api/v1/auth/login' && req.method === 'POST') {

@@ -11,6 +11,7 @@ if (url) process.env.DATABASE_URL = url;
 const db = require('../lib/db');
 const photoStore = require('../lib/photo-store');
 const vision = require('../lib/vision');
+const { createPgWeatherStore } = require('../lib/harvest-weather');
 
 const T1 = 'tenant_a';
 const T2 = 'tenant_b';
@@ -29,7 +30,7 @@ async function newPhoto(id, tenantId, cropId = 'crop_1') {
 before(async () => {
     if (skip) return;
     await db.query(`DROP TABLE IF EXISTS audit_log, farm_tasks, channels, devices, locations, users, tenants,
-        region_embeddings, photo_regions, photos, crops, pest_library, sensor_readings, schema_migrations CASCADE`);
+        region_embeddings, photo_regions, photos, crops, pest_library, sensor_readings, harvest_weather_years, schema_migrations CASCADE`);
     await db.migrate(() => {});
     await photoStore.createCrop({ id: 'crop_1', tenantId: T1, name: '木薯' });
     await photoStore.createCrop({ id: 'crop_2', tenantId: T2, name: '红薯' });
@@ -190,4 +191,17 @@ test('deleting a crop hides its photos', { skip }, async () => {
     assert.equal(await photoStore.deleteCrop('crop_2', T2), true);
     assert.equal(await photoStore.getRecord('s1', T2), null);
     assert.equal((await photoStore.listPhotos({ tenantId: T2 })).length, 0);
+});
+
+test('harvest weather years round-trip through PostgreSQL and upsert on refetch', { skip }, async () => {
+    const store = createPgWeatherStore(db);
+    const day = year => ({ time: [`${year}-01-01`], temperature_2m_mean: [year / 100] });
+    await store.putYears(19.5311, 110.351, 'Open-Meteo / ERA5', [{ year: 2020, daily: day(2020) }, { year: 2021, daily: day(2021) }]);
+    await store.putYears(19.5311, 110.351, 'Open-Meteo / ERA5', [{ year: 2021, daily: { ...day(2021), temperature_2m_mean: [1] } }]);
+    const rows = (await store.getYears(19.5311, 110.351, 2019, 2022)).sort((a, b) => a.year - b.year);
+    assert.deepEqual(rows.map(r => r.year), [2020, 2021]);
+    assert.deepEqual(rows[0].daily, day(2020));
+    assert.deepEqual(rows[1].daily.temperature_2m_mean, [1]);
+    assert.ok(rows[0].fetchedAt instanceof Date);
+    assert.deepEqual(await store.getYears(19.5312, 110.351, 2019, 2022), []);
 });
