@@ -385,6 +385,12 @@ Page({
     this.setData({ ripeOpen: false })
   },
 
+  // 收成预测（pages/harvest）。打开过地块详情就带上这块地
+  onOpenHarvest() {
+    const plotId = this._activePlotId
+    wx.navigateTo({ url: '/pages/harvest/harvest' + (plotId ? `?plotId=${encodeURIComponent(plotId)}` : '') })
+  },
+
   onToggleRipePlot(event) {
     const id = event.currentTarget.dataset.id
     const ripePlots = this.data.ripePlots.map(p => (p.id === id ? { ...p, expanded: !p.expanded } : p))

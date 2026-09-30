@@ -1020,3 +1020,19 @@
 .rblock__variety { font-size: 20rpx; color: #b06a3a; background: #f0e0d2; padding: 2rpx 10rpx; border-radius: 8rpx; }
 .rblock__owner { flex: 1; font-size: 21rpx; color: #9a8a72; }
 .rblock__pct { font-size: 24rpx; font-weight: 800; color: #5f7a4e; }
+
+/* 收成预测按键图标：三根柱子 */
+.icon-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6rpx;
+  height: 36rpx;
+}
+.icon-bars__bar {
+  width: 10rpx;
+  border-radius: 4rpx 4rpx 0 0;
+  background: #3f7d62;
+}
+.icon-bars__bar--1 { height: 14rpx; }
+.icon-bars__bar--2 { height: 24rpx; }
+.icon-bars__bar--3 { height: 36rpx; }

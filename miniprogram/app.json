@@ -4,7 +4,9 @@
     "pages/parkmap/parkmap",
     "pages/agent/agent",
     "pages/farmtasks/farmtasks",
-    "pages/dashboard/dashboard"
+    "pages/dashboard/dashboard",
+    "pages/harvest/harvest",
+    "pages/bind/bind"
   ],
   "window": {
     "navigationBarBackgroundColor": "#f8fafc",
@@ -13,6 +15,7 @@
     "backgroundColor": "#e8edf3",
     "enablePullDownRefresh": false
   },
+  "requiredPrivateInfos": ["chooseLocation"],
   "style": "v2",
   "sitemapLocation": "sitemap.json"
 }

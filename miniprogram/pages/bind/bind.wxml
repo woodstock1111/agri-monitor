@@ -1,0 +1,31 @@
+<view class="bd">
+  <view class="bd-hero">
+    <image class="bd-hero__img" src="/assets/agent-sweet-potato.png" mode="aspectFit"></image>
+    <text class="bd-hero__title">绑定你的账号</text>
+    <text class="bd-hero__sub">用网页版的账号和密码绑定一次，以后打开小程序会自动登录，网页和小程序看到同一个农场的数据。</text>
+  </view>
+
+  <view wx:if="{{state === 'checking'}}" class="card bd-card bd-center">
+    <view class="bd-spin"></view>
+    <text class="bd-muted">正在确认微信身份…</text>
+  </view>
+
+  <view wx:elif="{{state === 'error'}}" class="card bd-card">
+    <text class="bd-error">{{message}}</text>
+    <view class="bd-btn bd-btn--ghost" hover-class="bd-btn--press" hover-stay-time="80" bindtap="refreshTicket">重试</view>
+  </view>
+
+  <view wx:elif="{{state === 'form'}}" class="card bd-card">
+    <view class="bd-field">
+      <text class="bd-label">账号</text>
+      <input class="bd-input" value="{{account}}" data-key="account" bindinput="onInput" placeholder="网页版登录用的账号" placeholder-class="bd-ph" maxlength="64" />
+    </view>
+    <view class="bd-field">
+      <text class="bd-label">密码</text>
+      <input class="bd-input" password value="{{password}}" data-key="password" bindinput="onInput" bindconfirm="onSubmit" placeholder="网页版登录用的密码" placeholder-class="bd-ph" maxlength="128" />
+    </view>
+    <text wx:if="{{message}}" class="bd-error">{{message}}</text>
+    <view class="bd-btn {{submitting ? 'bd-btn--busy' : ''}}" hover-class="bd-btn--press" hover-stay-time="80" bindtap="onSubmit">{{submitting ? '正在绑定…' : '绑定并登录'}}</view>
+    <text class="bd-muted bd-note">账号由管理员开通。还没有账号，请联系管理员。一个账号最多绑定 5 个微信。</text>
+  </view>
+</view>

@@ -101,7 +101,7 @@
     </view>
   </view>
 
-  <!-- 底部三键：智能管家 · 问小薯 · 成熟度 -->
+  <!-- 底部按键：智能管家 · 问小薯 · 成熟度 · 收成预测 -->
   <view wx:if="{{!detailOpen && !aiOpen && !ripeOpen}}" class="agent-dock" style="padding-bottom:{{safeBottom}}px">
     <view class="side-btn" hover-class="side-btn--press" hover-stay-time="80" bindtap="onOpenAiPanel">
       <view class="side-btn__orb">
@@ -126,6 +126,17 @@
         </view>
       </view>
       <text class="side-btn__label">成熟度</text>
+    </view>
+
+    <view class="side-btn" hover-class="side-btn--press" hover-stay-time="80" bindtap="onOpenHarvest">
+      <view class="side-btn__orb">
+        <view class="icon-bars">
+          <view class="icon-bars__bar icon-bars__bar--1"></view>
+          <view class="icon-bars__bar icon-bars__bar--2"></view>
+          <view class="icon-bars__bar icon-bars__bar--3"></view>
+        </view>
+      </view>
+      <text class="side-btn__label">收成预测</text>
     </view>
   </view>
 

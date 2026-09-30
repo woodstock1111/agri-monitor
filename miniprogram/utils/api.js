@@ -1,4 +1,5 @@
 const config = require('./config.js')
+const auth = require('./auth.js')
 
 const TENANT_ID = 'tenant-demo'
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -321,34 +322,85 @@ function clone(data) {
   return JSON.parse(JSON.stringify(data))
 }
 
-function buildHeaders() {
-  const headers = { 'Content-Type': 'application/json' }
-  const token = wx.getStorageSync(config.tokenKey)
-  if (token) headers.Authorization = `Bearer ${token}`
-  return headers
+// 数据来源：游客（没绑定账号的微信）看内置演示数据；绑定了账号的微信读写这个账号在服务器上的真实数据
+// （与网页版同一个农场）。页面不用区分，都走下面的 request。
+function useRealData() {
+  return !config.useMock || !!auth.currentUser()
 }
 
 function request(path, options = {}) {
-  if (config.useMock) {
-    return Promise.resolve(mockRequest(path, options))
-  }
+  if (!useRealData()) return Promise.resolve(mockRequest(path, options))
+  const method = options.method || 'GET'
+  if (method === 'GET' && path === '/park/plots') return realPlots()
+  if (method === 'GET' && path.indexOf('/park/plots/') === 0) return realPlotDetail(decodeURIComponent(path.replace('/park/plots/', '')))
+  return serverRequest(path, options)
+}
 
-  return new Promise((resolve, reject) => {
-    wx.request({
-      url: `${config.baseURL}${config.apiPrefix}${path}`,
-      method: options.method || 'GET',
-      data: options.data || {},
-      header: buildHeaders(),
-      success(res) {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          resolve(res.data)
-        } else {
-          reject(new Error((res.data && res.data.msg) || '请求失败'))
-        }
-      },
-      fail: reject
-    })
+async function serverRequest(path, options = {}) {
+  const res = await auth.request({ path, method: options.method || 'GET', data: options.data || {}, header: { 'Content-Type': 'application/json' }, timeout: 20000 })
+  if (res.statusCode >= 200 && res.statusCode < 300) return res.data
+  throw new Error((res.data && res.data.msg) || '请求失败')
+}
+
+// ---- 真实地块：网页“地块”（locations）+ 设备 + 服务器缓存的实时读数，组合成园区地图用的形状
+function realtimeItems(realtime) {
+  return (realtime && realtime.dataItems && realtime.dataItems[0] && realtime.dataItems[0].registerItem) || []
+}
+
+function realSensorBrief(devices, serverRealtime) {
+  const dev = devices.find(d => d.type === 'sensor_soil_api') || devices[0]
+  if (!dev) return { online: false, metrics: [], alarmLevel: 0 }
+  const items = realtimeItems(serverRealtime && serverRealtime[dev.id])
+  const alarmLevel = items.reduce((max, it) => Math.max(max, it.alarmLevel || 0), 0)
+  const metrics = ['温度', '湿度'].map(name => {
+    const it = items.find(x => x.registerName === name)
+    return it ? { name, value: it.value, unit: it.unit } : null
+  }).filter(Boolean)
+  return { online: !!dev.online, metrics, alarmLevel }
+}
+
+function realPlotShape(loc, index) {
+  const meta = loc.metadata || {}
+  return {
+    id: loc.id,
+    slot: loc.id,
+    name: loc.name || `地块${index + 1}`,
+    crop: meta.variety || loc.type || '未填写品种',
+    plantDate: meta.plantDate || '—',
+    manager: meta.manager || '—',
+    phone: '',
+    area: loc.area || '—',
+    ...layoutFor(index),
+    lat: Number(loc.lat) || 0,
+    lng: Number(loc.lng) || 0
+  }
+}
+
+async function realPlots() {
+  const today = getBeijingDateString()
+  const [state, tasks] = await Promise.all([serverRequest('/app-state'), serverRequest(`/farm-tasks?date=${today}`)])
+  const devices = state.devices || []
+  const pending = (tasks.tasks || []).filter(t => t.status === 'pending')
+  const plots = (state.locations || []).map((loc, i) => ({
+    ...realPlotShape(loc, i),
+    unfinishedCount: pending.filter(t => t.locationId === loc.id).length,
+    sensor: realSensorBrief(devices.filter(d => d.locationId === loc.id), state.serverRealtime)
+  }))
+  return { ok: true, plots }
+}
+
+async function realPlotDetail(plotId) {
+  const today = getBeijingDateString()
+  const [state, tasks] = await Promise.all([serverRequest('/app-state'), serverRequest(`/farm-tasks?date=${today}`)])
+  const index = (state.locations || []).findIndex(loc => loc.id === plotId)
+  if (index < 0) return { ok: false, msg: '地块不存在' }
+  const devices = (state.devices || []).filter(d => d.locationId === plotId).slice(0, 2).map(d => {
+    const rt = (state.serverRealtime || {})[d.id] || {}
+    return { id: d.id, name: d.name, online: !!d.online, deviceTimestamp: rt.deviceTimestamp || null, factors: realtimeItems(rt) }
   })
+  const plotTasks = (tasks.tasks || []).filter(t => t.locationId === plotId)
+    .sort((a, b) => (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0) || a.createdAt - b.createdAt)
+  return { ok: true, plot: realPlotShape(state.locations[index], index), tasks: plotTasks, devices }
 }
 
 function mockRequest(path, options = {}) {
