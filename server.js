@@ -4,13 +4,17 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { promisify } = require('util');
 const sharp = require('sharp');
-const pbkdf2Async = promisify(crypto.pbkdf2);
 const chinaSoil = require('./china-soil').createSoilService();
 const db = require('./lib/db');
+const { hashPassword, hashPasswordLegacy, verifyPassword, passwordNeedsRehash } = require('./lib/passwords');
 const { createWeatherService, createPgWeatherStore } = require('./lib/harvest-weather');
 const harvestWeather = createWeatherService({ store: createPgWeatherStore(db) });
+const userStore = require('./lib/user-store').createUserStore(db);
+const { createSessionService, createPgSessionStore } = require('./lib/sessions');
+const sessions = createSessionService({ store: createPgSessionStore(db) });
+const { createWechatMini, WechatError } = require('./lib/wechat-mini');
+const wechatMini = createWechatMini();
 const { requestJson } = require('./lib/http');
 const { parseBeijing } = require('./lib/time');
 const sensorStore = require('./lib/sensor-store');
@@ -30,7 +34,6 @@ const PHOTOS_DIR = path.join(DATA_DIR, 'photos');
 const DEFAULT_TARGET_BASE = 'http://www.0531yun.com';
 const DEFAULT_TENANT_ID = 'tenant_default';
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123456';
-const TOKEN_TTL_SECONDS = 8 * 60 * 60;
 const LIVE_FETCH_MIN_INTERVAL_MS = 30 * 1000;
 // Beijing-time hours whose hourly row is flagged as the daily snapshot.
 const SNAPSHOT_HOURS = String(process.env.SNAPSHOT_HOURS || '8,14').split(',').map(Number).filter(Number.isInteger);
@@ -251,24 +254,29 @@ function emptyState() {
     };
 }
 
-function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
-    const hash = crypto.pbkdf2Sync(password, salt, 120000, 32, 'sha256').toString('hex');
-    return `pbkdf2$${salt}$${hash}`;
-}
-
-// Async so concurrent logins don't block the event loop (120k pbkdf2 iterations each).
-async function verifyPassword(password, encoded) {
-    if (!encoded || !encoded.startsWith('pbkdf2$')) return false;
-    const [, salt, expected] = encoded.split('$');
-    const actual = await pbkdf2Async(password, salt, 120000, 32, 'sha256');
-    return crypto.timingSafeEqual(actual, Buffer.from(expected, 'hex'));
-}
 
 function safeId(prefix) {
     return `${prefix}_${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex')}`;
 }
 
+// Requests relayed by the WeChat Cloud Hosting gateway (cloudrun/gateway) carry the caller's openid and IP, signed with a
+// shared secret. Anything else claiming those headers is ignored.
+const MINI_GATEWAY_SECRET = process.env.MINI_GATEWAY_SECRET || '';
+function gatewayTrust(req) {
+    if (req.gatewayTrust !== undefined) return req.gatewayTrust;
+    const given = Buffer.from(String(req.headers['x-agri-gateway-secret'] || ''));
+    const expected = Buffer.from(MINI_GATEWAY_SECRET);
+    const ok = expected.length >= 32 && given.length === expected.length && crypto.timingSafeEqual(given, expected);
+    req.gatewayTrust = ok ? {
+        openid: String(req.headers['x-agri-wx-openid'] || '').trim() || null,
+        clientIp: String(req.headers['x-agri-client-ip'] || '').trim() || null,
+    } : null;
+    return req.gatewayTrust;
+}
+
 function realClientIp(req) {
+    const relayed = gatewayTrust(req)?.clientIp;
+    if (relayed) return relayed;
     const xRealIp = String(req.headers['x-real-ip'] || '').trim();
     if (xRealIp) return xRealIp;
     const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
@@ -352,6 +360,7 @@ function normalizeState(raw = {}) {
         changed = true;
     }
 
+    // Accounts live in PostgreSQL (lib/user-store.js). The users/tenants below only seed the one-time import on an empty database.
     if (!Array.isArray(state.tenants)) {
         state.tenants = [];
         changed = true;
@@ -378,7 +387,7 @@ function normalizeState(raw = {}) {
             name: 'Platform Admin',
             role: 'platform_admin',
             status: 'active',
-            passwordHash: hashPassword(DEFAULT_ADMIN_PASSWORD),
+            passwordHash: hashPasswordLegacy(DEFAULT_ADMIN_PASSWORD),
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
         });
@@ -672,6 +681,48 @@ function publicUser(user) {
     return safe;
 }
 
+// Account + password check shared by web login and WeChat binding, with the existing per-IP / per-account lockout.
+// Returns { ok: true, user } or { ok: false, status, headers }.
+async function passwordLogin(account, password, clientIp) {
+    const accountKey = loginAccountKey(account);
+    cleanupLoginFailures();
+    const retryAfter = loginRetryAfterSeconds(clientIp, accountKey);
+    if (retryAfter > 0) return { ok: false, status: 429, headers: { 'Retry-After': String(retryAfter) } };
+    const user = account ? await userStore.getByAccount(account) : null;
+    if (!user || user.status === 'disabled' || !(await verifyPassword(password, user.passwordHash))) {
+        recordLoginFailure(clientIp, accountKey);
+        return { ok: false, status: 401, headers: {} };
+    }
+    clearLoginFailures(clientIp, accountKey);
+    await userStore.recordLogin(user.id);
+    if (passwordNeedsRehash(user.passwordHash)) await userStore.setPasswordHash(user.id, await hashPassword(password));
+    return { ok: true, user };
+}
+
+// Binding tickets: 10 minutes, single use, kept in memory. The client never sees the openid, so it cannot claim someone else's.
+const BIND_TICKET_TTL_MS = 10 * 60 * 1000;
+const BIND_TICKETS = new Map();
+function issueBindTicket({ openid, unionid }) {
+    const now = Date.now();
+    for (const [id, t] of BIND_TICKETS) if (t.expiresAt <= now) BIND_TICKETS.delete(id);
+    const id = crypto.randomBytes(24).toString('base64url');
+    BIND_TICKETS.set(id, { id, openid, unionid, expiresAt: now + BIND_TICKET_TTL_MS });
+    return id;
+}
+function takeBindTicket(id) {
+    const t = BIND_TICKETS.get(id);
+    BIND_TICKETS.delete(id);
+    return t && t.expiresAt > Date.now() ? t : null;
+}
+function restoreBindTicket(t) {
+    if (t.expiresAt > Date.now()) BIND_TICKETS.set(t.id, t);
+}
+
+function sendWechatError(sendJson, e) {
+    if (!(e instanceof WechatError)) throw e;
+    return sendJson(e.status, { ok: false, status: 'wechat_error', errcode: e.errcode ?? null, msg: e.message });
+}
+
 function userTenantId(user) {
     return user?.tenantId || DEFAULT_TENANT_ID;
 }
@@ -768,30 +819,54 @@ function mergeOperationalState(current, incoming, user) {
     return next;
 }
 
-function signToken(payload, secret) {
-    const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
-    const sig = crypto.createHmac('sha256', secret).update(encoded).digest('base64url');
-    return `${encoded}.${sig}`;
-}
-
+// Any malformed token is simply invalid (401), never a server error.
 function verifyToken(token, secret) {
     if (!token || !token.includes('.')) return null;
     const [encoded, sig] = token.split('.');
-    const expected = crypto.createHmac('sha256', secret).update(encoded).digest('base64url');
-    if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
-    const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
-    if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
+    const expected = Buffer.from(crypto.createHmac('sha256', secret).update(encoded).digest('base64url'));
+    const given = Buffer.from(sig || '');
+    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
+    let payload;
+    try { payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')); } catch { return null; }
+    if (!payload || !payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
     return payload;
 }
 
-function getAuthUser(req) {
+function bearerToken(req) {
     const header = req.headers.authorization || '';
-    const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+    return header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+}
+
+// Session tokens are 43 base64url characters. Tokens containing '.' are the old signed tokens (8 h lifetime): still
+// accepted so a deploy does not sign everyone out. Remove the legacy branch (and verifyToken) in the next release.
+async function getAuthUser(req) {
+    const token = bearerToken(req);
     const state = readState();
-    const payload = verifyToken(token, state.authSecret);
-    if (!payload) return { state, user: null };
-    const user = (state.users || []).find(item => item.id === payload.sub && item.status !== 'disabled');
-    return { state, user };
+    let userId = null, session = null;
+    if (token.includes('.')) userId = verifyToken(token, state.authSecret)?.sub || null;
+    else if (token) {
+        session = await sessions.validate(token);
+        userId = session?.userId || null;
+    }
+    const user = userId ? await userStore.get(userId) : null;
+    // Mini program guest: signed in with WeChat but not bound to an account (public-data APIs only).
+    const guest = session && !session.userId && session.openid ? { openid: session.openid } : null;
+    return { state, user: user && user.status !== 'disabled' ? user : null, guest, session, token };
+}
+
+// Guests are limited per WeChat user; soil lookups start a reader process and weather may call Open-Meteo.
+const GUEST_RATE_WINDOW_MS = 10 * 60 * 1000;
+const GUEST_RATE_LIMIT = 120;
+const GUEST_RATE = new Map();
+function allowGuestRequest(openid, now = Date.now()) {
+    if (GUEST_RATE.size > 10000) for (const [k, b] of GUEST_RATE) if (now - b.windowStart > GUEST_RATE_WINDOW_MS) GUEST_RATE.delete(k);
+    const bucket = GUEST_RATE.get(openid);
+    if (!bucket || now - bucket.windowStart > GUEST_RATE_WINDOW_MS) {
+        GUEST_RATE.set(openid, { windowStart: now, count: 1 });
+        return true;
+    }
+    bucket.count += 1;
+    return bucket.count <= GUEST_RATE_LIMIT;
 }
 
 // Memoized per request: the first caller's limit applies, later callers get the same parsed body.
@@ -1333,8 +1408,8 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify(obj));
     };
 
-    const requireAuth = () => {
-        const auth = getAuthUser(req);
+    const requireAuth = async () => {
+        const auth = await getAuthUser(req);
         if (!auth.user) {
             sendJson(401, { ok: false, msg: 'Unauthorized' });
             return null;
@@ -1342,8 +1417,21 @@ const server = http.createServer(async (req, res) => {
         return auth;
     };
 
-    const requireAdmin = () => {
-        const auth = requireAuth();
+    // Public-data APIs: an account, or a mini program guest (WeChat sign-in without binding), rate limited per WeChat user.
+    const requireViewer = async () => {
+        const auth = await getAuthUser(req);
+        if (auth.user) return auth;
+        if (auth.guest) {
+            if (allowGuestRequest(auth.guest.openid)) return auth;
+            sendJson(429, { ok: false, status: 'busy', msg: '查询太频繁，请稍后再试。' });
+            return null;
+        }
+        sendJson(401, { ok: false, msg: 'Unauthorized' });
+        return null;
+    };
+
+    const requireAdmin = async () => {
+        const auth = await requireAuth();
         if (!auth) return null;
         if (auth.user.role !== 'platform_admin') {
             sendJson(403, { ok: false, msg: 'Admin only' });
@@ -1367,7 +1455,7 @@ const server = http.createServer(async (req, res) => {
         if (pathname === '/api/v1/health') return sendJson(200, { ok: true });
 
         if (pathname === '/api/v1/harvest/soil' && req.method === 'GET') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireViewer(); if (!auth) return;
             const result = await chinaSoil.lookup(query.lat, query.lng);
             const status = result.ok ? 200 : result.status === 'invalid_coordinates' ? 400
                 : ['outside_coverage', 'no_data'].includes(result.status) ? 422 : 503;
@@ -1375,118 +1463,175 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/harvest/weather' && req.method === 'GET') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireViewer(); if (!auth) return;
             const result = await harvestWeather.lookup(query);
             return sendJson(result.status, result.body);
         }
 
         if (pathname === '/api/v1/auth/login' && req.method === 'POST') {
             const body = await readBody(req);
-            const state = readState();
             const account = String(body.account || '').trim();
-            const accountKey = loginAccountKey(account);
-            const clientIp = realClientIp(req);
-            const loginFailureMsg = { ok: false, msg: 'Invalid account or password' };
-            cleanupLoginFailures();
-            const retryAfter = loginRetryAfterSeconds(clientIp, accountKey);
-            if (retryAfter > 0) {
-                return sendJson(429, loginFailureMsg, { 'Retry-After': String(retryAfter) });
-            }
-            const user = state.users.find(item => item.account === account && item.status !== 'disabled');
-            if (!user || !(await verifyPassword(String(body.password || ''), user.passwordHash))) {
-                recordLoginFailure(clientIp, accountKey);
-                return sendJson(401, loginFailureMsg);
-            }
-            clearLoginFailures(clientIp, accountKey);
-            user.lastLoginAt = new Date().toISOString();
-            writeState(state);
-            const token = signToken({
-                sub: user.id,
-                exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SECONDS,
-            }, state.authSecret);
-            return sendJson(200, { ok: true, accessToken: token, user: publicUser(user) });
+            const result = await passwordLogin(account, String(body.password || ''), realClientIp(req));
+            if (!result.ok) return sendJson(result.status, { ok: false, msg: 'Invalid account or password' }, result.headers);
+            const { token } = await sessions.create(result.user.id, 'web', { ip: realClientIp(req), userAgent: req.headers['user-agent'] });
+            return sendJson(200, { ok: true, accessToken: token, user: publicUser(result.user) });
+        }
+
+        if (pathname === '/api/v1/auth/logout' && req.method === 'POST') {
+            const token = bearerToken(req);
+            if (token && !token.includes('.')) await sessions.revoke(token);
+            return sendJson(200, { ok: true });
         }
 
         if (pathname === '/api/v1/auth/me') {
-            const auth = requireAuth();
+            const auth = await requireAuth();
             if (!auth) return;
-            return sendJson(200, { ok: true, user: publicUser(auth.user) });
+            return sendJson(200, { ok: true, user: publicUser(auth.user), wechat: await userStore.listWechat(auth.user.id) });
+        }
+
+        // ---- WeChat mini program (docs/auth-design.md §4.4). Accounts are created by an admin; the mini program binds to one.
+        // An unbound WeChat gets a guest session (public-data APIs only), so viewers never have to bind. {bind: true} (the bind
+        // page) also returns a single-use bind ticket.
+        // Through the Cloud Hosting gateway WeChat has already verified the user; the openid arrives signed, no code needed.
+        const wechatGatewayLogin = pathname === '/api/v1/auth/wechat/gateway-login' && req.method === 'POST';
+        if ((pathname === '/api/v1/auth/wechat/login' && req.method === 'POST') || wechatGatewayLogin) {
+            const body = await readBody(req);
+            let who;
+            if (wechatGatewayLogin) {
+                const trusted = gatewayTrust(req);
+                if (!trusted?.openid) return sendJson(401, { ok: false, msg: 'Unauthorized' });
+                who = { openid: trusted.openid, unionid: null };
+            } else {
+                try { who = await wechatMini.code2Session(body.code); }
+                catch (e) { return sendWechatError(sendJson, e); }
+            }
+            const user = await userStore.findByWechat(who.openid);
+            if (user && user.status !== 'disabled') {
+                const { token } = await sessions.create(user.id, 'miniprogram', { ip: realClientIp(req), userAgent: req.headers['user-agent'] });
+                return sendJson(200, { ok: true, accessToken: token, user: publicUser(user) });
+            }
+            if (user) return sendJson(403, { ok: false, status: 'disabled', msg: '该账号已停用，请联系管理员。' });
+            const { token } = await sessions.create(null, 'miniprogram', { openid: who.openid, ip: realClientIp(req), userAgent: req.headers['user-agent'] });
+            return sendJson(200, { ok: true, guest: true, accessToken: token, user: null, ...(body.bind === true ? { bindTicket: issueBindTicket(who) } : {}) });
+        }
+
+        if (pathname === '/api/v1/auth/wechat/bind' && req.method === 'POST') {
+            const body = await readBody(req);
+            const ticket = takeBindTicket(String(body.bindTicket || ''));
+            if (!ticket) return sendJson(401, { ok: false, status: 'ticket_expired', msg: '绑定已超时，请重新打开小程序再试。' });
+            const account = String(body.account || '').trim();
+            const result = await passwordLogin(account, String(body.password || ''), realClientIp(req));
+            if (!result.ok) {
+                restoreBindTicket(ticket); // a wrong password should not force a fresh wx.login
+                return sendJson(result.status, { ok: false, status: 'bad_credentials', msg: '账号或密码不对。' }, result.headers);
+            }
+            const outcome = await userStore.bindWechat(result.user.id, ticket.openid, ticket.unionid);
+            if (outcome === 'taken') return sendJson(409, { ok: false, status: 'taken', msg: '这个微信已绑定其他账号，请先在原账号里解绑。' });
+            if (outcome === 'limit') return sendJson(409, { ok: false, status: 'limit', msg: '这个账号绑定的微信已达上限（5 个），请先在网页上解绑不用的。' });
+            const { token } = await sessions.create(result.user.id, 'miniprogram', { ip: realClientIp(req), userAgent: req.headers['user-agent'] });
+            return sendJson(200, { ok: true, accessToken: token, user: publicUser(result.user) });
+        }
+
+        // Mini program: unbind this WeChat. The openid comes signed from the gateway, or from a fresh wx.login code, so only
+        // the phone holding this WeChat can unbind itself.
+        // Web: DELETE with ?id=<binding id> from /auth/me, or no id to unbind all.
+        if (pathname === '/api/v1/auth/wechat/binding' && req.method === 'DELETE') {
+            const auth = await requireAuth();
+            if (!auth) return;
+            const gatewayOpenid = gatewayTrust(req)?.openid;
+            if (gatewayOpenid || query.code) {
+                let openid = gatewayOpenid;
+                if (!openid) {
+                    try { openid = (await wechatMini.code2Session(query.code)).openid; }
+                    catch (e) { return sendWechatError(sendJson, e); }
+                }
+                await userStore.unbindWechatByOpenid(auth.user.id, openid);
+                await sessions.revoke(auth.token);
+            } else {
+                await userStore.unbindWechat(auth.user.id, query.id || null);
+                // Sessions are not tied to an openid, so unbinding from the web signs out every mini program session.
+                await sessions.revokeUser(auth.user.id, 'miniprogram');
+            }
+            return sendJson(200, { ok: true, wechat: await userStore.listWechat(auth.user.id) });
         }
 
         if (pathname === '/api/v1/users') {
-            const auth = requireAdmin();
+            const auth = await requireAdmin();
             if (!auth) return;
             if (req.method === 'GET') {
-                return sendJson(200, { ok: true, users: auth.state.users.map(publicUser) });
+                return sendJson(200, { ok: true, users: (await userStore.list()).map(publicUser) });
             }
             if (req.method === 'POST') {
                 const body = await readBody(req);
                 const account = String(body.account || '').trim();
                 const password = String(body.password || '');
                 if (!account || !password) return sendJson(400, { ok: false, msg: 'Account and password are required' });
-                if (auth.state.users.some(item => item.account === account)) return sendJson(409, { ok: false, msg: 'Account already exists' });
-                const now = new Date().toISOString();
                 const role = body.role === 'platform_admin' ? 'platform_admin' : 'tenant_admin';
-                const tenantId = body.tenantId || (role === 'platform_admin' ? DEFAULT_TENANT_ID : tenantIdForAccount(account));
-                if (!auth.state.tenants.some(item => item.id === tenantId)) {
-                    auth.state.tenants.push({
-                        id: tenantId,
-                        name: String(body.name || account).trim(),
-                        status: 'active',
-                        createdAt: now,
+                const name = String(body.name || account).trim();
+                try {
+                    const user = await userStore.create({
+                        id: safeId('user'),
+                        tenantId: body.tenantId || (role === 'platform_admin' ? DEFAULT_TENANT_ID : tenantIdForAccount(account)),
+                        tenantName: name,
+                        account,
+                        name,
+                        role,
+                        status: body.status === 'disabled' ? 'disabled' : 'active',
+                        agentDebug: body.agentDebug === true,
+                        passwordHash: await hashPassword(password),
                     });
+                    return sendJson(201, { ok: true, user: publicUser(user) });
+                } catch (e) {
+                    if (e.code === '23505') return sendJson(409, { ok: false, msg: 'Account already exists' });
+                    throw e;
                 }
-                const user = {
-                    id: safeId('user'),
-                    tenantId,
-                    account,
-                    name: String(body.name || account).trim(),
-                    role,
-                    status: body.status === 'disabled' ? 'disabled' : 'active',
-                    agentDebug: body.agentDebug === true,
-                    passwordHash: hashPassword(password),
-                    createdAt: now,
-                    updatedAt: now,
-                };
-                auth.state.users.push(user);
-                writeState(auth.state);
-                return sendJson(201, { ok: true, user: publicUser(user) });
             }
         }
 
         if (pathname.startsWith('/api/v1/users/')) {
-            const auth = requireAdmin();
+            const auth = await requireAdmin();
             if (!auth) return;
             const userId = decodeURIComponent(pathname.split('/').pop());
-            const user = auth.state.users.find(item => item.id === userId);
+            const user = await userStore.get(userId);
             if (!user) return sendJson(404, { ok: false, msg: 'User not found' });
 
             if (req.method === 'PUT') {
                 const body = await readBody(req);
-                user.name = String(body.name || user.name || user.account).trim();
-                user.role = body.role === 'platform_admin' ? 'platform_admin' : 'tenant_admin';
-                user.status = body.status === 'disabled' ? 'disabled' : 'active';
-                if (typeof body.agentDebug === 'boolean') user.agentDebug = body.agentDebug;
-                else if (user.agentDebug !== true) user.agentDebug = false;
-                user.tenantId = body.tenantId || user.tenantId || DEFAULT_TENANT_ID;
-                if (body.password) user.passwordHash = hashPassword(String(body.password));
-                user.updatedAt = new Date().toISOString();
-                writeState(auth.state);
-                return sendJson(200, { ok: true, user: publicUser(user) });
+                const role = body.role === 'platform_admin' ? 'platform_admin' : 'tenant_admin';
+                const status = body.status === 'disabled' ? 'disabled' : 'active';
+                const patch = {
+                    name: String(body.name || user.name || user.account).trim(),
+                    role,
+                    status,
+                    agentDebug: typeof body.agentDebug === 'boolean' ? body.agentDebug : user.agentDebug === true,
+                    tenantId: body.tenantId || user.tenantId || DEFAULT_TENANT_ID,
+                    passwordHash: body.password ? await hashPassword(String(body.password)) : null,
+                };
+                if (user.role === 'platform_admin' && user.status === 'active' && (role !== 'platform_admin' || status === 'disabled')
+                    && await userStore.countActiveAdmins() <= 1) {
+                    return sendJson(400, { ok: false, msg: 'Cannot demote or disable the last admin' });
+                }
+                const updated = await userStore.update(user.id, patch);
+                // New password, disabled account or changed permissions: every existing session of that user ends.
+                if (patch.passwordHash || status !== user.status || role !== user.role || patch.tenantId !== user.tenantId) {
+                    await sessions.revokeUser(user.id);
+                }
+                return sendJson(200, { ok: true, user: publicUser(updated) });
             }
 
             if (req.method === 'DELETE') {
                 if (user.id === auth.user.id) return sendJson(400, { ok: false, msg: 'Cannot delete current user' });
-                const admins = auth.state.users.filter(item => item.role === 'platform_admin' && item.status !== 'disabled');
-                if (user.role === 'platform_admin' && admins.length <= 1) return sendJson(400, { ok: false, msg: 'Cannot delete last admin' });
-                auth.state.users = auth.state.users.filter(item => item.id !== user.id);
-                writeState(auth.state);
+                if (user.role === 'platform_admin' && user.status === 'active' && await userStore.countActiveAdmins() <= 1) {
+                    return sendJson(400, { ok: false, msg: 'Cannot delete last admin' });
+                }
+                await sessions.revokeUser(user.id);
+                await userStore.remove(user.id);
                 return sendJson(200, { ok: true });
             }
         }
 
         if (pathname === '/api/v1/app-state') {
-            const auth = requireAuth();
+            const auth = await requireAuth();
             if (!auth) return;
             if (req.method === 'PUT') {
                 const body = await readBody(req, 10 * 1024 * 1024);
@@ -1504,7 +1649,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/cloud-devices') {
-            const auth = requireAuth();
+            const auth = await requireAuth();
             if (!auth) return;
             const accessCode = String(query.accessCode || '').trim();
             const apiUrl = String(query.apiUrl || DEFAULT_TARGET_BASE).trim() || DEFAULT_TARGET_BASE;
@@ -1529,7 +1674,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/device-realtime') {
-            const auth = requireAuth();
+            const auth = await requireAuth();
             if (!auth) return;
             const deviceId = String(query.deviceId || '').trim();
             if (!deviceId) return sendJson(400, { ok: false, msg: 'deviceId is required' });
@@ -1545,7 +1690,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/device-history') {
-            const auth = requireAuth();
+            const auth = await requireAuth();
             if (!auth) return;
             const deviceId = String(query.deviceId || '').trim();
             if (!deviceId) return sendJson(400, { ok: false, msg: 'deviceId is required' });
@@ -1565,7 +1710,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/readings') {
-            const auth = requireAuth();
+            const auth = await requireAuth();
             if (!auth) return;
             const deviceId = String(query.deviceId || '').trim();
             const limit = Math.min(Number(query.limit) || 500, 5000);
@@ -1577,7 +1722,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/cloud-history-sync') {
-            const auth = requireAuth();
+            const auth = await requireAuth();
             if (!auth) return;
             const { deviceId, startTime, endTime } = query;
             if (!deviceId || !startTime || !endTime) return sendJson(400, { ok: false, msg: 'deviceId, startTime and endTime required' });
@@ -1633,7 +1778,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/pest-library' && req.method === 'GET') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const type = String(query.type || '').trim();
             const entries = (await pestStore.list(['pest', 'disease', 'weed'].includes(type) ? type : ''))
                 .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN'));
@@ -1641,7 +1786,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/pest-library/ai-fill' && req.method === 'POST') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const body = await readBody(req).catch(() => ({}));
             const name = String(body.name || '').trim();
             const rawType = String(body.type || '').trim();
@@ -1690,7 +1835,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/pest-library' && req.method === 'POST') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             if (auth.user.role !== 'platform_admin') return sendJson(403, { ok: false, msg: 'admin only' });
             const body = await readBody(req).catch(() => ({}));
             const type = String(body.type || '').trim();
@@ -1718,7 +1863,7 @@ const server = http.createServer(async (req, res) => {
 
 
         if (pathname.startsWith('/api/v1/pest-library/') && req.method === 'PUT') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             if (auth.user.role !== 'platform_admin') return sendJson(403, { ok: false, msg: 'admin only' });
             const id = pathname.split('/')[4];
             const body = await readBody(req).catch(() => ({}));
@@ -1734,7 +1879,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname.startsWith('/api/v1/pest-library/') && req.method === 'DELETE') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             if (auth.user.role !== 'platform_admin') return sendJson(403, { ok: false, msg: 'admin only' });
             const id = pathname.split('/')[4];
             if (!(await pestStore.remove(id))) return sendJson(404, { ok: false, msg: 'entry not found' });
@@ -1742,7 +1887,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/farm-tasks/calendar' && req.method === 'GET') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const year = Number(query.year);
             const month = Number(query.month);
             if (!Number.isFinite(year) || !Number.isFinite(month)) {
@@ -1760,7 +1905,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/farm-tasks' && req.method === 'GET') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const date = String(query.date || '').trim();
             const ft = readFarmTasks();
             const tasks = scopedTenantRows(auth.user, ft.tasks || [])
@@ -1770,7 +1915,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/farm-tasks' && req.method === 'POST') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const body = await readBody(req);
             const title = String(body.title || '').trim();
             const date = String(body.date || '').trim();
@@ -1788,13 +1933,21 @@ const server = http.createServer(async (req, res) => {
                 createdAt: Date.now(),
                 tenantId: userTenantId(auth.user)
             };
+            // Optional plot link (mini program plot detail). Only a plot this user can see is accepted.
+            const locationId = String(body.locationId || '').trim();
+            if (locationId) {
+                if (!scopedTenantRows(auth.user, auth.state.locations || []).some(item => item.id === locationId)) {
+                    return sendJson(400, { ok: false, msg: 'unknown locationId' });
+                }
+                task.locationId = locationId;
+            }
             ft.tasks.push(task);
             writeFarmTasks(ft);
             return sendJson(201, { ok: true, task });
         }
 
         if (pathname.startsWith('/api/v1/farm-tasks/') && req.method === 'PUT') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const id = pathname.split('/')[4];
             const body = await readBody(req);
             const ft = readFarmTasks();
@@ -1808,7 +1961,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname.startsWith('/api/v1/farm-tasks/') && req.method === 'DELETE') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const id = pathname.split('/')[4];
             const ft = readFarmTasks();
             const task = (ft.tasks || []).find(item => item.id === id && canAccessTenantItem(auth.user, item));
@@ -1819,7 +1972,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/photos/crops') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
 
             if (req.method === 'GET') {
                 return sendJson(200, { ok: true, crops: await photoStore.listCrops(dbTenantId(auth.user)) });
@@ -1848,7 +2001,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/photos/records' && req.method === 'POST') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const body = await readBody(req, 15 * 1024 * 1024); // 15MB limit
             if (!body.cropId || !body.imageBase64) {
                 return sendJson(400, { ok: false, msg: 'cropId and imageBase64 required' });
@@ -1906,13 +2059,13 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/photos/records' && req.method === 'GET') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const records = await photoStore.listPhotos({ tenantId: dbTenantId(auth.user), cropId: query.cropId || null });
             return sendJson(200, { ok: true, records });
         }
 
         if (pathname === '/api/v1/photos/records' && req.method === 'DELETE') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const body = await readBody(req).catch(() => ({}));
             const recordId = String(query.id || body.id || '').trim();
             if (!recordId) return sendJson(400, { ok: false, msg: 'id required' });
@@ -1921,14 +2074,14 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/photos/review-queue' && req.method === 'GET') {
-            const auth = requireAdmin(); if (!auth) return;
+            const auth = await requireAdmin(); if (!auth) return;
             return sendJson(200, { ok: true, records: await photoStore.reviewQueue() });
         }
 
         const photoRecordMatch = pathname.match(/^\/api\/v1\/photos\/records\/([^/]+)(?:\/([a-z-]+))?$/);
 
         if (photoRecordMatch && !photoRecordMatch[2] && req.method === 'PUT') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const id = decodeURIComponent(photoRecordMatch[1]);
             const body = await readBody(req).catch(() => ({}));
             const record = await photoStore.updatePhoto(id, dbTenantId(auth.user), {
@@ -1942,7 +2095,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (photoRecordMatch && photoRecordMatch[2] === 'image') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const photo = await photoStore.getPhotoRow(decodeURIComponent(photoRecordMatch[1]), dbTenantId(auth.user));
             if (!photo) return sendJson(404, { ok: false, msg: 'not found' });
             const imgPath = path.join(__dirname, photo.image_path);
@@ -1956,7 +2109,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (photoRecordMatch && photoRecordMatch[2] === 'annotate' && req.method === 'POST') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const requestBody = await readBody(req).catch(() => ({}));
             try {
                 const result = await runPhotoAnnotation(decodeURIComponent(photoRecordMatch[1]), auth.user, requestBody);
@@ -1968,7 +2121,7 @@ const server = http.createServer(async (req, res) => {
 
         // 专家审核：只有平台管理员能做。通过 = 给这张照片上所有农户已确认的框盖章；撤销 = 清掉盖章。
         if (photoRecordMatch && photoRecordMatch[2] === 'expert-review' && req.method === 'POST') {
-            const auth = requireAdmin(); if (!auth) return;
+            const auth = await requireAdmin(); if (!auth) return;
             const body = await readBody(req).catch(() => ({}));
             const record = await photoStore.expertReview(decodeURIComponent(photoRecordMatch[1]), body.approve !== false, auth.user.id);
             if (!record) return sendJson(404, { ok: false, msg: 'record not found' });
@@ -1977,14 +2130,14 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (photoRecordMatch && photoRecordMatch[2] === 'identify' && req.method === 'GET') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const result = JSON.parse(await executeAgentTool('identify_pest', { recordId: decodeURIComponent(photoRecordMatch[1]) }, auth.user));
             if (result.error) return sendJson(404, { ok: false, msg: result.error });
             return sendJson(200, { ok: true, ...result });
         }
 
         if (photoRecordMatch && photoRecordMatch[2] === 'detect-regions' && req.method === 'POST') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const id = decodeURIComponent(photoRecordMatch[1]);
             const photo = await photoStore.getPhotoRow(id, dbTenantId(auth.user));
             if (!photo) return sendJson(404, { ok: false, msg: 'record not found' });
@@ -2071,7 +2224,7 @@ const server = http.createServer(async (req, res) => {
 
         const regionMatch = pathname.match(/^\/api\/v1\/photos\/regions\/(\d+)\/(crop|similar)$/);
         if (regionMatch && req.method === 'GET') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const regionId = regionMatch[1];
             const { rows } = await db.query(
                 `SELECT r.id, r.crop_path, r.photo_id FROM photo_regions r JOIN photos p ON p.id = r.photo_id
@@ -2140,7 +2293,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/photos/sensor-range' && req.method === 'GET') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const { deviceId, startTime, endTime } = query;
             if (!deviceId || !startTime || !endTime) {
                 return sendJson(400, { ok: false, msg: 'deviceId, startTime and endTime required' });
@@ -2165,7 +2318,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/photos/sensor-snapshot' && req.method === 'GET') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const { deviceId, timestamp } = query;
             if (!deviceId || !timestamp) return sendJson(400, { ok: false, msg: 'deviceId and timestamp required' });
             const targetTs = parseQueryTime(timestamp, Number.NaN);
@@ -2187,7 +2340,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/photos/config') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const config = readPhotoConfig();
 
             if (req.method === 'GET') {
@@ -2216,7 +2369,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/photos/weather' && req.method === 'GET') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const { lat, lng } = query;
             if (!lat || !lng) return sendJson(400, { ok: false, msg: 'lat and lng required' });
             const config = readPhotoConfig();
@@ -2235,7 +2388,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/agent/chat' && req.method === 'POST') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const body = await readBody(req).catch(() => ({}));
             const message = String(body.message || '').trim();
             if (!message) return sendJson(400, { ok: false, msg: 'message required' });
@@ -2434,7 +2587,7 @@ const server = http.createServer(async (req, res) => {
         }
 
         if (pathname === '/api/v1/agent/chat' && req.method === 'DELETE') {
-            const auth = requireAuth(); if (!auth) return;
+            const auth = await requireAuth(); if (!auth) return;
             const body = await readBody(req).catch(() => ({}));
             const sessionId = String(body.sessionId || '').trim();
             if (sessionId) {
@@ -2521,6 +2674,11 @@ async function start() {
     await assertReadingsMigrated();
     // Load every data file up front so a corrupt file stops startup instead of failing (or being overwritten) later.
     readState();
+    const importedUsers = await userStore.importFromState(readState());
+    if (importedUsers) console.log(`[AUTH] imported ${importedUsers} accounts from app-state.json into PostgreSQL`);
+    const sweepSessions = () => sessions.removeExpired().catch(error => console.error('[AUTH] session cleanup failed:', error.message));
+    sweepSessions();
+    setInterval(sweepSessions, 3600000).unref();
     readFarmTasks();
     if (!fs.existsSync(PHOTO_RECORDS_FILE)) savePhotoConfig();
     readPhotoConfig();

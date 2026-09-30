@@ -122,6 +122,10 @@ const AuthService = {
     const chatFab = document.getElementById('agent-chat-fab');
     if (chatFab) chatFab.style.display = 'none';
     AgentChat.clear();
+    // End the session on the server too; keepalive lets it finish even though the page reloads right away.
+    if (localStorage.getItem(this.TOKEN_KEY)) {
+      fetch('/api/v1/auth/logout', { method: 'POST', headers: this.authHeaders(), keepalive: true }).catch(() => {});
+    }
     localStorage.removeItem(this.TOKEN_KEY);
     localStorage.removeItem(this.USER_KEY);
     this.currentUser = null;

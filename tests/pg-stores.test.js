@@ -12,6 +12,8 @@ const db = require('../lib/db');
 const photoStore = require('../lib/photo-store');
 const vision = require('../lib/vision');
 const { createPgWeatherStore } = require('../lib/harvest-weather');
+const { createUserStore } = require('../lib/user-store');
+const { createSessionService, createPgSessionStore } = require('../lib/sessions');
 
 const T1 = 'tenant_a';
 const T2 = 'tenant_b';
@@ -30,7 +32,7 @@ async function newPhoto(id, tenantId, cropId = 'crop_1') {
 before(async () => {
     if (skip) return;
     await db.query(`DROP TABLE IF EXISTS audit_log, farm_tasks, channels, devices, locations, users, tenants,
-        region_embeddings, photo_regions, photos, crops, pest_library, sensor_readings, harvest_weather_years, schema_migrations CASCADE`);
+        region_embeddings, photo_regions, photos, crops, pest_library, sensor_readings, harvest_weather_years, sessions, user_identities, schema_migrations CASCADE`);
     await db.migrate(() => {});
     await photoStore.createCrop({ id: 'crop_1', tenantId: T1, name: '木薯' });
     await photoStore.createCrop({ id: 'crop_2', tenantId: T2, name: '红薯' });
@@ -204,4 +206,64 @@ test('harvest weather years round-trip through PostgreSQL and upsert on refetch'
     assert.deepEqual(rows[1].daily.temperature_2m_mean, [1]);
     assert.ok(rows[0].fetchedAt instanceof Date);
     assert.deepEqual(await store.getYears(19.5312, 110.351, 2019, 2022), []);
+});
+
+const legacyState = {
+    tenants: [{ id: 'tenant_default', name: 'Default Farm' }, { id: 'tenant_farm_a', name: '张家农场' }],
+    users: [
+        { id: 'user_admin', tenantId: 'tenant_default', account: 'admin', name: 'Platform Admin', role: 'platform_admin', status: 'active', passwordHash: 'pbkdf2$aa$bb', createdAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'user_zhang', tenantId: 'tenant_farm_a', account: 'zhang', name: '老张', role: 'tenant_admin', status: 'active', agentDebug: true, passwordHash: 'pbkdf2$cc$dd', lastLoginAt: '2026-09-01T08:00:00.000Z' },
+        { id: 'user_broken', account: 'broken' },
+    ],
+};
+
+test('accounts are imported from app-state.json once, keeping ids, roles and farms', { skip }, async () => {
+    const users = createUserStore(db);
+    assert.equal(await users.importFromState(legacyState), 2);
+    assert.equal(await users.importFromState(legacyState), 0, 'second run does nothing');
+    const admin = await users.getByAccount('admin'), zhang = await users.get('user_zhang');
+    assert.equal(admin.role, 'platform_admin');
+    assert.deepEqual([zhang.role, zhang.tenantId, zhang.agentDebug, zhang.lastLoginAt], ['tenant_admin', 'tenant_farm_a', true, '2026-09-01T08:00:00.000Z']);
+    assert.equal(await users.countActiveAdmins(), 1);
+    await users.remove('user_zhang');
+    assert.equal(await users.importFromState(legacyState), 0, 'a deleted account is not resurrected');
+    await users.create({ id: 'user_zhang', tenantId: 'tenant_farm_a', account: 'zhang', name: '老张', role: 'tenant_admin', status: 'active', passwordHash: 'x' });
+    await assert.rejects(users.create({ id: 'user_dup', tenantId: 'tenant_x', account: 'zhang', name: 'dup', role: 'tenant_admin', status: 'active', passwordHash: 'x' }), e => e.code === '23505');
+    const renamed = await users.update('user_zhang', { name: '张三', role: 'platform_admin', tenantId: 'tenant_new', passwordHash: 'y' });
+    assert.deepEqual([renamed.name, renamed.role, renamed.tenantId, renamed.passwordHash, renamed.status], ['张三', 'platform_admin', 'tenant_new', 'y', 'active']);
+    const back = await users.update('user_zhang', { role: 'tenant_admin' });
+    assert.deepEqual([back.role, back.name, back.passwordHash], ['tenant_admin', '张三', 'y']);
+});
+
+test('a WeChat binds to one account only, even when two binds race; an account holds at most 5', { skip }, async () => {
+    const users = createUserStore(db);
+    await users.create({ id: 'user_li', tenantId: 'tenant_li', account: 'li', name: '老李', role: 'tenant_admin', status: 'active', passwordHash: 'x' });
+    const results = await Promise.all([users.bindWechat('user_zhang', 'openid_race'), users.bindWechat('user_li', 'openid_race')]);
+    assert.deepEqual(results.slice().sort(), ['bound', 'taken']);
+    const owner = await users.findByWechat('openid_race');
+    assert.equal(await users.bindWechat(owner.id, 'openid_race'), 'already_yours');
+    for (let i = 0; i < 4; i++) assert.equal(await users.bindWechat(owner.id, 'openid_family_' + i), 'bound');
+    assert.equal(await users.bindWechat(owner.id, 'openid_family_4'), 'limit');
+    const list = await users.listWechat(owner.id);
+    assert.equal(list.length, 5);assert.ok(!JSON.stringify(list).includes('openid'), 'openids are never listed');
+    assert.equal(await users.unbindWechatByOpenid(owner.id, 'openid_race'), 1);
+    assert.equal(await users.findByWechat('openid_race'), null);
+    assert.equal(await users.unbindWechat(owner.id, list[1].id), 1);
+    assert.equal(await users.unbindWechat(owner.id), 3);
+});
+
+test('sessions survive a new service instance, and deleting a user deletes their sessions', { skip }, async () => {
+    const store = createPgSessionStore(db);
+    const a = createSessionService({ store }), b = createSessionService({ store });
+    const { token } = await a.create('user_li', 'miniprogram', { ip: '1.2.3.4', userAgent: 'x'.repeat(500) });
+    assert.equal((await b.validate(token)).userId, 'user_li');
+    const { rows } = await db.query('SELECT id, user_agent FROM sessions');
+    assert.equal(rows.length, 1);assert.notEqual(rows[0].id, token);assert.equal(rows[0].user_agent.length, 300);
+    await createUserStore(db).remove('user_li');
+    assert.equal(await createSessionService({ store }).validate(token), null);
+    const guest = await a.create(null, 'miniprogram', { openid: 'openid_guest' });
+    assert.deepEqual([(await b.validate(guest.token)).userId, (await b.validate(guest.token)).openid], [null, 'openid_guest']);
+    await assert.rejects(db.query(`INSERT INTO sessions (id, client, expires_at) VALUES ('nobody', 'web', now())`), e => e.code === '23514');
+    await db.query(`INSERT INTO sessions (id, user_id, client, expires_at) VALUES ('old', 'user_zhang', 'web', now() - interval '1 day')`);
+    assert.equal(await a.removeExpired(), 1);
 });

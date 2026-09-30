@@ -8,3 +8,6 @@ __pycache__/
 server-data/
 
 .venv-soil/
+
+# Cloud Hosting upload package (built from cloudrun/gateway)
+cloudrun/*.zip

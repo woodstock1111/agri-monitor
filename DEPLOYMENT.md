@@ -51,6 +51,18 @@ ADMIN_PASSWORD: admin123456
 CLOUD_POLL_INTERVAL_MS: 300000
 ```
 
+WeChat mini program sign-in (docs/auth-design.md) needs the mini program's credentials in `.env`. Without them the
+mini program cannot sign in; the web site is unaffected. Keep the secret out of git.
+
+```bash
+WECHAT_MINI_APPID=wxf8a730c56844e54c
+WECHAT_MINI_SECRET=<AppSecret from 小程序后台 → 开发管理 → 开发设置>
+```
+
+Accounts and sessions live in PostgreSQL. On the first start after upgrading, accounts in `server-data/app-state.json`
+are imported once into the `users` table (only while it is empty); the file is kept as a backup and is no longer read
+for sign-in.
+
 ## Run With PM2
 
 Start:
