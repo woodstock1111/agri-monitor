@@ -6,7 +6,7 @@
   height: 86vh;
   display: flex;
   flex-direction: column;
-  background: #f1e9d8;
+  background: #f2efde;
   overflow: hidden;
 }
 
@@ -16,14 +16,14 @@
   align-items: center;
   gap: 16rpx;
   padding: 22rpx 24rpx 16rpx;
-  border-bottom: 1rpx solid rgba(70, 58, 44, 0.12);
+  border-bottom: 1rpx solid rgba(53, 75, 61, 0.12);
 }
 .agent-head__title {
   flex: 1;
   min-width: 0;
   font-size: 32rpx;
   font-weight: 800;
-  color: #3a3026;
+  color: #354b3d;
   letter-spacing: 0.5rpx;
 }
 .agent-head__clear {
@@ -31,22 +31,22 @@
   color: #8a7355;
   padding: 8rpx 20rpx;
   border-radius: 999rpx;
-  background: rgba(70, 58, 44, 0.06);
+  background: rgba(53, 75, 61, 0.06);
 }
-.agent-head__clear--press { background: rgba(70, 58, 44, 0.12); }
+.agent-head__clear--press { background: rgba(53, 75, 61, 0.12); }
 .agent-close {
   width: 52rpx;
   height: 52rpx;
   flex-shrink: 0;
   border-radius: 50%;
-  background: rgba(70, 58, 44, 0.06);
+  background: rgba(53, 75, 61, 0.06);
   color: #6a5c46;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 28rpx;
 }
-.agent-close--press { background: rgba(70, 58, 44, 0.12); }
+.agent-close--press { background: rgba(53, 75, 61, 0.12); }
 
 /* chat 在组件里按容器高度排版，覆盖 agent.wxss 的 100vh 和整页入场动画 */
 .agent-body .chat {

@@ -1,6 +1,8 @@
 {
   "navigationStyle": "custom",
   "disableScroll": true,
-  "backgroundColor": "#0d1b2a",
-  "usingComponents": {}
+  "backgroundColor": "#e4e9d4",
+  "usingComponents": {
+    "harvest-panel": "/components/harvest-panel/harvest-panel"
+  }
 }

@@ -215,8 +215,7 @@ function composeLedgerPlots(ledger) {
       px: geo.px,
       py: geo.py,
       size: geo.size,
-      lat: 0,
-      lng: 0
+      ...plotCoords(p.lat, p.lng)
     }
   })
 }
@@ -359,6 +358,14 @@ function realSensorBrief(devices, serverRealtime) {
   return { online: !!dev.online, metrics, alarmLevel }
 }
 
+// 地块没有填位置时经纬度为 null；0,0 也视为未填（不能当成真实坐标去算天气和土壤）
+function plotCoords(lat, lng) {
+  const y = lat === '' || lat == null ? NaN : Number(lat)
+  const x = lng === '' || lng == null ? NaN : Number(lng)
+  const valid = Number.isFinite(y) && Number.isFinite(x) && Math.abs(y) <= 90 && Math.abs(x) <= 180 && !(y === 0 && x === 0)
+  return valid ? { lat: y, lng: x } : { lat: null, lng: null }
+}
+
 function realPlotShape(loc, index) {
   const meta = loc.metadata || {}
   return {
@@ -371,8 +378,7 @@ function realPlotShape(loc, index) {
     phone: '',
     area: loc.area || '—',
     ...layoutFor(index),
-    lat: Number(loc.lat) || 0,
-    lng: Number(loc.lng) || 0
+    ...plotCoords(loc.lat, loc.lng)
   }
 }
 

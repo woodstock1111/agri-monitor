@@ -1,25 +1,25 @@
 /* ============================================================
    Agri Monitor 微信小程序 - 全局样式
-   与 Web 端 style.css 视觉语言保持一致
+   小程序采用与艺术园区一致的暖纸 / 鼠尾草调色板
    单位换算：1rpx = 750/屏幕宽 px ；以 iPhone 6 (375pt) 为基准
    Web 14px ≈ 28rpx ；Web 16px ≈ 32rpx ；Web 36px ≈ 72rpx
    ============================================================ */
 
 page {
   /* —— 核心底色 —— */
-  --bg-base:        #e8edf3;   /* 页面底（与 Web 一致） */
-  --bg-surface:     #f8fafc;   /* 卡片/面板基底 */
-  --bg-panel:       #f8fafc;   /* 同 surface，用于卡片内层 */
-  --bg-hover:       rgba(16, 85, 170, 0.05);   /* 按压底色（小程序 hover-class 使用） */
-  --bg-cool:        #eef3fb;   /* AI 农事区冷色调（项目新增） */
+  --bg-base:        #f2efde;   /* 小程序暖纸色页面底 */
+  --bg-surface:     #fbf8ee;   /* 卡片/面板基底 */
+  --bg-panel:       #fbf8ee;   /* 同 surface，用于卡片内层 */
+  --bg-hover:       rgba(82, 111, 84, 0.05);   /* 按压底色（小程序 hover-class 使用） */
+  --bg-cool:        #e9efdf;   /* AI 农事区冷色调（项目新增） */
 
   /* —— 主色与渐变 —— */
-  --accent:         #1070e0;
-  --accent-press:   #0c60c4;   /* 主色按压态（来自 .btn-primary:hover） */
-  --accent-light:   #e8f0fe;   /* 浅底/徽章背景 */
-  --accent-glow:    rgba(16, 112, 224, 0.10);
-  --accent-2:       #059669;
-  --accent-3:       #7c3aed;
+  --accent:         #526f54;
+  --accent-press:   #405b43;   /* 主色按压态（来自 .btn-primary:hover） */
+  --accent-light:   #e4ebd9;   /* 浅底/徽章背景 */
+  --accent-glow:    rgba(82, 111, 84, 0.10);
+  --accent-2:       #69968e;
+  --accent-3:       #b68169;
 
   /* —— 状态色 —— */
   --success:        #10b981;
@@ -32,14 +32,14 @@ page {
   --info-bg:        #eff6ff;
 
   /* —— 文本 —— */
-  --text-primary:   #1e293b;
-  --text-secondary: #64748b;
-  --text-muted:     #94a3b8;
+  --text-primary:   #354b3d;
+  --text-secondary: #687568;
+  --text-muted:     #7e8778;
   --text-inverse:   #ffffff;
 
   /* —— 边框 —— */
-  --border:         #e2e8f0;
-  --border-strong:  #cbd5e1;
+  --border:         #dedfcd;
+  --border-strong:  #bdc4b2;
 
   /* —— 圆角（rpx）—— */
   --radius:         24rpx;     /* Web 12px */
@@ -147,8 +147,7 @@ page {
   color: var(--text-inverse);
 }
 
-.btn--primary-press,         /* 用 hover-class="btn--primary-press" */
-.btn--primary[hover-class] {
+.btn--primary-press {
   background: var(--accent-press);
   transform: scale(0.97);
 }
@@ -390,3 +389,8 @@ page {
 .text-body { font-size: var(--fs-body); color: var(--text-primary); }
 .text-mute { color: var(--text-muted); }
 .value-display { font-size: var(--fs-display-xl); font-weight: 700; line-height: 1; letter-spacing: -1rpx; }
+
+/* Shared restrained page/content entry. No animation changes layout or business state. */
+.ui-page-enter { animation:uiPageEnter 320ms var(--ease) both; }
+@keyframes uiPageEnter { from { opacity:.35;transform:translateY(12rpx); } to { opacity:1;transform:translateY(0); } }
+.ui-section-enter { animation:fadeUp 240ms var(--ease) both; }

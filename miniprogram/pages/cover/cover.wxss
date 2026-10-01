@@ -1,6 +1,6 @@
 /* 封面 · 地块台账（纸面风格，与全程一致） */
 page {
-  background: #f1e9d8;
+  background: #f2efde;
 }
 
 .cover {
@@ -21,14 +21,14 @@ page {
   text-align: center;
   font-size: 28rpx;
   font-weight: 600;
-  color: #6b5d4a;
+  color: #526454;
   letter-spacing: 2rpx;
 }
-.head__company-ph { color: #b8ab93; font-weight: 500; }
+.head__company-ph { color: #9ca48e; font-weight: 500; }
 .head__title {
   font-size: 52rpx;
   font-weight: 800;
-  color: #3a3026;
+  color: #354b3d;
   letter-spacing: 6rpx;
 }
 .head__rule {
@@ -36,7 +36,7 @@ page {
   width: 120rpx;
   height: 4rpx;
   border-radius: 999rpx;
-  background: #c98a5e;
+  background: #b68169;
 }
 
 /* ===== 台账区 ===== */
@@ -50,21 +50,21 @@ page {
   font-size: 24rpx;
   font-weight: 700;
   letter-spacing: 4rpx;
-  color: #6b5d4a;
+  color: #526454;
 }
 .ledger__count {
   margin-left: auto;
   font-size: 21rpx;
-  color: #9a8a72;
+  color: #7e8778;
 }
 
 .card {
-  background: #f7f1e3;
-  border: 1rpx solid rgba(70, 58, 44, 0.14);
+  background: #fbf8ee;
+  border: 1rpx solid rgba(53, 75, 61, 0.14);
   border-radius: 24rpx;
   padding: 24rpx 26rpx 26rpx;
   margin-bottom: 18rpx;
-  box-shadow: 0 3rpx 10rpx rgba(70, 58, 44, 0.05);
+  box-shadow: 0 3rpx 10rpx rgba(53, 75, 61, 0.05);
 }
 .card__top {
   display: flex;
@@ -77,9 +77,9 @@ page {
   min-width: 0;
   font-size: 33rpx;
   font-weight: 800;
-  color: #3a3026;
+  color: #354b3d;
   letter-spacing: 1rpx;
-  border-bottom: 1rpx dashed rgba(70, 58, 44, 0.22);
+  border-bottom: 1rpx dashed rgba(53, 75, 61, 0.22);
   padding-bottom: 8rpx;
 }
 .card__del {
@@ -103,8 +103,8 @@ page {
   gap: 16rpx 20rpx;
 }
 .f {
-  background: #efe6d3;
-  border: 1rpx solid rgba(70, 58, 44, 0.10);
+  background: #e9e8d8;
+  border: 1rpx solid rgba(53, 75, 61, 0.10);
   border-radius: 16rpx;
   padding: 14rpx 18rpx;
   display: flex;
@@ -114,19 +114,19 @@ page {
 .f--wide { grid-column: span 2; }
 .f__label {
   font-size: 20rpx;
-  color: #9a8a72;
+  color: #7e8778;
   letter-spacing: 1rpx;
 }
 .f__input {
   font-size: 27rpx;
   font-weight: 600;
-  color: #3a3026;
+  color: #354b3d;
   height: 44rpx;
   line-height: 44rpx;
 }
 .f__picker { display: flex; align-items: center; }
-.f__picker--empty { color: #b8ab93; font-weight: 500; }
-.f-ph { color: #b8ab93; font-weight: 500; }
+.f__picker--empty { color: #9ca48e; font-weight: 500; }
+.f-ph { color: #9ca48e; font-weight: 500; }
 
 /* 添加地块 */
 .add {
@@ -136,7 +136,7 @@ page {
   font-size: 27rpx;
   font-weight: 700;
   letter-spacing: 2rpx;
-  color: #c0824f;
+  color: #526f54;
   background: rgba(192, 130, 79, 0.06);
   border: 2rpx dashed rgba(192, 130, 79, 0.45);
   border-radius: 20rpx;
@@ -150,7 +150,7 @@ page {
   justify-content: flex-end;
   margin-top: 18rpx;
   padding-top: 16rpx;
-  border-top: 1rpx dashed rgba(70, 58, 44, 0.16);
+  border-top: 1rpx dashed rgba(53, 75, 61, 0.16);
 }
 .card__map {
   display: flex;
@@ -159,7 +159,7 @@ page {
   font-size: 24rpx;
   font-weight: 700;
   letter-spacing: 1rpx;
-  color: #5f7a4e;
+  color: #526f54;
   background: rgba(95, 122, 78, 0.10);
   border: 1rpx solid rgba(95, 122, 78, 0.24);
   padding: 10rpx 22rpx;
@@ -185,7 +185,7 @@ page {
   align-items: flex-start;
   /* 顶部一小段渐隐过渡（柔，无线），按钮所在区为不透明，彻底盖住后面文字 */
   padding-top: 56rpx;
-  background: linear-gradient(180deg, rgba(241, 233, 216, 0) 0, rgba(241, 233, 216, 0.96) 56rpx, #f1e9d8 56rpx);
+  background: linear-gradient(180deg, rgba(242, 239, 222, 0) 0, rgba(242, 239, 222, 0.96) 56rpx, #f2efde 56rpx);
 }
 .enter__btn {
   display: flex;
@@ -195,7 +195,7 @@ page {
   width: 320rpx;
   height: 80rpx;
   border-radius: 999rpx;
-  background: #c0824f;
+  background: #526f54;
   box-shadow:
     inset 0 1rpx 0 rgba(255, 255, 255, 0.30),
     0 8rpx 22rpx rgba(192, 130, 79, 0.40);
@@ -214,3 +214,7 @@ page {
   color: rgba(255, 255, 255, 0.85);
   margin-top: -4rpx;
 }
+
+.head__title { font-size:44rpx;font-weight:600;letter-spacing:2rpx; }
+.card { box-shadow:none; }
+.enter__btn { background:#526f54;box-shadow:0 6rpx 18rpx rgba(53,75,61,.14); }

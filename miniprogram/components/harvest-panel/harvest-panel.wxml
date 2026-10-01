@@ -1,0 +1,282 @@
+<scroll-view scroll-y class="hv-scroll" style="height:{{height}}px" scroll-into-view="{{scrollTarget}}" scroll-with-animation>
+<view class="hv">
+  <view wx:if="{{hero}}" class="hv-hero">
+    <text class="hv-hero__eyebrow">种植决策 · 从一块地开始</text>
+    <view class="hv-hero__title">AI收成预测<text class="hv-beta">Beta</text></view>
+    <text class="hv-hero__sub">比较不同年景下的收成与投入，找出真正限制这块地的因素。</text>
+    <text class="hv-model-note">红薯 / 木薯 · 多年气候 × 每日水分 × 养分限制</text>
+  </view>
+
+  <!-- 01 先确认作物与品种 -->
+  <view class="card hv-card">
+    <view class="hv-step"><text class="hv-step__no">01</text><text class="hv-step__title">先确认作物与品种</text><text class="hv-beta hv-beta--right">当前计算假设</text></view>
+    <picker range="{{cropOptions}}" range-key="label" value="{{cropIndex}}" bindchange="onCrop">
+      <view class="hv-field"><text class="hv-field__label">作物</text><view class="hv-field__value">{{cropOptions[cropIndex].label}}<text class="hv-caret">›</text></view></view>
+    </picker>
+    <view class="hv-field"><text class="hv-field__label">品种（可暂不填）</text><input class="hv-input" value="{{variety}}" placeholder="未填写使用通用参数" maxlength="80" data-key="variety" bindinput="onInput" /></view>
+    <text class="hv-hint">{{cropNote}}</text>
+  </view>
+
+  <!-- 02 先把地选准 -->
+  <view class="card hv-card">
+    <view class="hv-step"><text class="hv-step__no">02</text><text class="hv-step__title">先把地选准</text></view>
+    <picker range="{{places}}" range-key="label" value="{{placeIndex}}" bindchange="onPlace">
+      <view class="hv-field"><text class="hv-field__label">地块或示例区域</text><view class="hv-field__value">{{places[placeIndex].label || '选择地块'}}<text class="hv-caret">›</text></view></view>
+    </picker>
+    <view class="hv-row">
+      <view class="hv-field hv-field--half"><text class="hv-field__label">纬度 · WGS84</text><input class="hv-input" type="digit" value="{{lat}}" data-key="lat" bindinput="onCoord" bindblur="onCoordDone" /></view>
+      <view class="hv-field hv-field--half"><text class="hv-field__label">经度 · WGS84</text><input class="hv-input" type="digit" value="{{lng}}" data-key="lng" bindinput="onCoord" bindblur="onCoordDone" /></view>
+    </view>
+    <view class="hv-mapbtn" hover-class="hv-mapbtn--press" bindtap="onPickMap">在地图上选点 ↗</view>
+    <view class="hv-map-footer"><text>{{pointText}}</text><text>地图不代表可耕地证明</text></view>
+  </view>
+
+  <!-- 03 开始分析 -->
+  <view class="card hv-card">
+    <view class="hv-step"><text class="hv-step__no">03</text><text class="hv-step__title">开始分析</text></view>
+    <view class="hv-run {{running ? 'hv-run--busy' : ''}}" hover-class="hv-run--press" hover-stay-time="80" bindtap="onRun">
+      <text class="hv-run__title">{{running ? '正在分析…' : view ? (stale ? '更新这个位置' : '重新分析这个位置') : '分析这个位置'}}</text>
+      <text class="hv-run__sub">{{running ? '' : view ? (stale ? '条件已修改，点这里重新分析 ↓' : '结果在下方 ↓') : '选好地块后点这里 ↓'}}</text>
+      <view wx:if="{{running}}" class="hv-run__track"><view class="hv-run__bar"></view></view>
+    </view>
+    <text class="hv-hint">{{quickStatus}}</text>
+    <view class="hv-soil hv-soil--{{soilState}}">
+      <view wx:if="{{soilState === 'loading'}}" class="hv-soil__spin"></view>
+      <text class="hv-soil__text">{{soilText}}</text>
+    </view>
+    <text class="hv-link" bindtap="onUseLocalSoil">读取内置国内土壤 ↻</text>
+    <view class="hv-settings-big" hover-class="hv-settings-big--press" bindtap="onOpenSettings">
+      <text class="hv-settings-big__title">调整种植条件 ↓</text>
+      <text class="hv-settings-big__sub">种植日期、土壤养分、供水、售价与成本</text>
+    </view>
+  </view>
+
+  <!-- 种植条件与投入设置 -->
+  <view id="hv-settings" class="card hv-card">
+    <view class="hv-more hv-more--head" hover-class="hv-more--press" hover-stay-time="80" data-key="settingsOpen" bindtap="onToggle">
+      <view class="hv-more__text"><text class="hv-more__title">种植条件与投入设置</text><text class="hv-more__sub">日期、土壤、预算 · 点击展开</text></view>
+      <text class="hv-more__icon {{settingsOpen ? 'hv-more__icon--open' : ''}}">›</text>
+    </view>
+    <view wx:if="{{settingsOpen}}" class="hv-more__body">
+      <text class="hv-section">准备怎么种</text>
+      <view class="hv-row">
+        <picker class="hv-field--half" range="{{unitOptions}}" range-key="label" value="{{unitIndex}}" bindchange="onUnit">
+          <view class="hv-field"><text class="hv-field__label">面积单位</text><view class="hv-field__value">{{unitOptions[unitIndex].label}}<text class="hv-caret">›</text></view></view>
+        </picker>
+        <view class="hv-field hv-field--half"><text class="hv-field__label">种植面积</text><input class="hv-input" type="digit" value="{{area}}" data-key="area" bindinput="onInput" /></view>
+      </view>
+      <picker range="{{dateModeOptions}}" range-key="label" value="{{dateModeIndex}}" bindchange="onDateMode">
+        <view class="hv-field"><text class="hv-field__label">种植时间怎么选</text><view class="hv-field__value">{{dateModeOptions[dateModeIndex].label}}<text class="hv-caret">›</text></view></view>
+      </picker>
+      <view class="hv-row">
+        <picker class="hv-field--half" mode="date" value="{{date}}" bindchange="onDate">
+          <view class="hv-field"><text class="hv-field__label">种植 / 移栽日期</text><view class="hv-field__value">{{date}}<text class="hv-caret">›</text></view></view>
+        </picker>
+        <view class="hv-field hv-field--half"><text class="hv-field__label">计划生育期（天）</text><input class="hv-input" type="number" value="{{days}}" data-key="days" bindinput="onInput" /></view>
+      </view>
+      <picker range="{{sourceOptions}}" range-key="label" value="{{sourceIndex}}" data-key="sourceIndex" bindchange="onPicker">
+        <view class="hv-field"><text class="hv-field__label">天气来源</text><view class="hv-field__value">{{sourceOptions[sourceIndex].label}}<text class="hv-caret">›</text></view></view>
+      </picker>
+      <picker range="{{yearsOptions}}" range-key="label" value="{{yearsIndex}}" data-key="yearsIndex" bindchange="onPicker">
+        <view class="hv-field"><text class="hv-field__label">比较多少个历史生长季</text><view class="hv-field__value">{{yearsOptions[yearsIndex].label}}<text class="hv-caret">›</text></view></view>
+      </picker>
+
+      <text class="hv-section">土壤与供水</text>
+      <picker range="{{soilOptions}}" range-key="label" value="{{soilIndex}}" bindchange="onSoilMode">
+        <view class="hv-field"><text class="hv-field__label">养分数据</text><view class="hv-field__value">{{soilOptions[soilIndex].label}}<text class="hv-caret">›</text></view></view>
+      </picker>
+      <view class="hv-soil-card">
+        <text class="hv-soil__text">{{soilText}}</text>
+        <view wx:if="{{soilFields.length}}" class="hv-soil-grid">
+          <view wx:for="{{soilFields}}" wx:key="key" class="hv-soil-grid__item"><text class="hv-soil-grid__label">{{item.label}}</text><text class="hv-soil-grid__value">{{item.value}} <text class="hv-soil-grid__unit">{{item.unit}}</text></text></view>
+        </view>
+        <text wx:if="{{soilNearby}}" class="hv-hint">📍 {{soilNearby}}。</text>
+        <text wx:if="{{soilFields.length}}" class="hv-hint">约1km背景值，不是实时测土。</text>
+        <text wx:if="{{soilOptions[soilIndex].value === 'china'}}" class="hv-link" bindtap="onSoilRetry">重新读取土壤</text>
+      </view>
+      <picker range="{{textureOptions}}" range-key="label" value="{{textureIndex}}" data-key="textureIndex" bindchange="onPicker">
+        <view class="hv-field"><text class="hv-field__label">土壤质地</text><view class="hv-field__value">{{textureOptions[textureIndex].label}}<text class="hv-caret">›</text></view></view>
+      </picker>
+      <picker range="{{waterOptions}}" range-key="label" value="{{waterIndex}}" data-key="waterIndex" bindchange="onPicker">
+        <view class="hv-field"><text class="hv-field__label">供水方式</text><view class="hv-field__value">{{waterOptions[waterIndex].label}}<text class="hv-caret">›</text></view></view>
+      </picker>
+      <picker range="{{drainageOptions}}" range-key="label" value="{{drainageIndex}}" data-key="drainageIndex" bindchange="onPicker">
+        <view class="hv-field"><text class="hv-field__label">排水</text><view class="hv-field__value">{{drainageOptions[drainageIndex].label}}<text class="hv-caret">›</text></view></view>
+      </picker>
+      <view class="hv-field {{waterOptions[waterIndex].value !== 'irrigated' ? 'hv-field--off' : ''}}"><text class="hv-field__label">本季可补灌水量（mm）</text><input class="hv-input" type="digit" value="{{irrigationLimit}}" disabled="{{waterOptions[waterIndex].value !== 'irrigated'}}" data-key="irrigationLimit" bindinput="onInput" /></view>
+      <view class="hv-field"><text class="hv-field__label">灌溉费 / 立方米到田水（默认为参考值，可改或清空）</text><input class="hv-input" type="digit" value="{{irrigationPrice}}" placeholder="留空＝不计入，不是0元" data-key="irrigationPrice" bindinput="onInput" /></view>
+      <checkbox-group bindchange="onInBase">
+        <label class="hv-check"><checkbox value="in" checked="{{irrigationInBase}}" color="#3f7d62" /><text>基础成本已包含灌溉费（不再单独扣除）</text></label>
+      </checkbox-group>
+      <text class="hv-hint">默认按及时灌溉计算，不把缺水当作限制；灌溉费默认 {{irrigationExample}} 元/立方米，是国内水费加抽水电费的粗略参考（常见约 0.2–1 元，取决于水源、扬程和电价），请改为当地实际；换成其他币种时会清空。浇水不会消除连续降雨造成的过湿和积水。排水不确定时会同时给出良好/一般/较差情景。模型未接入地势、河网和洪水资料，河流洪水淹没尚未评估。</text>
+
+      <view class="hv-sub" hover-class="hv-more--press" data-key="proOpen" bindtap="onToggle">
+        <text>土壤与生长专业设置</text><text class="hv-more__icon {{proOpen ? 'hv-more__icon--open' : ''}}">›</text>
+      </view>
+      <view wx:if="{{proOpen}}">
+        <text class="hv-hint">持水参数暂由质地估计。以下根深和初始含水比例为假设，可据实调整。养分必须是整季可吸收供应，不可直接填化验浓度 mg/kg。</text>
+        <view class="hv-row">
+          <view class="hv-field hv-field--half"><text class="hv-field__label">有效根区深度（m）</text><input class="hv-input" type="digit" value="{{rootDepth}}" data-key="rootDepth" bindinput="onInput" /></view>
+          <view class="hv-field hv-field--half"><text class="hv-field__label">初始可用水比例（0–1）</text><input class="hv-input" type="digit" value="{{initialWater}}" data-key="initialWater" bindinput="onInput" /></view>
+          <view class="hv-field hv-field--half {{waterOptions[waterIndex].value !== 'irrigated' ? 'hv-field--off' : ''}}"><text class="hv-field__label">单日补灌上限（mm）</text><input class="hv-input" type="digit" value="{{irrigationDailyMax}}" disabled="{{waterOptions[waterIndex].value !== 'irrigated'}}" data-key="irrigationDailyMax" bindinput="onInput" /></view>
+          <view class="hv-field hv-field--half {{soilOptions[soilIndex].value !== 'manual' ? 'hv-field--off' : ''}}"><text class="hv-field__label">pH</text><input class="hv-input" type="digit" value="{{ph}}" disabled="{{soilOptions[soilIndex].value !== 'manual'}}" data-key="ph" bindinput="onInput" /></view>
+          <view class="hv-field hv-field--third {{soilOptions[soilIndex].value !== 'manual' ? 'hv-field--off' : ''}}"><text class="hv-field__label">N 供应（kg/ha）</text><input class="hv-input" type="digit" value="{{n}}" disabled="{{soilOptions[soilIndex].value !== 'manual'}}" data-key="n" bindinput="onInput" /></view>
+          <view class="hv-field hv-field--third {{soilOptions[soilIndex].value !== 'manual' ? 'hv-field--off' : ''}}"><text class="hv-field__label">P 供应（kg/ha）</text><input class="hv-input" type="digit" value="{{p}}" disabled="{{soilOptions[soilIndex].value !== 'manual'}}" data-key="p" bindinput="onInput" /></view>
+          <view class="hv-field hv-field--third {{soilOptions[soilIndex].value !== 'manual' ? 'hv-field--off' : ''}}"><text class="hv-field__label">K 供应（kg/ha）</text><input class="hv-input" type="digit" value="{{k}}" disabled="{{soilOptions[soilIndex].value !== 'manual'}}" data-key="k" bindinput="onInput" /></view>
+        </view>
+        <block wx:if="{{soilOptions[soilIndex].value === 'china'}}">
+          <text class="hv-hint">国内格网只测了0–4.5cm表层；按0–20cm耕层估算（假设表层浓度代表整个耕层）：浓度×容重×20cm×以下假设利用比例。</text>
+          <view class="hv-row">
+            <view class="hv-field hv-field--third"><text class="hv-field__label">N 假设利用比例</text><input class="hv-input" type="digit" value="{{fracN}}" data-key="fracN" bindinput="onInput" /></view>
+            <view class="hv-field hv-field--third"><text class="hv-field__label">P 假设利用比例</text><input class="hv-input" type="digit" value="{{fracP}}" data-key="fracP" bindinput="onInput" /></view>
+            <view class="hv-field hv-field--third"><text class="hv-field__label">K 假设利用比例</text><input class="hv-input" type="digit" value="{{fracK}}" data-key="fracK" bindinput="onInput" /></view>
+          </view>
+        </block>
+      </view>
+
+      <block wx:if="{{soilOptions[soilIndex].value !== 'climate'}}">
+        <view class="hv-sub" hover-class="hv-more--press" data-key="econOpen" bindtap="onToggle">
+          <text>投入与收益条件</text><text class="hv-more__icon {{econOpen ? 'hv-more__icon--open' : ''}}">›</text>
+        </view>
+        <view wx:if="{{econOpen}}">
+          <picker range="{{currencies}}" value="{{currencyIndex}}" bindchange="onCurrency">
+            <view class="hv-field"><text class="hv-field__label">币种（切换不会自动换汇）</text><view class="hv-field__value">{{currencies[currencyIndex]}}<text class="hv-caret">›</text></view></view>
+          </picker>
+          <view class="hv-row">
+            <view class="hv-field hv-field--half"><text class="hv-field__label">新增肥料预算 / {{per}}</text><input class="hv-input" type="digit" value="{{budget}}" data-key="budget" bindinput="onInput" /></view>
+            <view class="hv-field hv-field--half"><text class="hv-field__label">鲜薯售价 / kg</text><input class="hv-input" type="digit" value="{{price}}" data-key="price" bindinput="onInput" /></view>
+            <view class="hv-field hv-field--half"><text class="hv-field__label">基础成本 / {{per}}</text><input class="hv-input" type="digit" value="{{base}}" data-key="base" bindinput="onInput" /></view>
+            <view class="hv-field hv-field--half"><text class="hv-field__label">商品率（0–1）</text><input class="hv-input" type="digit" value="{{marketable}}" data-key="marketable" bindinput="onInput" /></view>
+            <view class="hv-field hv-field--half"><text class="hv-field__label">随产量增加的费用 / kg</text><input class="hv-input" type="digit" value="{{harvestCost}}" data-key="harvestCost" bindinput="onInput" /></view>
+            <view class="hv-field hv-field--half"><text class="hv-field__label">复合肥单价 / kg（默认 2026年9月基准价）</text><input class="hv-input" type="digit" value="{{fertPrice}}" data-key="fertPrice" bindinput="onInput" /></view>
+          </view>
+          <text class="hv-hint">金额均按所选币种输入。默认价格与成本只是示例；基础成本应包含种苗、人工、地租和已有肥料等费用；灌溉费在“土壤与供水”里按模拟补灌量另计（若基础成本已含灌溉费请勾选，避免重复），留空则不计入；漏填的费用不会自动扣除。采收运输费若另填，请勿重复计入。</text>
+          <picker range="{{riskOptions}}" range-key="label" value="{{riskIndex}}" data-key="riskIndex" bindchange="onPicker">
+            <view class="hv-field"><text class="hv-field__label">比较偏好</text><view class="hv-field__value">{{riskOptions[riskIndex].label}}<text class="hv-caret">›</text></view></view>
+          </picker>
+        </view>
+      </block>
+
+      <view class="hv-submit" hover-class="hv-run--press" bindtap="onRun">{{running ? '正在分析…' : view ? (stale ? '更新分析 →' : '重新分析 →') : '开始分析 →'}}</view>
+      <text class="hv-hint">{{status}}</text>
+    </view>
+  </view>
+
+  <!-- 地块分析结果 -->
+  <view id="hv-result" class="hv-result">
+    <view class="hv-quick-top"><view class="hv-live-dot"></view><text>地块分析</text><text class="hv-beta">BETA</text></view>
+    <view wx:if="{{!view && !error && !running}}" class="card hv-card">
+      <text class="hv-card__title">选好位置，看看这片土地的可能</text>
+      <text class="hv-hint">选一个位置，再点“分析这个位置”。会结合多年天气、每日水分与土壤条件，给出能不能种、预计收成和收益。</text>
+    </view>
+    <view wx:if="{{running && !view}}" class="card hv-card">
+      <text class="hv-card__title">正在分析…</text>
+      <text class="hv-hint">正在读取多年天气并逐日计算，通常需要几秒到十几秒。</text>
+    </view>
+    <view wx:if="{{error}}" class="card hv-card hv-error">
+      <text class="hv-error__title">本次分析未完成</text>
+      <text class="hv-error__text">{{error}}</text>
+      <text class="hv-hint">展开种植条件，补齐提示信息后重试。</text>
+    </view>
+
+    <block wx:if="{{view && !error}}">
+      <view class="hv-result__inner {{stale || running ? 'hv-result__inner--stale' : ''}}">
+        <view wx:if="{{stale}}" class="hv-stale">条件已修改，下面是上次的结果。</view>
+
+        <view class="card hv-verdict hv-tone--{{view.tone}}">
+          <text class="hv-verdict__eyebrow">{{view.crop}} · Beta</text>
+          <text class="hv-verdict__title">{{view.headline}}</text>
+          <text class="hv-verdict__detail">{{view.detail}}</text>
+          <text class="hv-verdict__foot">{{view.footnote}}</text>
+          <view class="hv-chips">
+            <text class="hv-chip">{{view.waterText}}</text>
+            <text wx:if="{{view.irrigation}}" class="hv-chip">{{view.irrigation}}</text>
+            <text class="hv-chip">气候条件分 {{view.climateScore}}/100</text>
+          </view>
+        </view>
+
+        <view wx:if="{{view.yieldAvailable}}" class="hv-metrics">
+          <view class="hv-metric">
+            <text class="hv-metric__label">预计收成 kg/{{view.per}}</text>
+            <text class="hv-metric__value">{{view.yieldText}}</text>
+            <text class="hv-metric__note">平均 {{view.yieldMean}}</text>
+          </view>
+          <view class="hv-metric">
+            <text class="hv-metric__label">平均利润 {{view.money}}/{{view.per}}</text>
+            <text class="hv-metric__value">{{view.net}}</text>
+            <text class="hv-metric__note">较差年份 {{view.netLow}}</text>
+          </view>
+          <view class="hv-metric">
+            <text class="hv-metric__label">可出售 kg/{{view.per}}</text>
+            <text class="hv-metric__value hv-metric__value--sm">{{view.saleable}}</text>
+            <text class="hv-metric__note">商品率 {{view.marketable}}%</text>
+          </view>
+          <view class="hv-metric">
+            <text class="hv-metric__label">保本售价</text>
+            <text class="hv-metric__value hv-metric__value--sm">{{view.breakEven}}</text>
+            <text class="hv-metric__note">{{view.lossShare}}% 的年份亏损</text>
+          </view>
+        </view>
+        <view wx:else class="card hv-card"><text class="hv-hint">只有天气：不计算产量和收益。要看收成，请在“种植条件与投入设置”里选择国内表层格网或手填养分。</text></view>
+        <text wx:if="{{view.yieldAvailable && !view.supported}}" class="hv-hint hv-hint--pad">未通过可行性检查：产量和利润仅作试验估算。</text>
+
+        <view wx:if="{{view.issues.length}}" class="card hv-card">
+          <text class="hv-card__title">需要注意的问题</text>
+          <block wx:for="{{view.issues}}" wx:key="*this">
+            <view class="hv-issue"><view class="hv-issue__dot"></view><text>{{item}}</text></view>
+          </block>
+        </view>
+
+        <view wx:if="{{view.bars.length}}" class="card hv-card">
+          <text class="hv-card__title">如果遇上不同年景</text>
+          <text class="hv-hint">同一套种植方案，在过去每一年的天气下的鲜薯产量（kg/{{view.per}}）</text>
+          <view class="hv-bars">
+            <block wx:for="{{view.bars}}" wx:key="year">
+              <view class="hv-bar">
+                <text class="hv-bar__val">{{item.value}}</text>
+                <view class="hv-bar__col hv-bar__col--{{item.tag}}" style="height:{{item.height * 2}}rpx"></view>
+                <text class="hv-bar__year">'{{item.year}}</text>
+              </view>
+            </block>
+          </view>
+        </view>
+
+        <view wx:if="{{view.yieldAvailable}}" class="card hv-card">
+          <text class="hv-card__title">预计成本 · {{view.money}}/{{view.per}}</text>
+          <block wx:for="{{view.costs}}" wx:key="name">
+            <view class="hv-cost {{index === view.costs.length - 1 ? 'hv-cost--total' : ''}}">
+              <view class="hv-cost__left"><text class="hv-cost__name">{{item.name}}</text><text class="hv-cost__note">{{item.note}}</text></view>
+              <text class="hv-cost__value">{{item.value}}</text>
+            </view>
+          </block>
+          <view wx:if="{{view.fertilizer}}" class="hv-fert hv-tone--{{view.fertilizer.tone}}">
+            <text class="hv-fert__title">施肥需求：{{view.fertilizer.level}}</text>
+            <text class="hv-fert__text">{{view.fertilizer.summary}}</text>
+            <text wx:if="{{view.fertilizer.advice}}" class="hv-fert__text hv-fert__text--strong">{{view.fertilizer.advice}}</text>
+          </view>
+        </view>
+
+        <view class="card hv-card">
+          <text class="hv-card__title">是什么限制了生长</text>
+          <block wx:for="{{view.factors}}" wx:key="id">
+            <view class="hv-factor">
+              <view class="hv-factor__head">
+                <text class="hv-factor__name">{{item.name}}</text>
+                <text class="hv-factor__chip hv-tone--{{item.tone}}">{{item.statusText}}{{item.score ? ' · ' + item.score : ''}}</text>
+              </view>
+              <view class="hv-track"><view class="hv-track__fill hv-track__fill--{{item.tone}}" style="width:{{item.width}}%"></view></view>
+              <text class="hv-factor__text">{{item.evidence}}</text>
+            </view>
+          </block>
+        </view>
+
+        <view class="hv-source">
+          <text>{{view.source}}</text>
+          <text>{{view.version}}</text>
+          <text>Beta：参数尚未做地区验证，结果用于比较情景，不是施肥或种植处方。水分曲线、逐年明细和导出请到网页版查看。</text>
+        </view>
+      </view>
+    </block>
+  </view>
+</view>
+</scroll-view>

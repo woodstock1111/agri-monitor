@@ -1,4 +1,4 @@
-<view class="bd">
+<view class="bd ui-page-enter">
   <view class="bd-hero">
     <image class="bd-hero__img" src="/assets/agent-sweet-potato.png" mode="aspectFit"></image>
     <text class="bd-hero__title">绑定你的账号</text>

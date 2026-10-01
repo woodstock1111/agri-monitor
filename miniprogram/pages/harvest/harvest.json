@@ -1,7 +1,9 @@
 {
   "navigationBarTitleText": "AI收成预测",
-  "navigationBarBackgroundColor": "#f8fafc",
+  "navigationBarBackgroundColor": "#f2efde",
   "navigationBarTextStyle": "black",
-  "backgroundColor": "#e8edf3",
-  "usingComponents": {}
+  "backgroundColor": "#f2efde",
+  "usingComponents": {
+    "harvest-panel": "/components/harvest-panel/harvest-panel"
+  }
 }

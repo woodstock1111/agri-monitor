@@ -1,155 +1,81 @@
-<wxs src="./gesture.wxs" module="gm" />
-
-<view class="map-root">
-  <view
-    class="viewport"
-    data-vw="{{vw}}"
-    data-vh="{{vh}}"
-    data-initx="{{initTx}}"
-    data-inity="{{initTy}}"
-    data-mincx="{{extMinCx}}"
-    data-maxcx="{{extMaxCx}}"
-    data-mincy="{{extMinCy}}"
-    data-maxcy="{{extMaxCy}}"
-    bind:touchstart="{{gm.onTouchStart}}"
-    bind:touchmove="{{gm.onTouchMove}}"
-    bind:touchend="{{gm.onTouchEnd}}"
-    bind:touchcancel="{{gm.onTouchEnd}}"
-  >
-    <view class="stage" style="transform: translate3d({{initTx}}px,{{initTy}}px,0);">
-      <!-- 铺满的农田底图（无可见边界） -->
-      <view class="land">
-        <view class="land__rows"></view>
+<view class="map-root {{mapReady ? 'map-root--ready' : ''}} {{pageLeaving ? 'map-root--leaving' : ''}} {{pageReturn ? 'map-root--return' : ''}}">
+  <movable-area class="map-area" style="top:{{mapTop}}px;width:{{vw}}px;height:{{mapHeight}}px">
+    <movable-view class="map-box" direction="all" inertia damping="40" friction="3" out-of-bounds="{{false}}"
+      x="{{mapX}}" y="{{mapY}}" animation="{{mapAnimate}}" style="width:{{boxW}}px;height:{{boxH}}px"
+      bindchange="onMapChange" bindtap="onMapTap">
+     <view class="map-world" style="left:{{-boxX}}px;top:{{-boxY}}px;width:{{worldW}}px;height:{{worldH}}px">
+      <image class="map-art" src="/assets/park/park-world.jpg" mode="scaleToFill" style="width:{{worldW}}px;height:{{worldH}}px" bindload="onMapArtLoad" />
+      <!-- Fog outside the unlocked area; while unlocking, the old layer fades out under the new one. -->
+      <view wx:if="{{fogPrev}}" class="fog-layer {{fogPrev.entering || fogPrev.out ? 'fog-layer--hidden' : ''}}" style="width:{{worldW}}px;height:{{worldH}}px">
+        <view class="fog-wash" style="width:{{worldW}}px;{{fogPrev.wash}}"></view>
+        <image wx:for="{{fogPrev.puffs}}" wx:key="id" class="fog-puff {{item.flip ? 'fog-puff--flip' : ''}}" src="/assets/park/fog.png" mode="scaleToFill" style="{{item.style}}" />
       </view>
-      <view class="sea"></view>
-      <view class="coast"></view>
-      <view class="channel"></view>
-      <view class="road road--main"></view>
-      <view class="road road--branch"></view>
-      <view class="map-badge">海南 · 文昌 · 地瓜产业园</view>
-
-      <!-- 散落的手绘小花，按拖动方向倾倒 -->
-      <view class="deco-layer">
-        <block wx:for="{{decos}}" wx:key="idx">
-          <view class="flower flower--{{item.variant}}" style="left:{{item.x}}rpx; top:{{item.y}}rpx;">
-            <view class="flower__head"></view>
-            <view class="flower__leaf"></view>
-            <view class="flower__stem"></view>
+      <view wx:if="{{fogNow}}" class="fog-layer {{fogNow.entering || fogNow.out ? 'fog-layer--hidden' : ''}}" style="width:{{worldW}}px;height:{{worldH}}px">
+        <view class="fog-wash" style="width:{{worldW}}px;{{fogNow.wash}}"></view>
+        <image wx:for="{{fogNow.puffs}}" wx:key="id" class="fog-puff {{item.flip ? 'fog-puff--flip' : ''}}" src="/assets/park/fog.png" mode="scaleToFill" style="{{item.style}}" />
+      </view>
+      <block wx:for="{{plots}}" wx:key="id">
+        <block wx:if="{{item.mapped}}">
+          <image class="plot-glow {{item.id === focusId ? 'plot-glow--on' : ''}}" src="{{item.glowSrc}}" style="{{item.glowStyle}}" />
+          <view class="plot-tag {{item.id === focusId ? 'plot-tag--on' : ''}}" style="left:{{item.tagX}}px;top:{{item.tagY}}px">
+            <view class="plot-tag__dot" style="background:{{item.swatch}}"></view>
+            <view class="plot-tag__text"><text class="plot-tag__name">{{item.name || '未命名地块'}}</text><text class="plot-tag__crop">{{item.crop && item.crop !== '未填写品种' ? item.crop : '未填品种'}}</text></view>
+            <view wx:if="{{item.sensor && item.sensor.alarmLevel > 0}}" class="plot-tag__alarm"></view>
           </view>
         </block>
-      </view>
-
-      <!-- 地块 -->
-      <block wx:for="{{plots}}" wx:key="id">
-        <view
-          class="plot {{item.id === focusId ? 'plot--focus' : ''}}"
-          data-id="{{item.id}}"
-          data-cx="{{item.cx}}"
-          data-cy="{{item.cy}}"
-          style="left:{{item.left}}rpx; top:{{item.top}}rpx; width:{{item.size}}rpx; height:{{item.h}}rpx; transform: translateY({{-item.initLift}}px) scale({{item.initScale}}); z-index:{{item.z}};"
-          catchtap="onTapPlot"
-        >
-          <view class="parcel parcel--{{item.tone}}">
-            <view class="parcel__rows"></view>
-          </view>
-
-          <!-- 进入提示：聚焦时淡淡浮现在田块下方地上 -->
-          <view class="enter-hint">进入 ›</view>
-
-          <!-- 悬浮标签卡 -->
-          <view class="pin">
-            <view class="pin__shell">
-              <view class="pin__card">
-                <view class="pin__row">
-                  <text class="pin__name">{{item.name}}</text>
-                  <view wx:if="{{item.sensor.alarmLevel > 0}}" class="pin__alarm"></view>
-                </view>
-                <text class="pin__crop">{{item.crop}}</text>
-
-                <view class="pin__info">
-                  <view class="ichip">
-                    <text class="ichip__num">{{item.unfinishedCount}}</text>
-                    <text class="ichip__label">待办</text>
-                  </view>
-                  <view wx:if="{{item.sensor.metrics[0]}}" class="ichip">
-                    <text class="ichip__num">{{item.sensor.metrics[0].value}}<text class="ichip__unit">{{item.sensor.metrics[0].unit}}</text></text>
-                    <text class="ichip__label">{{item.sensor.metrics[0].name}}</text>
-                  </view>
-                  <view wx:if="{{item.sensor.metrics[1]}}" class="ichip">
-                    <text class="ichip__num">{{item.sensor.metrics[1].value}}<text class="ichip__unit">{{item.sensor.metrics[1].unit}}</text></text>
-                    <text class="ichip__label">{{item.sensor.metrics[1].name}}</text>
-                  </view>
-                </view>
-              </view>
-            </view>
-            <view class="pin__stem"></view>
-          </view>
-        </view>
       </block>
+     </view>
+    </movable-view>
+  </movable-area>
+  <!-- Clouds part over the map on entry. -->
+  <view wx:if="{{introVisible}}" class="intro {{introOpen ? 'intro--open' : ''}}" style="top:{{mapTop}}px;height:{{mapHeight}}px">
+    <image class="intro__cloud intro__cloud--l" src="/assets/park/fog.png" mode="scaleToFill" />
+    <image class="intro__cloud intro__cloud--r" src="/assets/park/fog.png" mode="scaleToFill" />
+    <image class="intro__cloud intro__cloud--c" src="/assets/park/fog.png" mode="scaleToFill" />
+  </view>
+  <view class="topbar" style="padding-top:{{statusBarHeight + 12}}px">
+    <view class="topbar__heading">
+      <view class="topbar__back" hover-class="control--press" bindtap="onBackCover">‹</view>
+      <text class="topbar__title">{{parkTitle}}</text>
+    </view>
+    <view class="topbar__subrow">
+      <text class="topbar__count">{{mapReady ? plots.length + ' 个地块 · 拖动浏览' : '正在准备园区'}}</text>
+      <view class="topbar__ledger" hover-class="control--press" bindtap="onOpenLedger">＋ 地块台账</view>
     </view>
   </view>
-
-  <!-- 纸质颗粒：屏幕固定层，不随地图移动，拖动时不参与合成 -->
-  <view class="paper-grain"></view>
-
-  <!-- 顶部信息条 -->
-  <view class="topbar" style="padding-top:{{statusBarHeight}}px">
-    <view class="topbar__back" hover-class="topbar__back--press" hover-stay-time="80" bindtap="onBackCover">‹</view>
-    <view class="topbar__wrap">
-      <text class="topbar__title">地瓜产业园区</text>
-      <text class="topbar__sub">{{plots.length}} 个地块 · 拖动浏览，点击进入</text>
-    </view>
+  <view wx:if="{{!mapReady}}" class="map-state">
+    <view class="map-state__mark"></view>
+    <text>{{loadError || '正在铺开这片田园…'}}</text>
+    <view wx:if="{{loadError}}" class="map-state__retry" bindtap="loadPlots">重新加载</view>
   </view>
-
-  <!-- 底部按键：智能管家 · 问小薯 · 成熟度 · 收成预测 -->
-  <view wx:if="{{!detailOpen && !aiOpen && !ripeOpen}}" class="agent-dock" style="padding-bottom:{{safeBottom}}px">
-    <view class="side-btn" hover-class="side-btn--press" hover-stay-time="80" bindtap="onOpenAiPanel">
-      <view class="side-btn__orb">
-        <view class="icon-drop"></view>
-        <view class="icon-drop icon-drop--small"></view>
-      </view>
-      <text class="side-btn__label">智能管家</text>
+  <view wx:elif="{{!plots.length}}" class="map-empty"><text>还没有地块</text><text class="map-empty__sub">在地块台账中管理你的土地</text></view>
+  <view class="park-shelf {{sheetVisible ? 'park-shelf--hidden' : ''}}" style="padding-bottom:{{safeBottom}}px">
+    <view wx:if="{{selectedPlot}}" class="plot-selector" bindtouchstart="onSelectorStart" bindtouchend="onSelectorEnd" bindtouchcancel="onSelectorCancel">
+      <view class="selector-arrow {{selectedIndex <= 0 ? 'selector-arrow--disabled' : ''}}" hover-class="control--press" catchtap="onPreviousPlot">‹</view>
+      <view class="selector-info selector-info--{{selectorParity ? 'a' : 'b'}}"><view class="selector-swatch" style="background:{{selectedPlot.swatch}}"></view><view class="selector-text"><text class="selector-name">{{selectedPlot.name}}</text><text class="selector-meta">{{selectedPlot.mapped ? selectedPlot.crop : '尚未标注'}} · {{selectedPlot.area}}亩</text></view></view>
+      <view class="selector-arrow {{selectedIndex >= plots.length - 1 ? 'selector-arrow--disabled' : ''}}" hover-class="control--press" catchtap="onNextPlot">›</view>
+      <view class="selector-enter" hover-class="control--press" catchtap="onEnterSelected">{{detailLoading ? '加载中' : '进入 ↗'}}</view>
     </view>
-
-    <view class="agent-btn" hover-class="agent-btn--press" hover-stay-time="80" bindtap="onOpenAgent">
-      <view class="agent-btn__orb">
-        <image class="agent-btn__body" src="/assets/agent-sweet-potato.png" mode="aspectFit"></image>
-        <image class="agent-btn__desk" src="/assets/agent-spud-desk.png" mode="aspectFit"></image>
-      </view>
-      <text class="agent-btn__label">问小薯</text>
-    </view>
-
-    <view class="side-btn" hover-class="side-btn--press" hover-stay-time="80" bindtap="onOpenRipePanel">
-      <view class="side-btn__orb">
-        <view class="icon-gauge">
-          <view class="icon-gauge__hole"></view>
-        </view>
-      </view>
-      <text class="side-btn__label">成熟度</text>
-    </view>
-
-    <view class="side-btn" hover-class="side-btn--press" hover-stay-time="80" bindtap="onOpenHarvest">
-      <view class="side-btn__orb">
-        <view class="icon-bars">
-          <view class="icon-bars__bar icon-bars__bar--1"></view>
-          <view class="icon-bars__bar icon-bars__bar--2"></view>
-          <view class="icon-bars__bar icon-bars__bar--3"></view>
-        </view>
-      </view>
-      <text class="side-btn__label">收成预测</text>
+    <view class="park-nav">
+      <view class="park-nav__item" hover-class="control--press" bindtap="onOpenAiPanel"><image class="park-nav__icon" src="/assets/park/steward.png" /><text>智能管家</text></view>
+      <view class="park-nav__item" hover-class="control--press" bindtap="onOpenAgent"><image class="park-nav__icon" src="/assets/park/chat.png" /><text>问小薯</text></view>
+      <view class="park-nav__item" hover-class="control--press" bindtap="onOpenRipePanel"><image class="park-nav__icon" src="/assets/park/maturity.png" /><text>成熟度</text></view>
+      <view class="park-nav__item" hover-class="control--press" bindtap="onOpenHarvest"><image class="park-nav__icon" src="/assets/park/harvest.png" /><text>收成预测</text></view>
     </view>
   </view>
 
   <!-- 详情 + 小薯 共用一个 page-container（同页多个 page-container 只有第一个生效，故合并） -->
   <page-container
-    show="{{detailOpen || agentOpen || aiOpen || ripeOpen}}"
+    show="{{sheetVisible}}"
     position="bottom"
     round="{{true}}"
     overlay="{{true}}"
-    duration="200"
+    duration="320"
+    bind:beforeleave="onSheetBeforeLeave"
     bind:afterleave="onSheetLeave"
-    custom-style="height:{{agentOpen ? '86vh' : '80vh'}};background:#f1e9d8"
+    custom-style="height:{{agentOpen ? '86vh' : '80vh'}};background:#f2efde"
   >
+   <view class="sheet-content">
    <block wx:if="{{detailOpen}}">
     <view class="detail__grab"></view>
     <view class="detail__head">
@@ -345,6 +271,19 @@
     </scroll-view>
    </block>
 
+   <!-- AI收成预测：与网页版同一套表单 -->
+   <block wx:elif="{{harvestOpen}}">
+    <view class="detail__grab"></view>
+    <view class="panel-head">
+      <view class="panel-head__wrap">
+        <view class="panel-head__titlerow"><text class="panel-head__title">AI收成预测</text><view class="ai-chip">Beta</view></view>
+        <text class="panel-head__sub">比较不同年景下的收成与投入，找出真正限制这块地的因素。</text>
+      </view>
+      <view class="detail__close" catchtap="onCloseHarvest">✕</view>
+    </view>
+    <harvest-panel plot-id="{{harvestPlotId}}" height="{{panelScrollH}}" />
+   </block>
+
    <!-- 成熟度总览：地块 → 区块下拉 -->
    <block wx:elif="{{ripeOpen}}">
     <view class="detail__grab"></view>
@@ -393,5 +332,6 @@
      </view>
     </scroll-view>
    </block>
+   </view>
   </page-container>
 </view>

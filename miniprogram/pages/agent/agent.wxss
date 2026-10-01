@@ -1,12 +1,12 @@
 /* ============================================================
    小薯聊天页 —— 对齐「编辑插画庄园图 / 详情抽屉」纸质调
-   纸 #efe6d3 / 卡 #f7f1e3 ｜ 墨 #3a3026 ｜ 苔绿（人）｜ 赤陶（小薯）
+   纸 #e9e8d8 / 卡 #fbf8ee ｜ 墨 #354b3d ｜ 苔绿（人）｜ 赤陶（小薯）
    ============================================================ */
 .chat {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: linear-gradient(180deg, #f1e9d8 0%, #e9e0cc 100%);
+  background: linear-gradient(180deg, #f2efde 0%, #e9e8d8 100%);
   /* 整页轻柔升起：打开自然一点 */
   animation: chatRise 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -37,10 +37,10 @@
   width: 64rpx;
   height: 64rpx;
   border-radius: 50%;
-  background: #efe6d3;
-  border: 1rpx solid rgba(70, 58, 44, 0.16);
+  background: #e9e8d8;
+  border: 1rpx solid rgba(53, 75, 61, 0.16);
   flex-shrink: 0;
-  box-shadow: 0 4rpx 12rpx rgba(70, 58, 44, 0.12);
+  box-shadow: 0 4rpx 12rpx rgba(53, 75, 61, 0.12);
   transform-origin: center bottom;
   animation: potatoPop 620ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
 }
@@ -66,11 +66,11 @@
   to   { opacity: 1; transform: translateY(0); }
 }
 .bubble--assistant {
-  background: #f7f1e3;
-  color: #3a3026;
-  border: 1rpx solid rgba(70, 58, 44, 0.14);
+  background: #fbf8ee;
+  color: #354b3d;
+  border: 1rpx solid rgba(53, 75, 61, 0.14);
   border-top-left-radius: 8rpx;
-  box-shadow: 0 6rpx 18rpx rgba(70, 58, 44, 0.08);
+  box-shadow: 0 6rpx 18rpx rgba(53, 75, 61, 0.08);
 }
 .bubble--user {
   background: linear-gradient(160deg, #6f8a57, #5a7349);
@@ -108,7 +108,7 @@
 .inputbar {
   flex-shrink: 0;
   background: rgba(243, 236, 219, 0.94);
-  border-top: 1rpx solid rgba(70, 58, 44, 0.14);
+  border-top: 1rpx solid rgba(53, 75, 61, 0.14);
   padding: 16rpx 24rpx 0;
   box-sizing: border-box;
 }
@@ -122,7 +122,7 @@
   width: 120rpx;
   height: 120rpx;
   border-radius: 16rpx;
-  border: 1rpx solid rgba(70, 58, 44, 0.14);
+  border: 1rpx solid rgba(53, 75, 61, 0.14);
 }
 .attach__rm {
   position: absolute;
@@ -149,9 +149,9 @@
   height: 72rpx;
   flex-shrink: 0;
   border-radius: 50%;
-  background: #efe6d3;
-  border: 1rpx solid rgba(70, 58, 44, 0.12);
-  color: #c0824f;
+  background: #e9e8d8;
+  border: 1rpx solid rgba(53, 75, 61, 0.12);
+  color: #526f54;
   font-size: 44rpx;
   font-weight: 300;
   display: flex;
@@ -165,12 +165,12 @@
   min-width: 0;
   height: 72rpx;
   padding: 0 26rpx;
-  background: #efe6d3;
-  border: 1rpx solid rgba(70, 58, 44, 0.12);
+  background: #e9e8d8;
+  border: 1rpx solid rgba(53, 75, 61, 0.12);
   border-radius: 36rpx;
   font-size: 30rpx;
   letter-spacing: 0.3rpx;
-  color: #3a3026;
+  color: #354b3d;
   box-sizing: border-box;
 }
 .ph { color: #a8987f; }
@@ -180,7 +180,7 @@
   height: 72rpx;
   line-height: 72rpx;
   border-radius: 36rpx;
-  background: #5f7a4e;
+  background: #526f54;
   color: #fbf7ee;
   font-size: 28rpx;
   font-weight: 700;

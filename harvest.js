@@ -24,7 +24,7 @@
   function soilStatus(text){$('soil-status').textContent=text;$('soil-summary').textContent=text;}
   function syncLocations(locations){
     const previous=$('location').value;
-    const own=locations.filter(l=>l.lat!==''&&l.lng!==''&&l.lat!=null&&l.lng!=null&&Number.isFinite(Number(l.lat))&&Number.isFinite(Number(l.lng))&&Math.abs(l.lat)<=90&&Math.abs(l.lng)<=180);
+    const own=locations.filter(l=>l.lat!==''&&l.lng!==''&&l.lat!=null&&l.lng!=null&&Number.isFinite(Number(l.lat))&&Number.isFinite(Number(l.lng))&&Math.abs(l.lat)<=90&&Math.abs(l.lng)<=180&&!(Number(l.lat)===0&&Number(l.lng)===0));
     $('location').innerHTML=(own.length?`<optgroup label="我的地块">${own.map(l=>`<option value="loc-${esc(l.id)}" data-lat="${Number(l.lat)}" data-lng="${Number(l.lng)}">${esc(l.name)}</option>`).join('')}</optgroup>`:'')+
       `<optgroup label="示例区域">${presets.map((p,i)=>`<option value="preset-${i}" data-lat="${p[1]}" data-lng="${p[2]}">${p[0]}</option>`).join('')}</optgroup><option value="custom">地图选点 / 自定义坐标</option>`;
     $('location').value=[...$('location').options].some(o=>o.value===previous)?previous:'preset-0';
@@ -100,7 +100,7 @@
     }else $('map').innerHTML='<div class="hv-map-fallback">地图暂时未加载，仍可在上方选择地区或输入坐标。</div>';
     loadSoil();
   }
-  function cropNote(){$('crop-note').textContent=M.crops[$('crop').value].parameterSource+'。填写品种名用于记录，不会自动生成该品种的已验证参数。';}
+  function cropNote(){$('crop-note').textContent='参数均未做地区标定。填写品种名用于记录，不会自动生成该品种的已验证参数。';}
   // WGS84 <-> GCJ-02 (the offset Chinese basemaps apply). Outside mainland China both are the same.
   function gcjOffset(lat,lng){
     const a=6378245,ee=0.00669342162296594323,x=lng-105,y=lat-35;
@@ -115,7 +115,7 @@
   function expandMap(expand){mapExpanded=expand;host.classList.toggle('hv-map-expanded',expand);$('map-expand').textContent=expand?'收起地图 · Esc':'展开地图 ↗';$('map-expand').setAttribute('aria-expanded',String(expand));if(map){expand?map.scrollWheelZoom.enable():map.scrollWheelZoom.disable();setTimeout(()=>map.invalidateSize(),80);}if(!expand)$('map-expand').focus();}
   function pointChanged(recenter=true){
     invalidate();const lat=number('lat'),lng=number('lng');
-    if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180){clearSoil();status('请输入有效经纬度');return;}
+    if(!Number.isFinite(lat)||!Number.isFinite(lng)||Math.abs(lat)>90||Math.abs(lng)>180||(lat===0&&lng===0)){clearSoil();status('请输入有效经纬度');return;}
     marker?.setLatLng(toMap(lat,lng));if(recenter)map?.setView(toMap(lat,lng),9);
     $('point').textContent=`${lat.toFixed(5)}, ${lng.toFixed(5)} · WGS84`;
     let reset='';if(nutrientOrigin?.kind==='soil'&&nutrientOrigin.key!==pointKey(lat,lng)){Object.entries(NUTRIENT_DEFAULTS).forEach(([id,v])=>$(id).value=v);nutrientOrigin=null;reset='手填养分已恢复为示例值（原数值来自上一个地点的土壤），请按当前地块核对。';}
@@ -144,7 +144,7 @@
     try{const data=await requestSoil(String(lat),String(lng),controller.signal);if(token!==soilRevision)return;if(!data.ok)throw Error(data.msg||'此点暂无土壤数据');soil=data;soilKey=key;applySoil();
       const nearby=data.nearest?`已使用附近约 ${num(data.nearest.distanceKm,1)} km 处的数据（原点位没有土壤值，可能是城区或水面）`:'';
       soilStatus((nearby?nearby+' · ':'内置土壤已就绪 · ')+'pH '+num(data.fields.ph.value,2)+' · 氮 '+num(data.fields.availableN.value,1)+' / 磷 '+num(data.fields.availableP.value,1)+' / 钾 '+num(data.fields.availableK.value,1)+' mg/kg（表层背景）');
-      $('soil-values').innerHTML='<div class="hv-soil-grid">'+Object.values(data.fields).map(f=>`<div><span>${esc(f.label)}</span><b>${num(f.value,2)} <small>${esc(f.unit)}</small></b></div>`).join('')+'</div>'+(nearby?`<p class="hv-hint hv-nearby">📍 ${esc(nearby)}。</p>`:'')+'<p class="hv-hint">约1km背景值，不是实时测土。<a href="https://doi.org/10.11888/Soil.tpdc.270281" target="_blank" rel="noopener">来源</a></p>';
+      $('soil-values').innerHTML='<div class="hv-soil-grid">'+Object.values(data.fields).map(f=>`<div><span>${esc(f.label)}</span><b>${num(f.value,2)} <small>${esc(f.unit)}</small></b></div>`).join('')+'</div>'+(nearby?`<p class="hv-hint hv-nearby">📍 ${esc(nearby)}。</p>`:'')+'<p class="hv-hint">约1km背景值，不是实时测土。</p>';
     }catch(e){if(token===soilRevision){soil=null;soilError=e.name==='AbortError'?'土壤读取超时，请点击读取内置土壤重试。':e.message;soilStatus(soilError);}}
     finally{clearTimeout(timer);if(token===soilRevision){soilLoadingKey='';$('soil-retry').disabled=false;}}
   }
@@ -155,6 +155,7 @@
     p.irrigationPrice=$('irrigationPrice').value.trim()===''?null:number('irrigationPrice');p.irrigationInBase=!!$('irrigationInBase').checked;p.irrigationPriceOrigin=irrigationPriceTouched?'user':'example';
     p.variety=$('variety').value.trim()||'generic';p.soilOrigin=$('soil-mode').value;
     if(unit==='ha'){p.area*=15;['budget','base'].forEach(k=>p[k]/=15);}
+    if(p.lat===0&&p.lng===0)throw Error('请输入有效经纬度（0, 0 表示未填位置）');
     if(p.soilOrigin==='china')Object.assign(p,applySoil());
     if(p.soilOrigin==='climate')Object.assign(p,{n:0,p:0,k:0,ph:6,price:0,base:0,budget:0,fertPrice:1,marketable:1,harvestCost:0,existingRate:0,maxRate:0,fertilizer:[0,0,0]});
     return M.normalize(p);
@@ -240,7 +241,7 @@
   }
   function factorList(o,p,f){
     const dm=M.crops[p.crop].dm,fresh=x=>x/dm/15*f;
-    const items=o.factors.map(x=>`<div class="hv-factor hv-st-${x.status}"><div class="hv-factor-label"><b>${esc(x.name)}</b><span class="hv-chip">${esc(x.statusText)}${x.score===null?'':' · '+x.score+' / 100'}</span></div><div class="hv-track"><i style="width:${x.score===null?0:Math.max(0,Math.min(100,x.score))}%"></i></div><p>${esc(x.evidence)}</p>${x.risks.map(k=>`<p class="hv-risk hv-risk-${esc(k.level)}">${esc(k.text)}</p>`).join('')}<p class="hv-factor-source">${esc(x.method)}${x.assumption?' · 含假设':''} · 来源：${esc(x.source)}</p></div>`).join('');
+    const items=o.factors.map(x=>`<div class="hv-factor hv-st-${x.status}"><div class="hv-factor-label"><b>${esc(x.name)}</b><span class="hv-chip">${esc(x.statusText)}${x.score===null?'':' · '+x.score+' / 100'}</span></div><div class="hv-track"><i style="width:${x.score===null?0:Math.max(0,Math.min(100,x.score))}%"></i></div><p>${esc(x.evidence)}</p>${x.risks.map(k=>`<p class="hv-risk hv-risk-${esc(k.level)}">${esc(k.text)}</p>`).join('')}${x.assumption?'<p class="hv-factor-source">含假设</p>':''}</div>`).join('');
     return `<div class="hv-factors">${items}</div>`;
   }
   function yearlyTable(o,p,f){
@@ -250,11 +251,7 @@
       const cost=y.costs?y.costs.base+y.costs.fertilizer+y.costs.harvest+(y.costs.irrigation??0):null;
       return `<tr><td>${y.year}</td><td>${num(y.meanT,1)} / ${num(y.meanTmax,1)}</td><td>${num(y.radiation)}</td><td>${num(y.rain)}</td><td>${num(y.irrigation*2/3*view.f,1)}</td><td>${num(y.anoxicDays)}</td><td>${num(y.chillDays)} / ${num(y.frostRiskDays)}</td><td>${esc(y.stageAtHarvest)}</td><td>${num(y.climateFreshMu*f)}</td>${o.yieldAvailable?`<td>${num(y.fresh*f)}</td><td>${num(y.revenue*f)}</td><td>${num(cost*f)}</td><td>${num(y.net*f)}</td><td>${esc(flag(y))}</td>`:''}</tr>`;}).join('')}</tbody></table></div>`;
   }
-  function parameterTable(p){
-    const rows=[...Object.entries(M.PARAMETERS[p.crop]),...Object.entries(M.PARAMETERS.shared)];
-    const show=v=>Array.isArray(v)?v.map(x=>Array.isArray(x)?'['+x.join(', ')+']':x).join(', '):typeof v==='object'?Object.entries(v).map(([k,x])=>k+'='+x).join(', '):String(v);
-    return `<div class="hv-table-wrap"><table class="hv-params"><thead><tr><th>参数</th><th>数值</th><th>单位</th><th>可信度</th><th>适用</th><th>来源</th></tr></thead><tbody>${rows.map(([k,v])=>`<tr><td>${esc(k)}</td><td>${esc(show(v.value))}</td><td>${esc(v.unit)}</td><td>${esc(v.confidence)}</td><td>${esc(v.scope)}</td><td>${esc(v.source)}${v.note?' · '+esc(v.note):''}</td></tr>`).join('')}</tbody></table></div>`;
-  }
+
   // Top-of-page money summary; the cost breakdown and fertilizer options sit further down (costPanel).
   function profitPanel(o,p,f,label,b,supported){
     const cur=esc(p.currency),avg=k=>b.years.reduce((a,y)=>a+(y[k]??0),0)/b.years.length,revenue=avg('revenue'),cost=revenue-b.net;
@@ -265,13 +262,10 @@
     <p class="hv-hint">${num(b.lossShare*100)}% 的所选历史年景会亏损（${esc(o.lossMeaning)}）。价格和成本默认值只是示例，成本明细见下方。</p></article>`;
   }
   // Rough 2026 fertilizer reference (CNY, wholesale benchmark prices on 2026-09-11; farm-gate prices are usually higher).
-  const FERT_REF={date:'2026-09-11',source:'<a href="https://news.qq.com/rain/a/20260911A0ASP600" target="_blank" rel="noopener">生意社 9月11日化肥基准价</a>',
-    prices:{urea:['尿素（含氮46%）',1.81],npk:['复合肥 15-15-15',3.49],sop:['硫酸钾（K₂O 50%）',3.95],mop:['氯化钾（K₂O 60%，进口）',3.33]},
+  const FERT_REF={date:'2026-09-11',prices:{urea:['尿素（含氮46%）',1.81],npk:['复合肥 15-15-15',3.49],sop:['硫酸钾（K₂O 50%）',3.95],mop:['氯化钾（K₂O 60%，进口）',3.33]},
     practice:{
-      sweetpotato:{items:[['npk',50,75],['sop',10,15]],text:'红薯常用：基肥硫酸钾型复合肥 50–75 kg/亩，膨大期追硫酸钾 10–15 kg/亩；红薯忌氯，不宜用氯化钾',
-        source:'<a href="http://nynct.gxzf.gov.cn/hdjl/znwd/njzsk/t11393538.shtml" target="_blank" rel="noopener">广西农业农村厅农技知识库</a>'},
-      cassava:{items:[['urea',25,25],['npk',60,60],['mop',15,15]],text:'木薯常用：尿素约 25 kg、三元复合肥约 60 kg、氯化钾约 15 kg/亩（基肥＋追肥）',
-        source:'<a href="http://nynct.gxzf.gov.cn/gxtf/xwdt_85167/tfjs/t5400138.shtml" target="_blank" rel="noopener">广西农业农村厅《木薯栽培技术》</a>'}}};
+      sweetpotato:{items:[['npk',50,75],['sop',10,15]],text:'红薯常用：基肥硫酸钾型复合肥 50–75 kg/亩，膨大期追硫酸钾 10–15 kg/亩；红薯忌氯，不宜用氯化钾'},
+      cassava:{items:[['urea',25,25],['npk',60,60],['mop',15,15]],text:'木薯常用：尿素约 25 kg、三元复合肥约 60 kg、氯化钾约 15 kg/亩（基肥＋追肥）'}}};
   function practiceFertCost(crop){const ref=FERT_REF.practice[crop],price=k=>FERT_REF.prices[k][1];return [ref.items.reduce((a,[k,l])=>a+l*price(k),0),ref.items.reduce((a,[k,,h])=>a+h*price(k),0)];}
   function costPanel(o,p,f,label,rows,b){
     if(!o.yieldAvailable)return '';
@@ -285,9 +279,9 @@
     <div class="hv-profit-grid">${cell('基础成本 / '+label,num(p.base*f),'种苗、人工、地租等')}${cell('肥料 / '+label,num(b.cost*f),o.plan?(b.products.length?esc(b.name.replace(/（.*/,''))+'：'+b.products.map(x=>esc(x.name)+' '+num(x.kg*f)+' kg').join('、'):'土壤供应基本够，不另施肥'):b.rate>0?`较优方案新增 ${num(b.rate*f,1)} kg`:'当前方案不新增肥料')}${cell('灌溉用水 / '+label,water===null?(w.inBase?'已含在基础成本':'未计入'):num(water*f),w.inBase?'已勾选含在基础成本，不再单独扣':w.priceOrigin==='example'?`按参考单价 ${w.unitPrice} 元/立方米`:w.priced?'按填写单价':'未填写单价，不是0元')}${cell('采收运输 / '+label,num(harvest*f),'按产量计')}${cell('合计 / '+label,num(total*f),'以上各项之和')}</div>
     ${need?`<p class="hv-need hv-need-${need.level==='较多'?'high':need.level==='中等'?'mid':'low'}"><b>施肥需求：${esc(need.level)}</b>${esc(need.summary)}。${(()=>{const rec=o.plan;return rec?`<br><b>推荐施肥</b>${rec.products.length?rec.products.map(x=>esc(x.name)+' 约 '+num(x.kg*f)+' kg').join('、')+'/'+label+`，约 ${num(rec.cost*f)} 元/${label}。`:'不另施肥：模型算得施肥增收不明显。'}`:'';})()}<br>${esc(need.note)}。</p>`:''}
     <details open><summary>比较不同施肥量</summary>${o.plan?`<div class="hv-table-wrap"><table><thead><tr><th>方案</th><th>用肥 / ${label}</th><th>肥料费</th><th>产量 kg</th><th>平均利润</th><th>较差年份利润</th></tr></thead><tbody>${o.fertilizerPlans.map(x=>`<tr class="${x.id===b.id?'hv-chosen':''}"><td>${esc(x.name)}</td><td>${x.products.length?x.products.map(y=>esc(y.name)+' '+num(y.kg*f)).join('、'):'—'}</td><td>${num(x.cost*f)}</td><td>${num(x.fresh*f)}</td><td>${num(x.net*f)}</td><td>${num(x.netLow*f)}</td></tr>`).join('')}</tbody></table></div><p class="hv-hint">推荐怎么选：在“常见用量上限”和“肥料预算”之内，逐步加复合肥、尿素或钾肥，哪一步多赚得最多就加哪一步，直到再加也不多赚（按${p.risk==='cautious'?'较差年份利润':'平均利润'}比较）。施肥比不施肥多赚不到 3%（或每${label}不到 30 元）时，推荐不另施肥。上限来自当地常见用量，超过上限即使模型显示更赚也不推荐。不是施肥处方。</p><p class="hv-hint">${esc(o.economics.profitDefinition)}。</p>`:`<div class="hv-table-wrap"><table><thead><tr><th>方案</th><th>新增肥料 kg</th><th>新增肥料费</th><th>产量 kg</th><th>平均利润</th><th>较差年份利润</th></tr></thead><tbody>${rows.map(x=>`<tr class="${x.rate===b.rate?'hv-chosen':''}"><td>${x.rate===0?'不新增肥料':x.name}${x.rate===b.rate?' · 较优':''}</td><td>${num(x.rate*f,1)}</td><td>${num(x.cost*f)}</td><td>${num(x.fresh*f)}</td><td>${num(x.net*f)}</td><td>${num(x.netLow*f)}</td></tr>`).join('')}</tbody></table></div><p class="hv-hint">比较候选用量，不是施肥处方。${esc(o.economics.profitDefinition)}。</p>`}</details>
-    <details><summary>常用肥料与 2026 年参考价</summary><p class="hv-hint">${esc(ref.text)}，按下面的价格${refRange}。（${ref.source}）</p>
+    <details><summary>常用肥料与 2026 年参考价</summary><p class="hv-hint">${esc(ref.text)}，按下面的价格${refRange}。</p>
     <div class="hv-table-wrap"><table><thead><tr><th>肥料</th><th>参考价 元/kg</th></tr></thead><tbody>${Object.values(FERT_REF.prices).map(([n,v])=>`<tr><td>${esc(n)}</td><td>${num(v,2)}</td></tr>`).join('')}</tbody></table></div>
-    <p class="hv-hint">价格为 ${FERT_REF.date} 的市场基准价（${FERT_REF.source}），农户实际买价通常更高，请按当地报价修改“肥料单价”。</p></details></article>`;
+    <p class="hv-hint">价格为 ${FERT_REF.date} 的市场基准价，农户实际买价通常更高，请按当地报价修改“肥料单价”。</p></details></article>`;
   }
   // Renders a finished result. The model output is read-only here.
   const FEAS_CLASS={supported:'ok',risky:'warn','not-recommended':'bad',insufficient:'unknown'};
@@ -320,7 +314,7 @@
     const rows=o.yieldAvailable?[...new Map(o.rows.map(x=>[x.rate,x])).values()]:[];
     const top=plan?.ranking?.[0];
     $('output').innerHTML=`<div class="hv-result"><div id="hv-stale" class="hv-stale" hidden>输入已改变。以下为上次结果，请重新计算后使用或导出。</div>
-    <div class="hv-source">${esc(r.weather.source)} · ${o.yearRange[0]}–${o.yearRange.at(-1)} · ${o.count}/${r.weather.requested} 个完整情景${r.weather.excluded.length?' · 已排除 '+r.weather.excluded.map(x=>esc(x.year+(x.reason?'（'+x.reason+'）':''))).join('、'):''}<br>${r.soil?'土壤：国内0–4.5cm表层背景值，按0–20cm耕层和假设利用比例换算供应':p.soilOrigin==='manual'?'养分：手填供应，非自动测土':'养分与pH：未提供'} · 土壤持水与排水能力：质地估计</div>
+    <div class="hv-source">${r.weather.kind==='demo'?'人工天气情景 · 不代表实测或预测':'历史天气'} · ${o.yearRange[0]}–${o.yearRange.at(-1)} · ${o.count}/${r.weather.requested} 个完整情景${r.weather.excluded.length?' · 已排除 '+r.weather.excluded.map(x=>esc(x.year+(x.reason?'（'+x.reason+'）':''))).join('、'):''}<br>${r.soil?'土壤：国内0–4.5cm表层背景值，按0–20cm耕层和假设利用比例换算供应':p.soilOrigin==='manual'?'养分：手填供应，非自动测土':'养分与pH：未提供'} · 土壤持水与排水能力：质地估计</div>
     ${o.yieldAvailable?`${profitPanel(o,p,f,label,b,supported)}${costPanel(o,p,f,label,rows,b)}`:''}
     ${feasibilityPanel(o,r)}
     ${o.yieldAvailable?`
@@ -329,7 +323,7 @@
     <article class="hv-panel"><div class="hv-title-row"><h2>逐年结果</h2><span>每行一个历史年景</span></div>${yearlyTable(o,p,f)}<p class="hv-hint">产量单位 kg鲜薯/${label}；“气候限制产量”只含温度、光照、过湿与pH前的生长计算${o.yieldAvailable?'，“最终产量”再经养分限制':''}。冷害天＝日最低温低于阈值；冻害风险天＝日最低气温≤0℃，不代表实际结霜。${o.yieldAvailable?esc(o.economics.sameAssumptions)+'；'+esc(o.economics.irrigationNote)+'。':''}</p></article>
     ${waterPanel(o,p)}
 
-    <article class="hv-panel hv-method"><details><summary>这次怎么算 · 参数与版本</summary><p>逐日计算：日间逐时温度决定温度响应，冠层叶面积截获光合有效辐射，乘以光能利用效率得到干物质，再按生育进度分配到叶、茎和块根。水分按FAO-56简化水量平衡，含有限排水、田间持水量以上的暂存水和地表积水；持续过湿才降低生长。冷害、冻害和高温暴露分开统计。最后用QUEFTS计算N/P/K限制，按商品率、售价和成本比较收益。这是简化Beta实现，不是完整LINTUL。</p><p>${plan?esc(plan.note)+(top?` 选中 ${esc(top.date)}：${esc(top.objectiveName)} ${num(top.objective*f)}，较差年份(P10) ${num(top.p10*f)}；逐年留出检验中 ${num(top.stability.topShare*100)}% 的情况仍排第一。`:''):'按指定日期模拟，不作为整个地区全年适宜性结论。'}</p><p>${o.assumptions.map(esc).join('；')}。</p><p>算法 ${esc(o.version)} · 参数 ${esc(o.parameterVersion)} · ${o.calibrationId?'校准 '+esc(o.calibrationId):'未应用地区校准'}</p><details><summary>参数来源表（${esc(o.crop)}）</summary>${parameterTable(p)}</details><p>参考 <a href="https://models.pps.wur.nl/lintul-2-simple-crop-growth-model-both-potential-and-water-limited-growing-conditions" target="_blank" rel="noopener">LINTUL-2</a> / <a href="https://www.fao.org/4/X0490E/x0490e0e.htm" target="_blank" rel="noopener">FAO-56</a> / <a href="https://github.com/IITA-AKILIMO/akilimo-recommendations" target="_blank" rel="noopener">AKILIMO QUEFTS</a> / <a href="https://ecocrop.apps.fao.org/ecocrop/srv/en/cropView?id=1265" target="_blank" rel="noopener">EcoCrop</a>。</p></details><button type="button" id="hv-export" class="hv-secondary">导出完整分析 JSON ↓</button></article>
+    <article class="hv-panel hv-method"><details><summary>这次怎么算 · 版本</summary><p>逐日计算温度、光照、水分和养分对生长的影响，比较同一块地在不同历史年景下的收成、投入与收益。这是简化的 Beta 实现，参数尚未做地区验证。</p><p>${plan?esc(plan.note)+(top?` 选中 ${esc(top.date)}：${esc(top.objectiveName)} ${num(top.objective*f)}，较差年份(P10) ${num(top.p10*f)}；逐年留出检验中 ${num(top.stability.topShare*100)}% 的情况仍排第一。`:''):'按指定日期模拟，不作为整个地区全年适宜性结论。'}</p><p>${o.assumptions.map(esc).join('；')}。</p><p>算法 ${esc(o.version)} · 参数 ${esc(o.parameterVersion)} · ${o.calibrationId?'校准 '+esc(o.calibrationId):'未应用地区校准'}</p></details><button type="button" id="hv-export" class="hv-secondary">导出完整分析 JSON ↓</button></article>
     ${o.yieldAvailable?`<article class="hv-panel"><details><summary>收获后：记录实际结果，让模型逐步变准</summary><p class="hv-hint">导出一条实收记录，之后与其他地块合并做独立验证。文件仅保存到你的电脑，本次不上传生产数据库。</p><div class="hv-grid"><label>稳定的地块ID<input id="hv-field-id" value="${esc(r.fieldId)}" placeholder="同一地块每季使用相同ID"></label><label>实际收获日期<input id="hv-harvest-date" type="date"></label>${input('actual-area','实际收获面积（'+label+'）',area,.001,100000)}${input('actual-weight','实际鲜薯总重量（kg）','',0,100000000)}</div><button type="button" id="hv-record" class="hv-secondary">导出实收记录</button><p id="hv-record-status" role="status" class="hv-hint"></p></details></article>`:''}</div>`;
     $('trace-year').addEventListener('change',()=>waterChart(o.simulations[Number($('trace-year').value)],o.water));waterChart(o.simulations[0],o.water);
     $('export').addEventListener('click',()=>{if(!stale)download('收成分析-'+p.date+'.json',result);});

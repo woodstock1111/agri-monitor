@@ -1,4 +1,4 @@
-<view class="cover" style="padding-top:{{statusBarHeight + 28}}px">
+<view class="cover ui-page-enter" style="padding-top:{{statusBarHeight + 28}}px">
   <!-- 抬头：公司名可改，系统名固定 -->
   <view class="head">
     <input

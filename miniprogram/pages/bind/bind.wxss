@@ -98,3 +98,5 @@
 @keyframes bdSpin {
   to { transform: rotate(360deg); }
 }
+
+.bd-card { animation:fadeUp 240ms var(--ease) both; }

@@ -11,13 +11,40 @@ const IRRIGATION_EXAMPLE_CNY = 0.5
 const NUTRIENT_DEFAULTS = { ph: 6, n: 60, p: 12, k: 80 }
 const SOIL_FRACTIONS = [0.3, 0.2, 0.4]
 
+// 以下选项与网页版 harvest.js 的表单逐项一致（文字、取值、顺序）
 const PRESETS = [
-  { id: 'preset-haikou', name: '海南 · 海口', lat: 20.045, lng: 110.198 },
-  { id: 'preset-weifang', name: '山东 · 潍坊', lat: 36.71, lng: 119.1 },
-  { id: 'preset-wuming', name: '广西 · 南宁（武鸣）', lat: 23.16, lng: 108.27 }
+  { id: 'preset-0', name: '海南 · 海口', lat: 20.045, lng: 110.198 },
+  { id: 'preset-1', name: '山东 · 潍坊', lat: 36.71, lng: 119.1 },
+  { id: 'preset-2', name: '广西 · 南宁（武鸣）', lat: 23.16, lng: 108.27 },
+  { id: 'preset-3', name: '尼日利亚 · 示例区域', lat: 8, lng: 8 },
+  { id: 'preset-4', name: '坦桑尼亚 · 示例区域', lat: -6, lng: 35 },
+  { id: 'preset-5', name: '泰国 · 示例区域', lat: 15, lng: 101 },
+  { id: 'preset-6', name: '越南 · 示例区域', lat: 12, lng: 108 }
+]
+const CROP_OPTIONS = [
+  { value: 'sweetpotato', label: '红薯 · Beta' },
+  { value: 'cassava', label: '木薯 · Beta' }
+]
+const UNIT_OPTIONS = [
+  { value: 'mu', label: '亩' },
+  { value: 'ha', label: '公顷 ha' }
+]
+const DATE_MODE_OPTIONS = [
+  { value: 'auto', label: '自动比较当地种植时间 · Beta' },
+  { value: 'manual', label: '使用我填写的日期' }
+]
+const SOURCE_OPTIONS = [
+  { value: 'history', label: '真实历史天气 · 全球坐标' },
+  { value: 'demo', label: '人工天气情景 · 只看界面，不判断能否种' }
+]
+const YEARS_OPTIONS = [
+  { value: 5, label: '最近5个完整生长季' },
+  { value: 10, label: '最近10个完整生长季' },
+  { value: 20, label: '最近20个完整生长季' }
 ]
 const WATER_OPTIONS = [
-  { value: 'sufficient', label: '水源充足 · 缺水时及时浇' },
+  { value: 'sufficient', label: '水源充足 · 缺水时及时适量浇水' },
+  { value: 'irrigated', label: '浇水有限 · 按实际水量计算' },
   { value: 'rain', label: '只靠下雨 · 不额外浇水' }
 ]
 const DRAINAGE_OPTIONS = [
@@ -27,14 +54,19 @@ const DRAINAGE_OPTIONS = [
   { value: 'poor', label: '较差 / 易积水' }
 ]
 const TEXTURE_OPTIONS = [
-  { value: 'loam', label: '壤土' },
-  { value: 'sandy', label: '砂质土' },
-  { value: 'clay', label: '黏质土' }
+  { value: 'loam', label: '壤土 · 假设' },
+  { value: 'sandy', label: '砂质土 · 假设' },
+  { value: 'clay', label: '黏质土 · 假设' }
 ]
 const SOIL_OPTIONS = [
-  { value: 'china', label: '读取国内土壤格网' },
-  { value: 'manual', label: '使用示例养分（可改）' },
-  { value: 'climate', label: '只看天气，不算产量' }
+  { value: 'china', label: '读取国内表层格网 · Beta' },
+  { value: 'manual', label: '手填整季养分供应 · Beta' },
+  { value: 'climate', label: '只有天气 · 先看气候和水分条件' }
+]
+const CURRENCIES = ['CNY', 'USD', 'THB', 'VND', 'IDR', 'NGN', 'KES', 'TZS', 'GHS']
+const RISK_OPTIONS = [
+  { value: 'cautious', label: '稳妥一些 · 优先看较差年份的利润' },
+  { value: 'balanced', label: '看平均表现 · 比较多年平均利润' }
 ]
 
 const weatherCache = new Map()
@@ -109,22 +141,73 @@ async function seasonsFor(p, count, planning, request) {
   return { kind: 'history', source: 'Open-Meteo / ERA5 · 完整历史生长季', ...checked, requested: seasons.length }
 }
 
-/* form：页面表单（亩、人民币）。soil：fetchSoil 的成功结果或 null。
- * onStage(text)：进度文字。返回 { input, output, planning, weather, soil }，只在内存里用。 */
-async function analyze(form, soil, { request = auth.request, onStage = () => {}, years = 10 } = {}) {
+// 与网页版 artificial() 相同：按年份和纬度可复现的人工天气，只用于看界面
+function artificial(p, season) {
+  let seed = (season.year * 7919 + Math.round((p.lat + 90) * 100)) >>> 0
+  const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296 }
+  const daily = { time: [], temperature_2m_mean: [], temperature_2m_min: [], temperature_2m_max: [], precipitation_sum: [], et0_fao_evapotranspiration: [], shortwave_radiation_sum: [] }
+  for (let i = 0; i < p.days; i++) {
+    const date = new Date(Date.parse(season.start) + i * 86400000)
+    const day = (date - Date.UTC(date.getUTCFullYear(), 0, 1)) / 86400000
+    const wave = Math.cos(2 * Math.PI * (day - (p.lat < 0 ? 18 : 200)) / 365.25)
+    const t = 27 - Math.abs(p.lat) * 0.3 + Math.min(18, Math.abs(p.lat) * 0.32) * wave + (random() - 0.5) * 4
+    const range = 8 + random() * 4
+    const ra = M.extraterrestrialRadiation(p.lat, day + 1)
+    daily.time.push(date.toISOString().slice(0, 10))
+    daily.temperature_2m_mean.push(t)
+    daily.temperature_2m_min.push(t - range / 2)
+    daily.temperature_2m_max.push(t + range / 2)
+    daily.precipitation_sum.push(random() < 0.35 ? random() * 25 : 0)
+    daily.et0_fao_evapotranspiration.push(Math.max(0.5, t * 0.14))
+    daily.shortwave_radiation_sum.push(ra * (0.3 + 0.45 * random()))
+  }
+  return { ...season, daily }
+}
+
+async function weatherFor(p, form, planning, request) {
+  if (form.source === 'demo') {
+    const w = yearWindow(p.date, form.years)
+    const seasons = planning
+      ? Array.from({ length: form.years }, (_, i) => M.seasonDates(p.date, p.days, w.year - form.years - 1 + i))
+      : M.historicalSeasons(p.date, p.days, form.years)
+    return { kind: 'demo', source: '人工天气情景 · 不代表实测或预测', included: seasons.map(s => artificial(p, s)), excluded: [], requested: seasons.length }
+  }
+  return seasonsFor(p, form.years, planning, request)
+}
+
+/* form：面板表单，字段与网页版 params() 相同；面积、预算、基础成本已换算成“每亩”。
+ * soil：fetchSoil 的成功结果或 null。onStage(text)：进度文字。
+ * 返回 { input, output, planning, weather, soil }，只在内存里用。 */
+// 表单没给的项用网页版的默认值（null 是有意的“不计入”，保留不动）
+function withDefaults(form) {
+  const defaults = {
+    variety: 'generic', risk: 'cautious', currency: 'CNY', source: 'history', years: 10,
+    rootDepth: M.crops[form.crop] ? M.crops[form.crop].rootDepth : 1, initialWater: 0.6, irrigationLimit: 300, irrigationDailyMax: 15,
+    fertPrice: FERT_PRICES.npk, marketable: 0.85, harvestCost: 0,
+    irrigationPrice: IRRIGATION_EXAMPLE_CNY, irrigationInBase: false, irrigationPriceOrigin: 'example', fractions: SOIL_FRACTIONS
+  }
+  const out = { ...form }
+  Object.keys(defaults).forEach(k => { if (out[k] === undefined) out[k] = defaults[k] })
+  return out
+}
+
+async function analyze(input, soil, { request = auth.request, onStage = () => {} } = {}) {
+  const form = withDefaults(input)
+  const pointOk = Number.isFinite(form.lat) && Number.isFinite(form.lng) && Math.abs(form.lat) <= 90 && Math.abs(form.lng) <= 180 && !(form.lat === 0 && form.lng === 0)
+  if (!pointOk) throw new Error('请先选择有位置的地块，或在地图上选点。')
   const raw = {
     lat: form.lat, lng: form.lng, area: form.area, days: form.days, crop: form.crop, date: form.date,
-    water: form.water, drainage: form.drainage, texture: form.texture, risk: 'cautious', currency: 'CNY',
-    rootDepth: M.crops[form.crop].rootDepth, initialWater: 0.6, irrigationLimit: 300, irrigationDailyMax: 15,
-    price: form.price, base: form.base, budget: form.budget, fertPrice: FERT_PRICES.npk, marketable: 0.85, harvestCost: 0,
-    irrigationPrice: IRRIGATION_EXAMPLE_CNY, irrigationInBase: false, irrigationPriceOrigin: 'example',
-    variety: 'generic', soilOrigin: form.soilMode,
+    water: form.water, drainage: form.drainage, texture: form.texture, risk: form.risk, currency: form.currency,
+    rootDepth: form.rootDepth, initialWater: form.initialWater, irrigationLimit: form.irrigationLimit, irrigationDailyMax: form.irrigationDailyMax,
+    price: form.price, base: form.base, budget: form.budget, fertPrice: form.fertPrice, marketable: form.marketable, harvestCost: form.harvestCost,
+    irrigationPrice: form.irrigationPrice, irrigationInBase: form.irrigationInBase, irrigationPriceOrigin: form.irrigationPriceOrigin,
+    variety: form.variety || 'generic', soilOrigin: form.soilMode,
     ph: form.ph, n: form.n, p: form.p, k: form.k
   }
   let usedSoil = null
   if (form.soilMode === 'china') {
-    if (!soil || !soil.ok) throw new Error('土壤数据还没就绪，可以改用示例养分或只看天气。')
-    Object.assign(raw, M.soilSupply(soil, SOIL_FRACTIONS))
+    if (!soil || !soil.ok) throw new Error('土壤尚未就绪，请点击读取内置国内土壤重试。')
+    Object.assign(raw, M.soilSupply(soil, form.fractions))
     usedSoil = soil
   }
   if (form.soilMode === 'climate') {
@@ -135,7 +218,7 @@ async function analyze(form, soil, { request = auth.request, onStage = () => {},
   let planning = null
   let weather
   if (form.dateMode === 'auto') {
-    onStage('正在读取多年天气…')
+    onStage('正在比较12个月的候选播期，保持供水和生育期相同…')
     const today = todayString()
     const year = Number(today.slice(0, 4))
     const windows = []
@@ -143,12 +226,11 @@ async function analyze(form, soil, { request = auth.request, onStage = () => {},
       const suffix = '-' + String(month).padStart(2, '0') + '-15'
       let date = year + suffix
       if (date < today) date = (year + 1) + suffix
-      const climate = await seasonsFor({ ...p, date }, years, true, request)
+      const climate = await weatherFor({ ...p, date }, form, true, request)
       windows.push({ date, seasons: climate.included, weather: climate })
     }
-    onStage('正在比较 12 个种植月份…')
     await yieldToUi()
-    const ranking = M.rankPlantingWindows(p, windows, { weatherKind: 'history' })
+    const ranking = M.rankPlantingWindows(p, windows, { weatherKind: form.source })
     const chosen = windows.find(w => w.date === ranking[0].date)
     const found = ranking[0].feasibility.status === 'supported'
     p.date = chosen.date
@@ -159,15 +241,15 @@ async function analyze(form, soil, { request = auth.request, onStage = () => {},
     }
     planning = { ranking, selectedDate: p.date, found }
   } else {
-    onStage('正在读取多年天气…')
-    weather = await seasonsFor(p, years, false, request)
+    onStage('正在读取多年天气并逐日计算…')
+    weather = await weatherFor(p, form, false, request)
   }
 
   onStage('正在逐日计算生长与收益…')
   await yieldToUi()
   const output = p.soilOrigin === 'climate'
     ? M.evaluateClimate(p, weather.included, { weatherKind: weather.kind })
-    : M.evaluateEnsemble(p, weather.included, { weatherKind: weather.kind, fertilizerPrices: { urea: FERT_PRICES.urea, sop: FERT_PRICES.sop, mop: FERT_PRICES.mop } })
+    : M.evaluateEnsemble(p, weather.included, { weatherKind: weather.kind, fertilizerPrices: p.currency === 'CNY' ? { urea: FERT_PRICES.urea, sop: FERT_PRICES.sop, mop: FERT_PRICES.mop } : undefined })
   return { input: p, output, planning, weather, soil: usedSoil }
 }
 
@@ -197,7 +279,7 @@ const CHECK_PLAIN = {
 }
 const STATUS_TONE = { favorable: 'ok', moderate: 'warn', unfavorable: 'bad', unknown: 'unknown' }
 
-function yieldBars(plan) {
+function yieldBars(plan, f = 1) {
   const rows = plan.years
   if (rows.length < 2) return []
   const values = rows.map(r => r.fresh)
@@ -209,7 +291,7 @@ function yieldBars(plan) {
   const lo = values.indexOf(min)
   return rows.map((r, i) => ({
     year: String(r.year).slice(2),
-    value: num(r.fresh),
+    value: num(r.fresh * f),
     height: Math.max(4, Math.round(r.fresh / max * 100)),
     tag: i === hi ? 'best' : i === lo ? 'worst' : ''
   }))
@@ -230,8 +312,13 @@ function issuesOf(o, planning) {
 }
 
 // 页面只需要这些字段；全部是短字符串和小数组，可以直接 setData
-function buildView(result) {
+// display：{ unit: 'mu'|'ha' }。每亩的数值乘 f 换成每公顷（与网页版 view.f 相同）
+function buildView(result, display = {}) {
   const { input: p, output: o, planning, weather, soil } = result
+  const f = display.unit === 'ha' ? 15 : 1
+  const per = display.unit === 'ha' ? '公顷' : '亩'
+  const money = p.currency === 'CNY' ? '元' : p.currency
+  const n = (x, d) => num(typeof x === 'number' ? x * f : x, d)
   const F = o.feasibility
   const view = {
     crop: o.crop,
@@ -241,7 +328,7 @@ function buildView(result) {
     supported: F.status === 'supported',
     yieldAvailable: o.yieldAvailable,
     climateScore: o.climateScore === null || o.climateScore === undefined ? '—' : String(o.climateScore),
-    footnote: `${p.date} 种植 · ${p.days} 天 · ${num(p.area, 2)} 亩${planning ? ' · 已比较 12 个种植月份' : ''}`,
+    footnote: `${p.date} 种植 · ${p.days} 天 · ${num(p.area / f, 2)} ${per}${planning ? ' · 已比较 12 个种植月份' : ''}`,
     issues: issuesOf(o, planning),
     factors: o.factors.map(f => ({
       id: f.id,
@@ -252,11 +339,13 @@ function buildView(result) {
       tone: STATUS_TONE[f.status] || 'unknown',
       evidence: f.evidence
     })),
-    source: `${weather.source} · ${o.yearRange[0]}–${o.yearRange[o.yearRange.length - 1]} · ${o.count} 个生长季 · ` +
+    source: `${weather.kind === 'demo' ? '人工天气情景 · 不代表实测或预测' : '历史天气'} · ${o.yearRange[0]}–${o.yearRange[o.yearRange.length - 1]} · ${o.count} 个生长季 · ` +
       (soil ? '土壤：国内表层格网背景值，按 0–20cm 耕层换算' : p.soilOrigin === 'manual' ? '养分：示例/手填值，非测土' : '未计算养分'),
     version: `算法 ${o.version} · 参数 ${o.parameterVersion} · 未做地区校准`,
     waterText: o.management.waterText,
-    irrigation: p.water === 'sufficient' ? `平均补灌约 ${num(o.diagnostics.irrigation * 2 / 3, 1)} 立方米/亩` : ''
+    irrigation: p.water === 'sufficient' ? `平均补灌约 ${n(o.diagnostics.irrigation * 2 / 3, 1)} 立方米/${per}` : '',
+    per,
+    money
   }
   if (!o.yieldAvailable) return view
 
@@ -267,29 +356,30 @@ function buildView(result) {
   const harvest = avg('harvestCost')
   const need = o.fertilizerNeed
   Object.assign(view, {
-    yieldText: o.count > 1 && num(b.low) !== num(b.high) ? `${num(b.low)}–${num(b.high)}` : num(b.fresh),
-    yieldMean: num(b.fresh),
-    saleable: num(b.saleable),
-    net: num(b.net),
-    netLow: num(b.netLow),
-    revenue: num(revenue),
-    cost: num(revenue - b.net),
-    breakEven: b.breakEvenPrice === null ? '无法计算' : num(b.breakEvenPrice, 2) + ' 元/kg',
+    yieldText: o.count > 1 && n(b.low) !== n(b.high) ? `${n(b.low)}–${n(b.high)}` : n(b.fresh),
+    yieldMean: n(b.fresh),
+    saleable: n(b.saleable),
+    marketable: num(p.marketable * 100),
+    net: n(b.net),
+    netLow: n(b.netLow),
+    revenue: n(revenue),
+    cost: n(revenue - b.net),
+    breakEven: b.breakEvenPrice === null ? '无法计算' : num(b.breakEvenPrice, 2) + ` ${money}/kg`,
     lossShare: num(b.lossShare * 100),
-    bars: yieldBars(b),
+    bars: yieldBars(b, f),
     costs: [
-      { name: '基础成本', value: num(p.base), note: '种苗、人工、地租等' },
-      { name: '肥料', value: num(b.cost), note: b.products && b.products.length ? b.products.map(x => `${x.name} ${num(x.kg)} kg`).join('、') : '不另施肥' },
-      { name: '灌溉用水', value: water === null ? '未计入' : num(water), note: `按参考单价 ${IRRIGATION_EXAMPLE_CNY} 元/立方米` },
-      { name: '采收运输', value: num(harvest), note: '按产量计' },
-      { name: '合计', value: num(p.base + b.cost + harvest + (water || 0)), note: '以上各项之和' }
+      { name: '基础成本', value: n(p.base), note: '种苗、人工、地租等' },
+      { name: '肥料', value: n(b.cost), note: b.products && b.products.length ? b.products.map(x => `${x.name} ${n(x.kg)} kg`).join('、') : '不另施肥' },
+      { name: '灌溉用水', value: water === null ? (o.water.inBase ? '已含在基础成本' : '未计入') : n(water), note: p.irrigationPrice === null ? '未填灌溉费' : `按 ${num(p.irrigationPrice, 2)} ${money}/立方米` },
+      { name: '采收运输', value: n(harvest), note: '按产量计' },
+      { name: '合计', value: n(p.base + b.cost + harvest + (water || 0)), note: '以上各项之和' }
     ],
     fertilizer: need ? {
       level: need.level,
       tone: need.level === '较多' ? 'bad' : need.level === '中等' ? 'warn' : 'ok',
       summary: need.summary,
       advice: o.plan ? (o.plan.products.length
-        ? `推荐施 ${o.plan.products.map(x => `${x.name} 约 ${num(x.kg)} kg`).join('、')}/亩，约 ${num(o.plan.cost)} 元/亩`
+        ? `推荐施 ${o.plan.products.map(x => `${x.name} 约 ${n(x.kg)} kg`).join('、')}/${per}，约 ${n(o.plan.cost)} ${money}/${per}`
         : '不另施肥：模型算得施肥增收不明显') : ''
     } : null
   })
@@ -298,6 +388,16 @@ function buildView(result) {
 
 module.exports = {
   PRESETS,
+  CROP_OPTIONS,
+  UNIT_OPTIONS,
+  DATE_MODE_OPTIONS,
+  SOURCE_OPTIONS,
+  YEARS_OPTIONS,
+  CURRENCIES,
+  RISK_OPTIONS,
+  FERT_PRICES,
+  IRRIGATION_EXAMPLE_CNY,
+  SOIL_FRACTIONS,
   WATER_OPTIONS,
   DRAINAGE_OPTIONS,
   TEXTURE_OPTIONS,

@@ -55,7 +55,7 @@ test('climate-only mode reports feasibility without yield or money',async()=>{
 });
 
 test('china soil mode refuses to run without soil, and soil lookup maps 401 to a plain message',async()=>{
-  await assert.rejects(H.analyze({...form,soilMode:'china'},null,{request:fakeRequest().request}),/土壤数据还没就绪/);
+  await assert.rejects(H.analyze({...form,soilMode:'china'},null,{request:fakeRequest().request}),/土壤尚未就绪/);
   const soil=await H.fetchSoil(19.5,110.3,async()=>({statusCode:401,data:{ok:false,msg:'Unauthorized'}}));
   assert.equal(soil.ok,false);assert.match(soil.msg,/登录已失效/);
   const down=await H.fetchSoil(19.5,110.3,async()=>{throw new Error('fail');});
@@ -71,4 +71,11 @@ test('weather goes through our server; a lost login is reported plainly',async()
 
 test('number formatting does not depend on Intl',()=>{
   assert.equal(H.num(1234567.891,1),'1,234,567.9');assert.equal(H.num(-1500),'-1,500');assert.equal(H.num(2.50,2),'2.5');assert.equal(H.num(-0.2),'0');assert.equal(H.num(NaN),'—');
+});
+
+test('a plot without a location (0, 0 or empty) is refused before any request',async()=>{
+  const {request,calls}=fakeRequest();
+  await assert.rejects(H.analyze({...form,lat:0,lng:0},null,{request}),/有位置的地块/);
+  await assert.rejects(H.analyze({...form,lat:NaN,lng:NaN},null,{request}),/有位置的地块/);
+  assert.equal(calls.length,0);
 });

@@ -1,8 +1,12 @@
 const api = require('../../utils/api.js')
+const view = require('../../utils/park-view.js')
 
 function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v
 }
+
+// Slots already unlocked on this device; a slot in use but not listed here pushes the fog back on entry.
+const FOG_KEY = 'agri_park_fog_v1'
 
 let chatSeq = 0
 function chatUid() { return 'm' + (++chatSeq) }
@@ -17,11 +21,36 @@ function chatWelcome() {
 Page({
   data: {
     plots: [],
+    selectedPlot: null,
+    selectedIndex: -1,
+    selectorParity: 0,
+    mapReady: false,
+    loadError: '',
+    sheetVisible: false,
+    sheetKind: '',
+    pageLeaving: false,
+    pageReturn: false,
+    parkTitle: '地瓜产业园',
+    detailLoading: false,
     vw: 375,
     vh: 700,
+    mapTop: 100,
+    mapHeight: 500,
     ratio: 0.5,
-    initTx: 0,
-    initTy: 0,
+    // movable-view position (px, ≤ 0), the camera box it spans (screen px) and the painting's size
+    mapX: 0,
+    mapY: 0,
+    mapAnimate: false,
+    boxX: 0,
+    boxY: 0,
+    boxW: 700,
+    boxH: 1100,
+    worldW: 700,
+    worldH: 1100,
+    fogNow: null,
+    fogPrev: null,
+    introOpen: false,
+    introVisible: true,
     focusId: '',
     // 平移边界对应的地块坐标范围（rpx），随实际地块动态计算
     extMinCx: 200,
@@ -31,12 +60,13 @@ Page({
     statusBarHeight: 20,
     safeBottom: 0,
     detailScrollH: 400,
-    decos: [],
     agentOpen: false,
     detailOpen: false,
     // 智能管家 / 成熟度面板（演示数据，纯前端）
     aiOpen: false,
     ripeOpen: false,
+    harvestOpen: false,
+    harvestPlotId: '',
     panelScrollH: 400,
     aiTip: '今天午后高温少云，建议傍晚 17:30 给地块一补一轮水；地块二钾肥窗口期还剩 3 天，已提醒小张。',
     aiActions: [
@@ -89,7 +119,6 @@ Page({
         ]
       }
     ],
-    detailShown: false,
     detail: { plot: {}, devices: [], tasks: [] },
     // 小薯聊天（内联进 page-container）
     messages: [],
@@ -117,170 +146,224 @@ Page({
     this.setData({
       vw,
       vh,
+      // The map fills the space between the top bar and the shelf.
+      mapTop: Math.round((info.statusBarHeight || 20) + 12 + 188 * ratio),
+      mapHeight: Math.max(1, Math.round(vh - ((info.statusBarHeight || 20) + 12 + 188 * ratio) - (244 * ratio + safeBottom))),
       ratio,
+      worldW: Math.round(view.WORLD_WIDTH * ratio),
+      worldH: Math.round(view.WORLD_HEIGHT * ratio),
       statusBarHeight: info.statusBarHeight || 20,
       safeBottom,
       detailScrollH: detailScrollH > 200 ? detailScrollH : 200,
       panelScrollH: panelScrollH > 200 ? panelScrollH : 200,
-      decos: this.buildDecos()
+      parkTitle: (wx.getStorageSync('agri_cover_v1') || {}).company || '地瓜产业园'
     })
     this.loadPlots()
+    this._introTimer = setTimeout(() => this.openIntro(), 1600)
   },
 
-  // 散落的手绘小花/小草（CSS 绘制，铺满全图、低密度、避开田块，按拖动方向倾倒）
-  buildDecos() {
-    // 位置都选在田块之间的空隙与边缘，避免被田块遮挡
-    const spots = [
-      { x: -40, y: 40, v: 'a' }, { x: 560, y: -50, v: 'grass' }, { x: 1200, y: 30, v: 'b' },
-      { x: -40, y: 430, v: 'grass' }, { x: 1300, y: 420, v: 'c' }, { x: 470, y: 460, v: 'a' },
-      { x: 730, y: 600, v: 'grass' }, { x: 250, y: 470, v: 'b' }, { x: 1010, y: 660, v: 'grass' },
-      { x: -40, y: 900, v: 'a' }, { x: 1300, y: 820, v: 'grass' }, { x: 430, y: 980, v: 'c' },
-      { x: 820, y: 1010, v: 'grass' }, { x: 1100, y: 960, v: 'b' }
-    ]
-    return spots.map((p, i) => ({ idx: i, x: p.x, y: p.y, variant: p.v }))
-  },
-
-  // 平移边界，和 gesture.wxs 保持一致（范围随实际地块动态）
-  bounds() {
-    const r = this.data.ratio
-    const cx = this.data.vw / 2
-    const cy = this.data.vh * 0.46
+  // The painting sits in a native movable-view: dragging and inertia never go through setData.
+  // The movable-view only spans the camera box, so it cannot be dragged on into the fog;
+  // the painting inside it is offset by the box origin and overflows visibly.
+  clampCamera(x, y) {
     return {
-      minX: cx - this.data.extMaxCx * r,
-      maxX: cx - this.data.extMinCx * r,
-      minY: cy - this.data.extMaxCy * r,
-      maxY: cy - this.data.extMinCy * r
+      x: clamp(x, this.data.vw - this.data.boxW, 0),
+      y: clamp(y, this.data.mapHeight - this.data.boxH, 0)
     }
   },
 
-  // 根据当前平移量，算出每个地块的缩放/上浮/层级，并定出聚焦地块
-  computeScales(plots, tx, ty) {
+  // Centre a world point (image px) in the map view.
+  moveCamera(wx, wy, animate = true) {
     const r = this.data.ratio
-    const cx = this.data.vw / 2
-    const cy = this.data.vh * 0.46
-    const span = this.data.vw * 0.62
-    let focusId = ''
-    let minD = Infinity
-    const out = plots.map(p => {
-      const sx = p.cx * r + tx
-      const sy = p.cy * r + ty
-      const d = Math.sqrt((sx - cx) * (sx - cx) + (sy - cy) * (sy - cy))
-      const t = Math.min(d / span, 1)
-      if (d < minD) { minD = d; focusId = p.id }
-      return {
-        ...p,
-        initScale: Number((1.12 - 0.24 * t).toFixed(3)),
-        initLift: Math.round((1 - t) * 14),
-        z: 1000 - Math.round(d)
-      }
-    })
-    if (minD >= this.data.vw * 0.40) focusId = ''
-    return { plots: out, focusId }
+    const target = this.clampCamera(this.data.vw / 2 - wx * r + this.data.boxX, this.data.mapHeight / 2 - wy * r + this.data.boxY)
+    // movable-view ignores x/y equal to the last bound value even after a drag; nudge so it always moves.
+    if (Math.abs(target.x - this.data.mapX) < 0.01) target.x += 0.01
+    if (Math.abs(target.y - this.data.mapY) < 0.01) target.y += 0.01
+    this._pos = target
+    this.setData({ mapX: target.x, mapY: target.y, mapAnimate: animate })
+  },
+
+  mapCentre() {
+    const pos = this._pos || { x: this.data.mapX, y: this.data.mapY }
+    const r = this.data.ratio
+    return { x: (this.data.vw / 2 - pos.x + this.data.boxX) / r, y: (this.data.mapHeight / 2 - pos.y + this.data.boxY) / r }
+  },
+
+  // Whatever plot sits under the centre of the map is highlighted while the map moves.
+  onMapChange(e) {
+    this._pos = { x: e.detail.x, y: e.detail.y }
+    if (!e.detail.source) return
+    const c = this.mapCentre()
+    const plot = view.nearest(this.data.plots, c.x, c.y)
+    if (plot && plot.id !== this.data.focusId) this.selectPlot(plot.id)
+    // Once the map settles, ease the highlighted plot to the centre if it is already close.
+    clearTimeout(this._settleTimer)
+    this._settleTimer = setTimeout(() => {
+      const p = this.data.selectedPlot
+      if (!p || !p.mapped || this.data.sheetVisible) return
+      const now = this.mapCentre()
+      if (Math.hypot(p.cx - now.x, p.cy - now.y) * this.data.ratio < 60) this.moveCamera(p.cx, p.cy)
+    }, 220)
+  },
+
+  onMapTap(e) {
+    if (this.data.sheetVisible || this.data.pageLeaving) return
+    const pos = this._pos || { x: this.data.mapX, y: this.data.mapY }
+    const r = this.data.ratio
+    const x = (e.detail.x - pos.x + this.data.boxX) / r
+    const y = (e.detail.y - this.data.mapTop - pos.y + this.data.boxY) / r
+    const plot = this.data.plots.find(p => p.mapped && view.contains(p.points, x, y))
+    if (plot) this.openPlotDetail(plot.id)
   },
 
   async loadPlots() {
     try {
       const res = await api.getPlots()
       const raw = (res && res.plots) || []
-      // 几何信息：把中心坐标换成左上角定位
-      const tones = ['a', 'b', 'c', 'd', 'e']
-      const geo = raw.map((p, i) => {
-        const h = Math.round(p.size * 0.78)
-        return {
-          ...p,
-          h,
-          tone: tones[i % tones.length],
-          left: p.px - p.size / 2,
-          top: p.py - h / 2,
-          cx: p.px,
-          cy: p.py
-        }
-      })
-
-      // 按实际地块算出平移边界（任意数量都能拖到中心）
-      let ext = { extMinCx: 200, extMaxCx: 1050, extMinCy: 200, extMaxCy: 860 }
-      if (geo.length) {
-        const xs = geo.map(p => p.cx)
-        const ys = geo.map(p => p.cy)
-        ext = {
-          extMinCx: Math.min(...xs),
-          extMaxCx: Math.max(...xs),
-          extMinCy: Math.min(...ys),
-          extMaxCy: Math.max(...ys)
-        }
-      }
-      this.setData(ext)
-
+      const geo = view.place(view.geometry(raw), this.data.ratio)
       // 初始聚焦：跳转指定地块 → 居中它；否则取第一个
       const focusUid = this._focusOnLoad
       const center = (focusUid && geo.find(p => p.id === focusUid)) || geo[0]
-      const b = this.bounds()
-      const initTx = center ? clamp(this.data.vw / 2 - center.cx * this.data.ratio, b.minX, b.maxX) : 0
-      const initTy = center ? clamp(this.data.vh * 0.46 - center.cy * this.data.ratio, b.minY, b.maxY) : 0
-      const scaled = this.computeScales(geo, initTx, initTy)
-      this.setData({
-        plots: scaled.plots,
-        focusId: scaled.focusId,
-        initTx,
-        initTy
+      const lifting = this.updateFog(geo)
+      const reveal = lifting.length ? geo.find(p => p.slot === lifting[lifting.length - 1]) : null
+      // Every plot slot lies in the box, so the box can only be set together with the plots.
+      const box = view.cameraBox(geo, this.data.vw / this.data.ratio, this.data.mapHeight / this.data.ratio)
+      const r = this.data.ratio
+      this.setData({ boxX: box.left * r, boxY: box.top * r, boxW: box.width * r, boxH: box.height * r })
+      const start = focusUid ? center : reveal || center
+      this.setData({ plots: geo, mapReady: true, loadError: '' }, () => {
+        this.selectPlot(start ? start.id : '')
+        if (start && start.mapped) this.moveCamera(start.cx, start.cy, false)
+        // Focus navigation retains its existing direct-to-detail behavior, after render.
+        if (focusUid && center) {
+          this._focusOnLoad = ''
+          this.openPlotDetail(focusUid)
+        }
       })
-
-      // 从台账「地图查看」进来：渲染完成后自动展开该地块详情
-      if (focusUid && center) {
-        this._focusOnLoad = ''
-        setTimeout(() => this.openPlotDetail(focusUid), 360)
-      }
     } catch (err) {
+      this.setData({ loadError: err.message || '加载失败' })
       wx.showToast({ title: err.message || '加载失败', icon: 'none' })
     }
   },
 
-  // 由 gesture.wxs 在松手后回调，保持 JS 侧位置与渲染层一致，避免重渲染跳动
-  syncOffset(payload) {
-    const tx = payload.tx
-    const ty = payload.ty
-    const scaled = this.computeScales(this.data.plots, tx, ty)
-    this.setData({
-      initTx: tx,
-      initTy: ty,
-      plots: scaled.plots,
-      focusId: scaled.focusId
-    })
+  // Fog covers everything outside the unlocked area. When plots were added since the last visit,
+  // the fog first sits where it was and is then pushed back (old layer fades, new one fades in).
+  updateFog(plots) {
+    const used = new Set(plots.filter(p => p.mapped).map(p => p.slot))
+    let seen = null
+    try { seen = wx.getStorageSync(FOG_KEY) } catch (e) {}
+    const known = Array.isArray(seen) ? new Set(seen) : null
+    // First visit on this device: nothing to reveal, just remember what is there.
+    const lifting = known ? [...used].filter(slot => !known.has(slot)).sort((a, b) => a - b) : []
+    const ratio = this.data.ratio
+    const now = view.fog(plots, ratio)
+    try { wx.setStorageSync(FOG_KEY, [...used]) } catch (e) {}
+    clearTimeout(this._fogTimer)
+    clearTimeout(this._introTimer)
+    if (!lifting.length) {
+      this.setData({ fogNow: now, fogPrev: null })
+      return lifting
+    }
+    const before = view.fog(plots.filter(p => !p.mapped || !lifting.includes(p.slot)), ratio)
+    this.setData({ fogNow: before, fogPrev: null })
+    this._fogTimer = setTimeout(() => {
+      if (this._unloaded) return
+      this.setData({ fogPrev: { ...before, out: false }, fogNow: { ...now, entering: true } }, () => {
+        this._fogTimer = setTimeout(() => {
+          if (this._unloaded) return
+          this.setData({ 'fogPrev.out': true, 'fogNow.entering': false })
+          this._fogTimer = setTimeout(() => { if (!this._unloaded) this.setData({ fogPrev: null }) }, 1700)
+        }, 60)
+      })
+    }, 1300)
+    return lifting
   },
 
-  onTapPlot(event) {
-    const id = event.currentTarget.dataset.id
-    if (id) this.openPlotDetail(id)
+  // Clouds part over the map once the painting has loaded (or after a short wait, whichever is first).
+  onMapArtLoad() { this.openIntro() },
+  openIntro() {
+    if (this.data.introOpen || this._unloaded) return
+    this.setData({ introOpen: true })
+    this._introTimer = setTimeout(() => { if (!this._unloaded) this.setData({ introVisible: false }) }, 1500)
+  },
+
+  selectPlot(id) {
+    const index = this.data.plots.findIndex(p => p.id === id)
+    this.setData({ selectorParity: 1 - this.data.selectorParity, focusId: id, selectedIndex: index, selectedPlot: index < 0 ? null : this.data.plots[index] })
+  },
+
+  onPreviousPlot() { if (Date.now() - (this._selectorSwipedAt || 0) > 300) this.stepPlot(-1) },
+  onNextPlot() { if (Date.now() - (this._selectorSwipedAt || 0) > 300) this.stepPlot(1) },
+  stepPlot(direction) {
+    const next = this.data.selectedIndex + direction
+    if (next < 0 || next >= this.data.plots.length) return
+    const plot = this.data.plots[next]
+    this._detailRequest = (this._detailRequest || 0) + 1
+    this.setData({ detailLoading: false })
+    this.selectPlot(plot.id)
+    if (!plot.mapped) return
+    this.moveCamera(plot.cx, plot.cy)
+  },
+  onSelectorStart(e) {
+    const touch = e.touches[0]
+    this._selectorStart = { x: touch.clientX, y: touch.clientY }
+  },
+  onSelectorEnd(e) {
+    if (!this._selectorStart || !e.changedTouches.length) return
+    const touch = e.changedTouches[0]
+    const dx = touch.clientX - this._selectorStart.x
+    const dy = touch.clientY - this._selectorStart.y
+    this._selectorStart = null
+    if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+      this._selectorSwipedAt = Date.now()
+      this.stepPlot(dx < 0 ? 1 : -1)
+    }
+  },
+  onSelectorCancel() { this._selectorStart = null },
+  onEnterSelected() {
+    if (Date.now() - (this._selectorSwipedAt || 0) < 300) return
+    if (this.data.selectedPlot) this.openPlotDetail(this.data.selectedPlot.id)
+  },
+  onOpenLedger() { this.onBackCover() },
+
+  showSheet(kind) {
+    this._detailRequest = (this._detailRequest || 0) + 1
+    this.setData({ detailLoading: false, sheetKind: kind, sheetVisible: true,
+      detailOpen: kind === 'detail', agentOpen: kind === 'agent', aiOpen: kind === 'ai', ripeOpen: kind === 'ripe', harvestOpen: kind === 'harvest' })
+  },
+  hideSheet() {
+    if (!this.data.sheetVisible) return
+    this._detailRequest = (this._detailRequest || 0) + 1
+    // Keep the content mounted until native afterleave; closing never shows a blank sheet.
+    this.setData({ sheetVisible: false, detailLoading: false })
   },
 
   async openPlotDetail(id) {
-    if (!id) return
-    this._activePlotId = id
+    if (!id || this.data.sheetVisible) return
+    const request = (this._detailRequest = (this._detailRequest || 0) + 1)
+    this.setData({ detailLoading: true })
     try {
       const res = await api.getPlotDetail(id)
+      if (request !== this._detailRequest || this._unloaded) return
       if (!res || !res.ok) {
         wx.showToast({ title: (res && res.msg) || '加载失败', icon: 'none' })
         return
       }
-      // page-container 自带上滑动画，直接 show 即可
-      this.setData({
-        focusId: id,
-        detail: { plot: res.plot, devices: res.devices || [], tasks: res.tasks || [] },
-        detailOpen: true
-      })
+      this._activePlotId = id
+      this.selectPlot(id)
+      const plot = this.data.plots.find(p => p.id === id)
+      this.setData({ detail: { plot: res.plot, devices: res.devices || [], tasks: res.tasks || [] } })
+      if (plot && plot.mapped) this.moveCamera(plot.cx, plot.cy)
+      this.showSheet('detail')
     } catch (err) {
-      wx.showToast({ title: err.message || '加载失败', icon: 'none' })
+      if (request === this._detailRequest && !this._unloaded) wx.showToast({ title: err.message || '加载失败', icon: 'none' })
+    } finally {
+      if (request === this._detailRequest) this.setData({ detailLoading: false })
     }
   },
 
-  closeDetail() {
-    this.setData({ detailOpen: false })
-  },
-
-  // 系统返回键触发：page-container afterleave 调用，关闭详情
-  onDetailBack() {
-    this.setData({ detailOpen: false })
-  },
+  closeDetail() { this.hideSheet() },
+  onDetailBack() { this.hideSheet() },
 
   async refreshDetail() {
     if (!this._activePlotId) return
@@ -301,7 +384,7 @@ Page({
       const fresh = map[p.id]
       return fresh ? { ...p, unfinishedCount: fresh.unfinishedCount, sensor: fresh.sensor } : p
     })
-    this.setData({ plots })
+    this.setData({ plots }, () => this.selectPlot(this.data.focusId))
   },
 
   async onCompleteTask(event) {
@@ -342,54 +425,39 @@ Page({
     })
   },
 
-  // 左上角返回封面；直接进本页（无栈）时兜底跳转
   onBackCover() {
-    const pages = getCurrentPages()
-    if (pages.length > 1) {
-      wx.navigateBack()
-    } else {
-      wx.redirectTo({ url: '/pages/cover/cover' })
-    }
+    if (this.data.pageLeaving) return
+    this._detailRequest = (this._detailRequest || 0) + 1
+    this.setData({ pageLeaving: true, detailLoading: false })
+    this._closeTimer = setTimeout(() => {
+      const pages = getCurrentPages()
+      const fail = () => this.setData({ pageLeaving: false })
+      if (pages.length > 1) wx.navigateBack({ fail })
+      else wx.redirectTo({ url: '/pages/cover/cover', fail })
+    }, 160)
   },
 
   onOpenAgent() {
     if (!this.data.messages.length) this.setData({ messages: [chatWelcome()] })
-    this.setData({ agentOpen: true })
+    this.showSheet('agent')
   },
-
-  onCloseAgent() {
-    this.setData({ agentOpen: false })
-  },
-
-  // 合并后的 page-container 返回处理：关掉当前打开的那层
+  onCloseAgent() { this.hideSheet() },
+  onSheetBeforeLeave() { this.hideSheet() },
   onSheetLeave() {
-    if (this.data.agentOpen) this.setData({ agentOpen: false })
-    if (this.data.detailOpen) this.setData({ detailOpen: false })
-    if (this.data.aiOpen) this.setData({ aiOpen: false })
-    if (this.data.ripeOpen) this.setData({ ripeOpen: false })
+    if (this.data.sheetVisible) return
+    this.setData({ detailOpen: false, agentOpen: false, aiOpen: false, ripeOpen: false, harvestOpen: false, sheetKind: '' })
   },
+  onOpenAiPanel() { this.showSheet('ai') },
+  onCloseAiPanel() { this.hideSheet() },
+  onOpenRipePanel() { this.showSheet('ripe') },
+  onCloseRipePanel() { this.hideSheet() },
 
-  onOpenAiPanel() {
-    this.setData({ aiOpen: true })
-  },
-
-  onCloseAiPanel() {
-    this.setData({ aiOpen: false })
-  },
-
-  onOpenRipePanel() {
-    this.setData({ ripeOpen: true })
-  },
-
-  onCloseRipePanel() {
-    this.setData({ ripeOpen: false })
-  },
-
-  // 收成预测（pages/harvest）。打开过地块详情就带上这块地
+  // 收成预测和其它入口一样从底部抽屉打开；打开过地块详情就带上这块地
   onOpenHarvest() {
-    const plotId = this._activePlotId
-    wx.navigateTo({ url: '/pages/harvest/harvest' + (plotId ? `?plotId=${encodeURIComponent(plotId)}` : '') })
+    this.setData({ harvestPlotId: this._activePlotId || '' })
+    this.showSheet('harvest')
   },
+  onCloseHarvest() { this.hideSheet() },
 
   onToggleRipePlot(event) {
     const id = event.currentTarget.dataset.id
@@ -482,7 +550,29 @@ Page({
     this.setData({ messages: this.data.messages.map(m => (m.id === id ? msg : m)) })
   },
 
+  onShow() {
+    if (this._hasShown) {
+      this.setData({ pageLeaving: false, pageReturn: true })
+      clearTimeout(this._returnTimer)
+      this._returnTimer = setTimeout(() => this.setData({ pageReturn: false }), 300)
+    }
+    this._hasShown = true
+  },
+
+  onHide() {
+    clearTimeout(this._settleTimer)
+    clearTimeout(this._closeTimer)
+    this._detailRequest = (this._detailRequest || 0) + 1
+    this.setData({ detailLoading: false })
+  },
+
   onUnload() {
+    this._unloaded = true
+    clearTimeout(this._settleTimer)
+    clearTimeout(this._fogTimer)
+    clearTimeout(this._introTimer)
+    this._detailRequest = (this._detailRequest || 0) + 1
+    clearTimeout(this._returnTimer)
     clearTimeout(this._closeTimer)
   }
 })

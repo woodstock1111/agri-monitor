@@ -9,10 +9,10 @@
     "pages/bind/bind"
   ],
   "window": {
-    "navigationBarBackgroundColor": "#f8fafc",
+    "navigationBarBackgroundColor": "#f2efde",
     "navigationBarTitleText": "地瓜产业园区",
     "navigationBarTextStyle": "black",
-    "backgroundColor": "#e8edf3",
+    "backgroundColor": "#f2efde",
     "enablePullDownRefresh": false
   },
   "requiredPrivateInfos": ["chooseLocation"],
