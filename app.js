@@ -239,27 +239,54 @@ const AgentChat = {
     return msg;
   },
 
-  appendWriteVerification(writeResults = []) {
+  // What the agent changed this turn, each with an undo button (server: lib/agent/actions.js).
+  appendActions(actions = []) {
     const el = this._messagesEl();
-    if (!el || !Array.isArray(writeResults) || !writeResults.length) return null;
+    if (!el || !Array.isArray(actions) || !actions.length) return null;
     const welcome = el.querySelector('.agent-chat-welcome');
     if (welcome) welcome.remove();
     const block = document.createElement('div');
     block.className = 'agent-write-verification';
-    writeResults.forEach(result => {
+    actions.forEach(action => {
       const item = document.createElement('div');
-      item.className = 'agent-write-item ' + (result.ok ? 'agent-write-ok' : 'agent-write-fail');
-      const icon = result.ok ? '✓' : '✗';
-      let toolLabel = result.tool;
-      if (result.tool === 'complete_farm_task') toolLabel = result.completed === false ? '标记未完成' : '标记完成';
-      if (result.tool === 'create_farm_task') toolLabel = '创建任务';
-      const title = result.title ? `「${result.title}」` : '';
-      item.textContent = `${icon} ${toolLabel}${title ? ' ' + title : ''} - ${result.ok ? '已执行' : '失败'}`;
+      item.className = 'agent-write-item ' + (action.ok ? 'agent-write-ok' : 'agent-write-fail');
+      const task = action.task || {};
+      const verb = action.tool === 'complete_farm_task' ? (task.status === 'done' ? '标记完成' : '标记未完成') : (action.label || action.tool);
+      const label = document.createElement('span');
+      label.textContent = `${action.ok ? '✓' : '✗'} ${verb}${task.title ? ' 「' + task.title + '」' : ''}${task.date ? ' ' + task.date : ''}${action.ok ? '' : ' - 未执行'}`;
+      item.appendChild(label);
+      if (action.ok && action.undoable && action.id) {
+        const undo = document.createElement('button');
+        undo.type = 'button';
+        undo.className = 'agent-write-undo';
+        undo.textContent = '撤销';
+        undo.addEventListener('click', () => this._undoAction(action, item, undo));
+        item.appendChild(undo);
+      }
       block.appendChild(item);
     });
     el.appendChild(block);
     el.scrollTop = el.scrollHeight;
     return block;
+  },
+
+  async _undoAction(action, item, button) {
+    button.disabled = true;
+    try {
+      await this._chatRequest(`/agent/actions/${encodeURIComponent(action.id)}/undo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      button.remove();
+      item.classList.add('agent-write-undone');
+      item.appendChild(Object.assign(document.createElement('span'), { className: 'agent-write-note', textContent: '已撤销' }));
+      if (globalThis.app) globalThis.app._farmTasksDirty = true;
+      await this._refreshVisibleFarmTaskViews(action.task?.date || '');
+    } catch (error) {
+      button.disabled = false;
+      UI.toast(error.message || '撤销失败', 'warning');
+    }
   },
 
   appendDebugLog(debugLog = []) {
@@ -404,7 +431,7 @@ const AgentChat = {
       const writeRefreshed = refreshed ? true : await this._refreshAfterWriteResults(data?.writeResults || []);
       if (!writeRefreshed) await this._refreshVisibleFarmTaskViews();
       if (Array.isArray(data?.debugLog) && data.debugLog.length) this.appendDebugLog(data.debugLog);
-      this.appendWriteVerification(data?.writeResults || []);
+      this.appendActions(data?.actions || []);
       this.appendMessage('assistant', data?.reply || '我暂时没有得到可用回答。');
     } catch (error) {
       this.removeThinking();
@@ -419,13 +446,13 @@ const AgentChat = {
   async _refreshAfterToolCalls(toolCalls = []) {
     if (!Array.isArray(toolCalls) || !toolCalls.length) return false;
     const tools = new Set(toolCalls.map(item => item?.tool).filter(Boolean));
-    const touchedFarmTasks = tools.has('create_farm_task') || tools.has('complete_farm_task');
+    const touchedFarmTasks = tools.has('create_farm_task') || tools.has('update_farm_task') || tools.has('complete_farm_task');
     if (!touchedFarmTasks) return false;
     const appRef = globalThis.app;
     if (!appRef) return false;
     appRef._farmTasksDirty = true;
     const touchedDates = toolCalls
-      .filter(item => item?.tool === 'create_farm_task' || item?.tool === 'complete_farm_task')
+      .filter(item => ['create_farm_task', 'update_farm_task', 'complete_farm_task'].includes(item?.tool))
       .map(item => item?.task?.date || item?.args?.date)
       .map(date => String(date || '').trim())
       .filter(Boolean);
@@ -443,7 +470,7 @@ const AgentChat = {
 
   async _refreshAfterWriteResults(writeResults = []) {
     if (!Array.isArray(writeResults) || !writeResults.length) return false;
-    const touchedFarmTasks = writeResults.some(item => item?.tool === 'create_farm_task' || item?.tool === 'complete_farm_task');
+    const touchedFarmTasks = writeResults.some(item => ['create_farm_task', 'update_farm_task', 'complete_farm_task'].includes(item?.tool));
     if (!touchedFarmTasks) return false;
     const appRef = globalThis.app;
     if (!appRef) return false;

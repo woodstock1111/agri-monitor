@@ -466,6 +466,7 @@ Page({
   },
 
   clearChat() {
+    api.resetAgentSession()
     this.setData({ messages: [chatWelcome()], text: '', pendingImage: '', pendingDataUrl: '' })
   },
 

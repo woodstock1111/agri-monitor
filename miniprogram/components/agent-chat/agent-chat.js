@@ -42,6 +42,7 @@ Component({
     },
 
     clearChat() {
+      api.resetAgentSession()
       this.setData({ messages: [welcome()], text: '', pendingImage: '', pendingDataUrl: '' })
     },
 

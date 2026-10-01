@@ -30,6 +30,8 @@ const ALLOW = [
     ['PUT', '/api/v1/farm-tasks/'],
     ['DELETE', '/api/v1/farm-tasks/'],
     ['POST', '/api/v1/agent/chat'],
+    ['DELETE', '/api/v1/agent/chat'],
+    // When the mini program may change tasks (lib/agent/policy.js CHANNELS), also allow ['POST', '/api/v1/agent/actions/'] for undo.
 ];
 
 function allowed(method, pathname) {

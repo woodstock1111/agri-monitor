@@ -2178,3 +2178,9 @@ body.ft-farm-dragging #ft-user-list .ft-card { opacity: 0.38; }
 .data-sources__body .ds-table-wrap { overflow-x: auto; }
 .data-sources__body .data-table td { font-size: 12px; vertical-align: top; }
 .data-sources__body .ds-hint { color: var(--text-muted); font-size: 12px; }
+.agent-write-item { display: flex; align-items: center; gap: 8px; }
+.agent-write-item > span:first-child { flex: 1; min-width: 0; }
+.agent-write-undo { flex-shrink: 0; padding: 2px 10px; border: 1px solid currentColor; border-radius: 999px; background: transparent; color: inherit; font-size: 12px; cursor: pointer; }
+.agent-write-undo:disabled { opacity: .5; cursor: default; }
+.agent-write-undone { opacity: .6; text-decoration: line-through; }
+.agent-write-note { flex-shrink: 0; text-decoration: none; }

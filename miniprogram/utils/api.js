@@ -540,11 +540,27 @@ function getDeviceHistory(deviceId, options = {}) {
   return request(`/device-history?deviceId=${encodeURIComponent(deviceId)}&limit=${limit}&order=${order}`)
 }
 
-// “小薯”助手：游客和绑定账号都用真实服务器的 /agent/chat（不走 mock），和其他请求一样经云托管
+// “小薯”助手：游客和绑定账号都用真实服务器的 /agent/chat（不走 mock），和其他请求一样经云托管。
+// 对话记忆在服务器上，这里只记会话编号。小程序里小薯只聊天和识图，不改任务（服务器 lib/agent/policy.js 的 CHANNELS）。
+let agentSessionId = ''
+
 async function agentChat(payload) {
-  const res = await auth.request({ path: '/agent/chat', method: 'POST', data: payload, header: { 'Content-Type': 'application/json' }, timeout: 60000 })
-  if (res.statusCode >= 200 && res.statusCode < 300 && res.data && res.data.ok) return res.data
+  const data = { ...payload }
+  if (agentSessionId) data.sessionId = agentSessionId
+  const res = await auth.request({ path: '/agent/chat', method: 'POST', data, header: { 'Content-Type': 'application/json' }, timeout: 60000 })
+  if (res.statusCode >= 200 && res.statusCode < 300 && res.data && res.data.ok) {
+    if (res.data.sessionId) agentSessionId = res.data.sessionId
+    return res.data
+  }
   throw new Error((res.data && res.data.msg) || '请求失败')
+}
+
+// 清空对话：服务器上的记忆一起删掉
+function resetAgentSession() {
+  const sessionId = agentSessionId
+  agentSessionId = ''
+  if (!sessionId) return
+  auth.request({ path: '/agent/chat', method: 'DELETE', data: { sessionId }, header: { 'Content-Type': 'application/json' } }).catch(() => {})
 }
 
 function getPlots() {
@@ -564,6 +580,7 @@ function formatBeijingTime(value) {
 }
 
 module.exports = {
+  resetAgentSession,
   getBeijingDateString,
   addDays,
   formatBeijingTime,
