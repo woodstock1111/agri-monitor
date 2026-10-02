@@ -81,6 +81,8 @@ function todayString() {
 
 // 请求走 auth.request（自动登录、401 重试一次）；测试时可传入替身。path 是 /api/v1 之后的部分。
 const LOGIN_LOST = '登录已失效，请重新打开小程序。'
+// 微信返回的错误原因（如 callContainer:fail ...），附在提示后面方便排查
+const detail = e => (e && e.message && e.message !== '网络错误' ? `（${e.message.slice(0, 80)}）` : '')
 
 async function fetchSoil(lat, lng, request = auth.request) {
   let res
@@ -91,7 +93,7 @@ async function fetchSoil(lat, lng, request = auth.request) {
       timeout: 22000
     })
   } catch (e) {
-    return { ok: false, msg: '土壤接口连不上，请检查网络后重试。' }
+    return { ok: false, msg: '土壤接口连不上，请检查网络后重试。' + detail(e) }
   }
   if (res.statusCode === 401) return { ok: false, status: 'unauthorized', msg: LOGIN_LOST }
   if (res.statusCode === 429) return { ok: false, status: 'busy', msg: '土壤查询太频繁，请稍后再试。' }
@@ -113,7 +115,7 @@ async function fetchDaily(lat, lng, start, end, request) {
       timeout: 45000
     })
   } catch (e) {
-    throw new Error('历史天气读取失败，请检查网络后重试。')
+    throw new Error('历史天气读取失败，请检查网络后重试。' + detail(e))
   }
   if (res.statusCode === 401) throw new Error(LOGIN_LOST)
   if (res.statusCode === 429) throw new Error('查询太频繁，请稍后再试。')

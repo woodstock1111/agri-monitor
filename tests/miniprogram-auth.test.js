@@ -83,3 +83,16 @@ test('with a Cloud Hosting env, calls go through callContainer and sign in witho
     assert.deepEqual([container.at(-1).method,container.at(-1).path],['DELETE','/api/v1/auth/wechat/binding']);
   }finally{config.cloud.env='';} // later tests reset it anyway
 });
+
+test('a GET that fails before any response (Cloud Hosting cold start) is retried once; writes are not',async()=>{
+  let fails=0;
+  const {auth,storage,log}=fakeWx(()=>({statusCode:200,data:{ok:true}}));
+  storage.set('agri_access_token',TOKEN);
+  const request=global.wx.request;
+  global.wx.request=o=>{if(fails<1){fails++;log.requests.push({url:o.url});return setTimeout(()=>o.fail({errMsg:'request:fail timeout'}),5);}request(o);};
+  assert.equal((await auth.request({path:'/harvest/soil'})).statusCode,200);
+  assert.equal(log.requests.length,2);
+  fails=0;
+  await assert.rejects(auth.request({path:'/farm-tasks',method:'POST',data:{}}),/request:fail timeout/);
+  assert.equal(log.requests.length,3,'a POST is sent once');
+});

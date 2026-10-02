@@ -95,9 +95,13 @@ function ensureLogin({ force = false } = {}) {
   return loginPromise
 }
 
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+
 // 带登录的请求：path 以 /api/v1 之后的部分传入，例如 '/harvest/soil?lat=..'。返回 wx.request 的 res。
+// 云托管实例缩到 0 后，第一个请求可能在冷启动时失败（没有拿到任何响应）；GET 只是查询，等一下再试一次。
 async function request(options) {
-  const attempt = () => send({ ...options, header: { ...(options.header || {}), Authorization: `Bearer ${readToken()}` } })
+  const once = () => send({ ...options, header: { ...(options.header || {}), Authorization: `Bearer ${readToken()}` } })
+  const attempt = () => ((options.method || 'GET') === 'GET' ? once().catch(() => wait(1500).then(once)) : once())
   await ensureLogin()
   let res = await attempt()
   if (res.statusCode === 401) {
