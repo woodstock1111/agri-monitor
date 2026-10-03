@@ -54,3 +54,15 @@ Required article citation: Shangguan et al. (2013). A China Dataset of Soil Prop
 
 Official dataset license: Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0), https://creativecommons.org/licenses/by-nc-sa/4.0/
 Local derived surface grids retain this license. Changes: extracted the 0–4.5 cm layer; lossless NetCDF4 compression; source missing-value metadata retained. Separate QC layers not included. Display units converted (ppm→mg/kg, organic matter %→g/kg). Data is historical background, not live measurement.
+
+## three.js (farm/vendor/three)
+
+three.js r170 (https://github.com/mrdoob/three.js), MIT License, Copyright 2010-2024 three.js authors.
+Bundled unmodified: build/three.module.min.js and the examples/jsm addons the farm page imports.
+Full license text: farm/vendor/three/LICENSE.
+
+## Ma Shan Zheng (farm/assets/fonts)
+
+Ma Shan Zheng (https://github.com/googlefonts/mashanzheng), SIL Open Font License 1.1,
+Copyright 2018 The Ma Shan Zheng Project Authors. Subset to the few glyphs the farm page's headings use
+(mashanzheng-subset.woff2). License text: farm/assets/fonts/OFL.txt.

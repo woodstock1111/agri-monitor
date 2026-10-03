@@ -2185,6 +2185,42 @@ body.ft-farm-dragging #ft-user-list .ft-card { opacity: 0.38; }
 .agent-write-undone { opacity: .6; text-decoration: line-through; }
 .agent-write-note { flex-shrink: 0; text-decoration: none; }
 
-/* 小薯实时农场：整页嵌入 3D 农场 */
-.farm3d-root { height: calc(100vh - 120px); min-height: 520px; border-radius: 14px; overflow: hidden; box-shadow: 0 6px 24px rgba(0,0,0,.12); background: #efe3c6; }
-.farm3d-root iframe { display: block; width: 100%; height: 100%; border: 0; }
+/* 小薯实时农场：小薯 AI 上方的入口 + 全屏窗口（iframe 里是 farm/） */
+@font-face { font-family: 'MaShanZheng-Subset'; src: url('farm/assets/fonts/mashanzheng-subset.woff2') format('woff2'); font-display: swap; }
+.farm-fab {
+  position: fixed; right: 32px; bottom: 102px; z-index: 900;
+  width: 48px; height: 48px; padding: 0; border: 1.5px solid #c9a34a; border-radius: 50%;
+  display: grid; place-items: center; color: #f6dc92; background: linear-gradient(135deg, #2f6f8f, #24586f);
+  box-shadow: 0 2px 4px rgba(20, 32, 56, 0.08), 0 10px 24px rgba(47, 111, 143, 0.32);
+  transition: transform 0.35s var(--ease-spring), opacity 0.2s, box-shadow 0.25s;
+}
+.farm-fab svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.farm-fab:hover { transform: translateY(-3px); box-shadow: 0 2px 4px rgba(20, 32, 56, 0.08), 0 16px 32px rgba(47, 111, 143, 0.38); }
+.farm-fab:active { transform: scale(0.94); }
+.farm-fab::after {
+  content: '小薯实时农场'; position: absolute; right: calc(100% + 10px); top: 50%; padding: 7px 11px; border-radius: 999px;
+  background: #fff; color: #24586f; font-size: 12px; font-weight: 700; line-height: 1; white-space: nowrap; box-shadow: var(--e1);
+  opacity: 0; transform: translate(6px, -50%); transition: opacity 0.2s, transform 0.3s var(--ease-out); pointer-events: none;
+}
+.farm-fab:hover::after { opacity: 1; transform: translate(0, -50%); }
+body.agent-chat-open .farm-fab, body.map-overlay-open .farm-fab { opacity: 0; pointer-events: none; transform: translateY(20px); }
+
+.farm-overlay { position: fixed; inset: 0; z-index: 2000; background: radial-gradient(ellipse at 30% 30%, #f8efd9, #e8d9b2 60%, #9cc2b8); }
+.farm-overlay[hidden] { display: none; }
+.farm-overlay iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; opacity: 0; transition: opacity 0.25s; }
+.farm-overlay.loaded iframe { opacity: 1; }
+.farm-overlay-loading { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.farm-overlay-loading h1 { margin: 0; font: 400 64px 'MaShanZheng-Subset', 'STKaiti', 'KaiTi', serif; color: #2f6f8f; letter-spacing: 6px; }
+.farm-overlay-loading p { margin: 8px 0 14px; color: #5d5370; font-family: 'Songti SC', 'SimSun', serif; }
+.farm-overlay-loading .bar { width: 220px; height: 4px; margin: auto; border-radius: 2px; background: rgba(255, 255, 255, 0.5); overflow: hidden; }
+.farm-overlay-loading .bar i { display: block; width: 30%; height: 100%; background: #c9a34a; animation: farmLoad 1.1s ease-in-out infinite; }
+@keyframes farmLoad { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+.farm-overlay-close {
+  position: absolute; right: 16px; top: 14px; z-index: 2; width: 40px; height: 40px; padding: 0; display: grid; place-items: center;
+  border: 1.5px solid #c9a34a; border-radius: 50%; color: #2f2a22; background: rgba(246, 238, 216, 0.92);
+  box-shadow: 0 6px 18px rgba(60, 45, 20, 0.22); cursor: pointer; transition: transform 0.2s, background 0.2s;
+}
+.farm-overlay-close svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.farm-overlay-close:hover { background: #fff; transform: rotate(90deg); }
+body.farm-open { overflow: hidden; }
+@media (max-width: 900px) { .farm-fab { right: 22px; bottom: 84px; width: 44px; height: 44px; } }

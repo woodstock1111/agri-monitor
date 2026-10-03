@@ -106,6 +106,9 @@ const AuthService = {
     if (login) login.style.display = '';
     if (chatFab) chatFab.style.display = 'none';
     if (chatPanel) chatPanel.style.display = 'none';
+    FarmView.close();
+    const farmFab = document.getElementById('farm-fab');
+    if (farmFab) farmFab.style.display = 'none';
   },
 
   showApp() {
@@ -116,6 +119,9 @@ const AuthService = {
     if (shell) shell.style.display = '';
     if (login) login.style.display = 'none';
     if (chatFab) chatFab.style.display = '';
+    const farmFab = document.getElementById('farm-fab');
+    if (farmFab) farmFab.style.display = '';
+    FarmView.bind();
   },
 
   logout(reload = true) {
@@ -218,12 +224,14 @@ const AgentChat = {
     const panel = document.getElementById('agent-chat-panel');
     const input = document.getElementById('agent-chat-input');
     if (panel) panel.style.display = 'flex';
+    document.body.classList.add('agent-chat-open');
     if (input) setTimeout(() => input.focus(), 50);
   },
 
   close() {
     const panel = document.getElementById('agent-chat-panel');
     if (panel) panel.style.display = 'none';
+    document.body.classList.remove('agent-chat-open');
   },
 
   appendMessage(role, content) {
@@ -893,6 +901,86 @@ const DataRepository = {
   getEndpointMap() { return BackendAdapter.getEndpointMap(); },
 };
 
+// 小薯实时农场（farm/，同源 iframe）读写数据只走这里。写入经 DataRepository → SyncService，
+// 和网页其他地方是同一个写入方；iframe 自己推 app-state 会和这里的快照互相覆盖。
+// 摆放位置：设备 metadata.farmScene = { v, locationId, x, z }；地块 metadata.farmScene = { v, slot, weather: {x, z} }。
+const FarmBridge = {
+  // 默认演示；管理员在「账号管理」给账号打开「小薯实时农场用真实数据」才读真实地块
+  mode() { return AuthService.currentUser?.farmRealData === true ? 'real' : 'demo'; },
+  snapshot() {
+    const devices = DataRepository.listDevices();
+    const realtime = {};
+    for (const d of devices) { const rt = Store.getDeviceRealtime(d.id); if (rt) realtime[d.id] = rt; }
+    return { locations: DataRepository.listLocations(), devices, realtime };
+  },
+  // 服务器缓存的读数，不会去打设备平台
+  async refreshRealtime(ids) {
+    await Promise.all(ids.map(async id => {
+      try {
+        const rt = await BackendAdapter.getDeviceRealtime(id);
+        if (rt && rt.ok !== false) Store.updateDeviceRealtime(id, rt);
+      } catch (err) { console.warn('[FarmBridge] realtime', id, err.message); }
+    }));
+  },
+  saveLocationScene(locationId, patch) {
+    const loc = DataRepository.listLocations().find(l => l.id === locationId);
+    if (!loc) return;
+    DataRepository.saveLocation({ ...loc, metadata: { ...loc.metadata, farmScene: { ...(loc.metadata.farmScene || {}), ...patch, v: 1 } } });
+  },
+  // scene 为 null = 从田里收回（设备本身不动）
+  saveDeviceScene(deviceId, scene) {
+    const dev = DataRepository.listDevices().find(d => d.id === deviceId);
+    if (!dev) return;
+    const metadata = { ...dev.metadata };
+    if (scene) metadata.farmScene = { v: 1, ...scene }; else delete metadata.farmScene;
+    DataRepository.saveDevice({ ...dev, metadata });
+  },
+  async weather(lat, lng) {
+    const res = await fetch('/api/v1/photos/weather?' + new URLSearchParams({ lat, lng }), { headers: AuthService.authHeaders() });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.weather) return data.weather;
+    throw new Error(data.error === 'weather_api_not_configured' ? '还没有配置高德 Key（AI记录 → 图像模块配置）' : '天气服务暂时不可用');
+  },
+};
+globalThis.FarmBridge = FarmBridge;
+
+// 全屏农场窗口：点开现建 iframe，关掉先让农场交还 WebGL，再把 iframe 整个拿掉
+const FarmView = {
+  bind() {
+    const fab = document.getElementById('farm-fab');
+    if (!fab || fab.dataset.bound === '1') return;
+    fab.dataset.bound = '1';
+    fab.addEventListener('click', () => this.open());
+    document.getElementById('farm-overlay-close').addEventListener('click', () => this.close());
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && this.isOpen()) this.close(); });
+  },
+  isOpen() { return !document.getElementById('farm-overlay')?.hidden; },
+  open() {
+    const overlay = document.getElementById('farm-overlay');
+    if (!overlay || this.isOpen()) return;
+    AgentChat.close();
+    overlay.classList.remove('loaded');
+    const frame = document.createElement('iframe');
+    frame.src = '/farm/index.html';
+    frame.title = '小薯实时农场';
+    // 农场页自己有带进度条的加载画面，它的页面一出来就换过去
+    frame.addEventListener('load', () => { overlay.classList.add('loaded'); frame.focus(); }, { once: true });
+    overlay.appendChild(frame);
+    overlay.hidden = false;
+    document.body.classList.add('farm-open');
+  },
+  close() {
+    const overlay = document.getElementById('farm-overlay');
+    if (!overlay || !this.isOpen()) return;
+    const frame = overlay.querySelector('iframe');
+    try { frame?.contentWindow?.farmDispose?.(); } catch (err) { console.warn('[FarmView] dispose', err.message); }
+    frame?.remove();
+    overlay.hidden = true;
+    overlay.classList.remove('loaded');
+    document.body.classList.remove('farm-open');
+  },
+};
+
 const HistoryStore = {
   KEY: 'history',
   MAX_PER_DEVICE: 720,
@@ -1382,12 +1470,14 @@ const app = {
   },
 
   navigate(page) {
+    // 旧会话里存的页面可能已经没了（比如原来的「小薯实时农场」页，现在是右下角的全屏入口）
+    if (!document.getElementById('page-' + page)) page = 'dashboard';
     this.currentPage = page;
     this._setMobileSidebar(false);
     sessionStorage.setItem('agri_current_page', page);
     document.querySelectorAll('.nav-link').forEach(l => l.classList.toggle('active', l.dataset.page === page));
     const titles = {
-      harvest: 'AI收成预测', farm3d: '小薯实时农场',
+      harvest: 'AI收成预测',
       dashboard:'\u7cfb\u7edf\u603b\u89c8', realtime:'\u5b9e\u65f6\u6570\u636e', video:'\u89c6\u9891\u76d1\u63a7', history:'\u66f2\u7ebf\u56fe\u8868',
       farmtasks:'\u519c\u4e8b\u8ba1\u5212', cloudsync:'\u5386\u53f2\u8bb0\u5f55', pestdb:'\u75c5\u5bb3\u866b\u6570\u636e\u5e93', photos:'AI\u8bb0\u5f55', automation:'\u81ea\u52a8\u5316\u6d41\u7a0b', locations:'\u5730\u5757\u7ba1\u7406', devices:'\u8bbe\u5907\u7ba1\u7406',
       accounts:'\u8d26\u53f7\u7ba1\u7406'
@@ -1400,13 +1490,7 @@ const app = {
     document.getElementById('page-' + page)?.classList.add('active');
     document.querySelector('.main-wrap')?.scrollTo({ top: 0 });
     this.stopLive();
-    // 3D 农场只在打开时加载；离开就卸掉，免得后台一直占显卡
-    const farmRoot = document.getElementById('farm3d-root');
-    if (farmRoot && page !== 'farm3d') farmRoot.innerHTML = '';
     const init = {
-      farm3d: () => {
-        if (!farmRoot.firstChild) farmRoot.innerHTML = '<iframe src="/farm/index.html" title="小薯实时农场" allow="fullscreen"></iframe>';
-      },
       harvest: () => window.HarvestUI.init(Store.getLocations(), {
         requestSoil: async (lat, lng, signal) => {
           const response = await fetch('/api/v1/harvest/soil?' + new URLSearchParams({ lat, lng }), {
@@ -3730,11 +3814,14 @@ const app = {
     const id = document.getElementById('loc-edit-id').value || 'loc-'+uid();
     const name = document.getElementById('loc-name').value.trim();
     if (!name) { UI.toast('\u8bf7\u586b\u5199\u5730\u5757\u540d\u79f0', 'warning'); return; }
+    // metadata 不在表单里（3D 农场的位置等），编辑时要原样带上，不然整个被清空
+    const existing = DataRepository.listLocations().find(l => l.id === id);
     const loc = { id, name, type:document.getElementById('loc-type').value,
       lat:parseFloat(document.getElementById('loc-lat').value)||0,
       lng:parseFloat(document.getElementById('loc-lng').value)||0,
       area:parseInt(document.getElementById('loc-area').value)||0,
-      notes:document.getElementById('loc-notes').value.trim() };
+      notes:document.getElementById('loc-notes').value.trim(),
+      metadata: existing?.metadata ?? {} };
     DataRepository.saveLocation(loc);
     this.closeModal('location'); this.clearLocationForm(); this.renderLocations(); this.updateSidebarStatus();
     if (this.currentPage === 'dashboard') this.initDashboard();
@@ -4036,7 +4123,7 @@ const app = {
       const status = user.status === 'disabled' ? '\u5df2\u505c\u7528' : '\u542f\u7528\u4e2d';
       const statusClass = user.status === 'disabled' ? 'badge-offline' : 'badge-online';
       return '<tr>' +
-        '<td><b>' + this.sanitize(user.account || '') + '</b><div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + this.sanitize(user.name || '') + '</div></td>' +
+        '<td><b>' + this.sanitize(user.account || '') + '</b><div style="font-size:11px;color:var(--text-muted);margin-top:2px">' + this.sanitize(user.name || '') + (user.farmRealData ? ' \u00b7 \u519c\u573a\u771f\u5b9e\u6570\u636e' : '') + '</div></td>' +
         '<td><span class="badge ' + (user.role === 'platform_admin' ? 'badge-cloud' : 'badge-sensor') + '">' + role + '</span></td>' +
         '<td>' + this.sanitize(user.tenantId || '-') + '</td>' +
         '<td><span class="badge ' + statusClass + '">' + status + '</span></td>' +
@@ -4070,6 +4157,7 @@ const app = {
     document.getElementById('account-status').value = user?.status || 'active';
     document.getElementById('account-password').value = '';
     document.getElementById('account-agent-debug').checked = user?.agentDebug === true;
+    document.getElementById('account-farm-real').checked = user?.farmRealData === true;
     document.getElementById('modal-account-title').textContent = user ? '\u7f16\u8f91\u8d26\u53f7' : '\u65b0\u5efa\u8d26\u53f7';
     document.getElementById('account-password-hint').textContent = user ? '\u7559\u7a7a\u5219\u4e0d\u4fee\u6539\u5bc6\u7801' : '\u65b0\u8d26\u53f7\u5fc5\u987b\u8bbe\u7f6e\u521d\u59cb\u5bc6\u7801';
     this.openModal('account');
@@ -4084,6 +4172,7 @@ const app = {
       status: document.getElementById('account-status').value,
       password: document.getElementById('account-password').value,
       agentDebug: document.getElementById('account-agent-debug').checked,
+      farmRealData: document.getElementById('account-farm-real').checked,
     };
     if (!payload.account) return UI.toast('\u8bf7\u586b\u5199\u8d26\u53f7', 'warning');
     if (!id && !payload.password) return UI.toast('\u8bf7\u8bbe\u7f6e\u521d\u59cb\u5bc6\u7801', 'warning');
@@ -4093,6 +4182,8 @@ const app = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      // 改的是自己：3D 农场下次打开就按新开关走，不用重新登录
+      if (id && id === AuthService.currentUser?.id) AuthService.currentUser.farmRealData = payload.farmRealData;
       this.closeModal('account');
       await this.renderAccounts();
       UI.toast('\u8d26\u53f7\u5df2\u4fdd\u5b58', 'success');

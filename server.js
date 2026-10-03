@@ -773,6 +773,20 @@ async function fetchWeatherData(amapKey, lat, lng) {
     };
 }
 
+// 实时天气按约 1 km 的格子缓存 15 分钟：3D 农场一次会问二十块地，高德免费额度经不起每次两次请求
+const WEATHER_TTL_MS = 15 * 60 * 1000;
+const weatherCache = new Map();
+function cachedWeather(amapKey, lat, lng) {
+    const key = `${Number(lat).toFixed(2)},${Number(lng).toFixed(2)}`;
+    const hit = weatherCache.get(key);
+    if (hit && Date.now() - hit.at < WEATHER_TTL_MS) return hit.promise;
+    const entry = { at: Date.now(), promise: fetchWeatherData(amapKey, lat, lng).then(w => ({ ...w, fetchedAt: new Date().toISOString() })) };
+    entry.promise.catch(() => weatherCache.delete(key));
+    weatherCache.set(key, entry);
+    if (weatherCache.size > 500) weatherCache.delete(weatherCache.keys().next().value);
+    return entry.promise;
+}
+
 async function runPhotoAnnotation(recordId, user, requestBody = {}) {
     const config = readPhotoConfig();
     const record = await photoStore.getRecord(recordId, dbTenantId(user));
@@ -1273,6 +1287,7 @@ const server = http.createServer(async (req, res) => {
                         role,
                         status: body.status === 'disabled' ? 'disabled' : 'active',
                         agentDebug: body.agentDebug === true,
+                        farmRealData: body.farmRealData === true,
                         passwordHash: await hashPassword(password),
                     });
                     return sendJson(201, { ok: true, user: publicUser(user) });
@@ -1299,6 +1314,7 @@ const server = http.createServer(async (req, res) => {
                     role,
                     status,
                     agentDebug: typeof body.agentDebug === 'boolean' ? body.agentDebug : user.agentDebug === true,
+                    farmRealData: typeof body.farmRealData === 'boolean' ? body.farmRealData : user.farmRealData === true,
                     tenantId: body.tenantId || user.tenantId || DEFAULT_TENANT_ID,
                     passwordHash: body.password ? await hashPassword(String(body.password)) : null,
                 };
@@ -2033,12 +2049,8 @@ const server = http.createServer(async (req, res) => {
             const amapKey = config.amapKey || config.qweatherKey || '';
             if (!amapKey) return sendJson(503, { ok: false, error: 'weather_api_not_configured' });
             try {
-                const weather = await fetchWeatherData(amapKey, lat, lng);
-                return sendJson(200, { ok: true, weather: {
-                    fetchedAt: new Date().toISOString(),
-                    ...weather,
-                    source: 'amap'
-                }});
+                const weather = await cachedWeather(amapKey, lat, lng);
+                return sendJson(200, { ok: true, weather: { ...weather, source: 'amap' } });
             } catch(e) {
                 return sendJson(e.status || 502, { ok: false, error: e.error || 'weather_fetch_failed', info: e.info });
             }
@@ -2109,7 +2121,7 @@ const server = http.createServer(async (req, res) => {
             return res.end();
         }
         if (fs.existsSync(resolved) && fs.lstatSync(resolved).isFile()) {
-            res.writeHead(200, { 'Content-Type': { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.jpg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.glb': 'model/gltf-binary' }[path.extname(resolved).toLowerCase()] || 'text/plain; charset=utf-8' });
+            res.writeHead(200, { 'Content-Type': { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.jpg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.glb': 'model/gltf-binary', '.woff2': 'font/woff2' }[path.extname(resolved).toLowerCase()] || 'text/plain; charset=utf-8' });
             return fs.createReadStream(resolved).pipe(res);
         }
         res.writeHead(404);

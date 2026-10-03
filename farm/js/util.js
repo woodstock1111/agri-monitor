@@ -1,4 +1,4 @@
-// 通用小工具：随机数、噪声、多边形、缓动
+// 通用小工具：随机数、噪声、缓动、转义、释放显存
 
 export function mulberry32(a) {
   return function () {
@@ -36,54 +36,19 @@ export function smoothstep(a, b, x) {
   return t * t * (3 - 2 * t);
 }
 export const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-export function easeOutBack(t) {
-  const c1 = 1.5, c3 = c1 + 1;
-  return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+
+// 拼进 innerHTML 的文字一律先转义（地块名、设备名都是用户自己填的）
+export function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
 
-// 多边形：点数组 [[x, z], ...]
-export function pointInPoly(x, z, poly) {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, zi] = poly[i], [xj, zj] = poly[j];
-    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
-  }
-  return inside;
-}
-
-export function polyArea(poly) {
-  let a = 0;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) a += poly[j][0] * poly[i][1] - poly[i][0] * poly[j][1];
-  return Math.abs(a) / 2;
-}
-
-// 向原点（局部坐标中心）收缩 d，近似内缩
-export function insetPoly(poly, d) {
-  return poly.map(([x, z]) => {
-    const l = Math.hypot(x, z) || 1;
-    const k = Math.max(0, 1 - d / l);
-    return [x * k, z * k];
-  });
-}
-
-// 水平线 z = lz 与多边形的交点 x 值（排序）
-export function scanline(poly, lz) {
-  const xs = [];
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [x1, z1] = poly[j], [x2, z2] = poly[i];
-    if ((z1 > lz) !== (z2 > lz)) xs.push(x1 + ((lz - z1) / (z2 - z1)) * (x2 - x1));
-  }
-  return xs.sort((a, b) => a - b);
-}
-
-export function randomPointIn(poly, rng, tries = 60) {
-  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-  for (const [x, z] of poly) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z); }
-  for (let i = 0; i < tries; i++) {
-    const x = lerp(minX, maxX, rng()), z = lerp(minZ, maxZ, rng());
-    if (pointInPoly(x, z, poly)) return [x, z];
-  }
-  return [0, 0];
+// 释放一棵子树的几何体和材质；userData.shared 的子树（克隆自共用模型）跳过
+export function disposeTree(o) {
+  if (o.userData.shared) return;
+  o.geometry?.dispose();
+  const m = o.material;
+  if (Array.isArray(m)) m.forEach((x) => x.dispose()); else m?.dispose();
+  for (const c of o.children) disposeTree(c);
 }
 
 export const CN_NUM = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十',

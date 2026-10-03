@@ -9,19 +9,19 @@ import { mulberry32 } from './util.js';
 import { toon, PLOT_BASE } from './terrain.js';
 
 export const PAD_TOP = 0.08;   // 田面高度（相对地块基准面）
-export const BED_TOP = PAD_TOP;
 
 const LAYOUTS = ['single', 'split', 'L', 'strips'];
-const STAGES = ['seedling', 'growing', 'lush', 'ripening'];
+export const STAGES = ['seedling', 'growing', 'lush', 'ripening'];
 export const STAGE_NAMES = { seedling: '缓苗期', growing: '分枝期', lush: '封垄期', ripening: '膨大期' };
 // 品种叶色：普通绿叶 / 紫薯（叶带紫）/ 偏蓝绿
 export const VARIETY_TINT = [null, '#7d5476', '#4f8a7a', null, '#7d5476', null];
 
-export function plotShape(index) {
+// stage：真实地块按定植日期算出的生育期，整块地用同一个；不给就按序号错开（演示用）
+export function plotShape(index, stage = null) {
   const rng = mulberry32(4000 + index * 131);
   const layout = LAYOUTS[(index * 3 + 1) % LAYOUTS.length];
-  const st0 = STAGES[(index * 2 + 1) % STAGES.length];
-  const st1 = STAGES[(index * 2 + 2) % STAGES.length];
+  const st0 = stage || STAGES[(index * 2 + 1) % STAGES.length];
+  const st1 = stage || STAGES[(index * 2 + 2) % STAGES.length];
   const W = 24 + rng() * 9, D = 16 + rng() * 6;
   const rot = (rng() - 0.5) * 1.0;
   const dir0 = rng() < 0.5 ? 'x' : 'z';
@@ -50,8 +50,7 @@ export function plotShape(index) {
 
 const C = (h) => new THREE.Color(h);
 
-export function buildPlotMesh(index, site, style) {
-  const shape = plotShape(index);
+export function buildPlotMesh(shape, index, site, style) {
   const { blocks, rot } = shape;
   const rng = mulberry32(9000 + index * 17);
   const g = new THREE.Group();

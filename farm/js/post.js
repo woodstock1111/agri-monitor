@@ -1,22 +1,20 @@
-// 描线后期：法线 + 深度找边，画成墨线（可抖动、可发光），叠纸纹
+// 描线后期：法线 + 深度找边，画成墨线（带一点抖动），叠纸纹
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const LineShader = {
   uniforms: {
     tDiffuse: { value: null }, tNormal: { value: null }, tDepth: { value: null },
     uRes: { value: new THREE.Vector2(1, 1) }, uNear: { value: 1 }, uFar: { value: 1000 },
-    uLine: { value: new THREE.Color() }, uStrength: { value: 1 }, uWidth: { value: 1 }, uWobble: { value: 0 },
-    uGlow: { value: 0 }, uPaper: { value: 0 }, uTime: { value: 0 }, uScan: { value: 0 },
+    uLine: { value: new THREE.Color() }, uStrength: { value: 1 }, uWidth: { value: 1 }, uWobble: { value: 0 }, uPaper: { value: 0 },
   },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.); }',
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse, tNormal, tDepth;
-    uniform vec2 uRes; uniform float uNear, uFar, uStrength, uWidth, uWobble, uGlow, uPaper, uTime, uScan;
+    uniform vec2 uRes; uniform float uNear, uFar, uStrength, uWidth, uWobble, uPaper;
     uniform vec3 uLine;
     varying vec2 vUv;
     float hash21(vec2 p){ p = fract(p*vec2(123.34, 456.21)); p += dot(p, p+45.32); return fract(p.x*p.y); }
@@ -52,14 +50,7 @@ const LineShader = {
       edge *= mix(1.0, 0.55 + 0.45*vnoise(fc*vec2(0.08, 0.3)), uWobble*0.6);
       edge *= uStrength;
       vec3 col = texture2D(tDiffuse, vUv).rgb;
-      if (uGlow > 0.5) col = mix(col, uLine, edge*0.55) + uLine * edge * 0.25;
-      else col = mix(col, uLine, edge);
-      // 扫描线
-      if (uScan > 0.5) {
-        float s = smoothstep(0.0, 0.02, abs(fract(vUv.y*1.5 - uTime*0.08) - 0.5) - 0.48);
-        col += uLine * (1.0 - s) * 0.08;
-        col *= 0.96 + 0.04*sin(fc.y*1.5);
-      }
+      col = mix(col, uLine, edge);
       // 纸纹
       if (uPaper > 0.0) {
         float fib = vnoise(fc*vec2(0.9, 0.12)) * 0.5 + vnoise(fc*0.35)*0.5;
@@ -84,13 +75,12 @@ export class LineComposer {
     const u = this.line.uniforms;
     u.tNormal.value = this.rt.texture; u.tDepth.value = this.rt.depthTexture;
     u.uLine.value.set(style.line); u.uStrength.value = style.lineStrength; u.uWidth.value = style.lineWidth;
-    u.uWobble.value = style.wobble; u.uGlow.value = style.lineGlow ? 1 : 0; u.uPaper.value = style.paper; u.uScan.value = style.scan ? 1 : 0;
+    u.uWobble.value = style.wobble; u.uPaper.value = style.paper;
     this.composer.addPass(this.line);
-    if (style.bloom > 0) {
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), style.bloom, 0.4, style.bloomThreshold ?? 0.72);
-      this.composer.addPass(this.bloom);
-    }
     this.composer.addPass(new OutputPass());
+    this.enabled = true; // 低画质时关掉描线，直接画
+    this._hidden = [];
+    this._cc = new THREE.Color();
   }
 
   setSize(w, h, pr) {
@@ -100,14 +90,16 @@ export class LineComposer {
     this.line.uniforms.uRes.value.set(w * pr, h * pr);
   }
 
-  render(t) {
+  render() {
     const { renderer, scene, camera } = this;
-    const hidden = [];
+    if (!this.enabled) { renderer.render(scene, camera); return; }
+    const hidden = this._hidden;
+    hidden.length = 0;
     scene.traverse((o) => { if (o.userData.noOutline && o.visible) { o.visible = false; hidden.push(o); } });
     const bg = scene.background, fog = scene.fog;
     scene.background = null; scene.fog = null;
     scene.overrideMaterial = this.normalMat;
-    const cc = renderer.getClearColor(new THREE.Color()), ca = renderer.getClearAlpha();
+    const cc = renderer.getClearColor(this._cc), ca = renderer.getClearAlpha();
     renderer.setClearColor(0x000000, 1);
     renderer.setRenderTarget(this.rt);
     renderer.render(scene, camera);
@@ -116,7 +108,7 @@ export class LineComposer {
     scene.overrideMaterial = null; scene.background = bg; scene.fog = fog;
     for (const o of hidden) o.visible = true;
     const u = this.line.uniforms;
-    u.uNear.value = camera.near; u.uFar.value = camera.far; u.uTime.value = t;
+    u.uNear.value = camera.near; u.uFar.value = camera.far;
     this.composer.render();
   }
 }

@@ -252,6 +252,15 @@ test('a WeChat binds to one account only, even when two binds race; an account h
     assert.equal(await users.unbindWechat(owner.id), 3);
 });
 
+test('the 3D farm shows demo data until an admin turns on real data, and other edits keep the switch', { skip }, async () => {
+    const users = createUserStore(db);
+    const u = await users.create({ id: 'user_farm', tenantId: 'tenant_farm', account: 'farm', name: '农场', role: 'tenant_admin', status: 'active', passwordHash: 'x' });
+    assert.equal(u.farmRealData, false);
+    assert.equal((await users.update(u.id, { farmRealData: true })).farmRealData, true);
+    assert.equal((await users.update(u.id, { name: '农场二' })).farmRealData, true);
+    assert.equal((await users.update(u.id, { farmRealData: false })).farmRealData, false);
+});
+
 test('sessions survive a new service instance, and deleting a user deletes their sessions', { skip }, async () => {
     const store = createPgSessionStore(db);
     const a = createSessionService({ store }), b = createSessionService({ store });

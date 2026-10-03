@@ -1,25 +1,17 @@
-// 一个地块位置：启用时是一块地（小薯巡逻、设备、浇水、告警），没启用时是一片草地
+// 一个地块位置：有地块时是一块地（小薯巡逻、设备、浇水、告警），没有时是鱼塘 / 野花地之类的空地。
+// 地块数据（名字、读数、设备、摆放位置）来自 data.js，这里只管 3D。
 import * as THREE from 'three';
-import { buildPlotMesh, buildReserved, plotShape, patrolPath, PAD_TOP, STAGE_NAMES } from './plotgeo.js';
+import { buildPlotMesh, buildReserved, plotShape, patrolPath, PAD_TOP } from './plotgeo.js';
 import { toon, PLOT_BASE } from './terrain.js';
-import { mulberry32, lerp, clamp, CN_NUM } from './util.js';
+import { mulberry32, lerp, clamp, disposeTree } from './util.js';
 
 export const SOIL_Y = PAD_TOP + 0.08;
-
-const VARIETIES = ['烟薯25', '西瓜红', '普薯32', '济薯26', '商薯19', '桥头地瓜'];
-export const ALERT_DEFS = {
-  pest: { title: '虫情预警', short: '虫情', detail: '测报灯捕获斜纹夜蛾 23 头/夜，田间幼虫约 6 头/㎡', advice: '建议傍晚喷施甲维盐，已通知老张' },
-  dry: { title: '土壤缺水', short: '缺水', detail: '20cm 墒情 13.8%，低于阈值 18%', advice: '建议浇水 20 分钟，浇完自动解除' },
-  disease: { title: '病害风险', short: '病害', detail: '图像识别疑似甘薯黑斑病，叶片褐斑 4 处', advice: '建议拔除病株并喷施多菌灵' },
-};
-const ALERT_PLAN = { 1: 'pest', 4: 'dry', 7: 'disease', 11: 'dry', 14: 'pest', 17: 'disease' };
 
 export const DEVICE_TYPES = {
   probe: { name: '土壤传感器', prefix: 'SP', height: 1.7 },
   weather: { name: '气象站', prefix: 'WS', height: 3.0 },
   camera: { name: '摄像头', prefix: 'CAM', height: 3.6 },
 };
-let deviceSeq = 1;
 
 export class Slot {
   constructor(index, site, ctx) {
@@ -27,31 +19,26 @@ export class Slot {
     this.ctx = ctx;
     this.cx = site[0]; this.cz = site[1];
     this.y = PLOT_BASE;
-    this.shape = plotShape(index);
-    this.rot = this.shape.rot;
     this.rng = mulberry32(700 + index * 37);
-    this.active = false;
+    this.data = null;
     this.devices = [];
-    this.wet = 0; this.hover = 0; this.grow = 1;
-    const alert = ALERT_PLAN[index];
-    const [[x0, z0], [x1], [, z1]] = this.shape.poly;
-    this.bbox = { x0, x1, z0, z1 };
-    this.data = {
-      name: `${CN_NUM[index]}号地`,
-      variety: VARIETIES[index % VARIETIES.length],
-      stage: STAGE_NAMES[this.shape.stage],
-      areaMu: (this.shape.blocks.reduce((a, b) => a + b.w * b.d, 0) * 9 / 666.7).toFixed(1),
-      moisture: alert === 'dry' ? 13.8 : 20 + this.rng() * 9,
-      alerts: alert ? [{ type: alert, ...ALERT_DEFS[alert] }] : [],
-    };
-    // 告警点放在第一块田里
-    const b = this.shape.blocks[0];
-    this.alertSpot = [b.x + (this.rng() - 0.5) * b.w * 0.5, b.z + (this.rng() - 0.5) * b.d * 0.5];
-    this.group = new THREE.Group();
-    ctx.scene.add(this.group);
+    this.wet = 0;
+    this.group = null;
+    this.setShape(plotShape(index));
   }
 
-  get hasAlert() { return this.data.alerts.length > 0; }
+  get active() { return !!this.data; }
+  get hasAlert() { return !!this.data?.alerts.length; }
+
+  setShape(shape) {
+    this.shape = shape;
+    this.rot = shape.rot;
+    const [[x0, z0], [x1], [, z1]] = shape.poly;
+    this.bbox = { x0, x1, z0, z1 };
+    // 告警点放在第一块田里
+    const b = shape.blocks[0], r = mulberry32(900 + this.index * 7);
+    this.alertSpot = [b.x + (r() - 0.5) * b.w * 0.5, b.z + (r() - 0.5) * b.d * 0.5];
+  }
 
   toWorld(lx, lz) {
     const c = Math.cos(this.rot), s = Math.sin(this.rot);
@@ -66,16 +53,27 @@ export class Slot {
     return this.shape.blocks.some((b) => Math.abs(lx - b.x) < b.w / 2 - m && Math.abs(lz - b.z) < b.d / 2 - m);
   }
 
-  setActive(on) {
-    if (on === this.active && this.built) return;
-    this.built = true;
-    this.active = on;
-    for (const d of this.devices) d.obj.removeFromParent();
-    this.devices = [];
-    this.water = null; this.xiaoshu = null;
-    this.ctx.scene.remove(this.group);
-    if (on) {
-      this.group = buildPlotMesh(this.index, [this.cx, this.cz], this.ctx.style);
+  // 换上新的地块数据。只有「有没有地块」或生育期变了才重建模型，其余只同步设备和告警
+  setPlot(plot) {
+    const wasActive = this.active, stage = plot?.stageKey || null;
+    const rebuild = !this.group || wasActive !== !!plot || (plot && stage !== this.stageKey);
+    this.data = plot;
+    if (rebuild) this.build(stage);
+    if (!plot) return;
+    this.syncDevices();
+    this.refreshAlert();
+  }
+
+  build(stage) {
+    this.clearDevices();
+    if (this.water) this.stopWater();
+    this.xiaoshu?.mixer.stopAllAction();
+    this.xiaoshu = null;
+    if (this.group) { this.ctx.scene.remove(this.group); disposeTree(this.group); }
+    this.stageKey = stage;
+    this.setShape(plotShape(this.index, stage));
+    if (this.data) {
+      this.group = buildPlotMesh(this.shape, this.index, [this.cx, this.cz], this.ctx.style);
       const u = this.group.userData;
       this.leaves = u.leaves;
       this.baseLeafColors = this.leaves.instanceColor ? this.leaves.instanceColor.array.slice() : null;
@@ -83,10 +81,9 @@ export class Slot {
       this.soilBase = this.soilMats.map((m) => m.color.clone());
       this.buildAlert();
       this.buildXiaoshu();
-      const b = this.shape.blocks[this.shape.blocks.length - 1];
-      this.addDevice('probe', b.x + b.w * 0.25, b.z - b.d * 0.2, false);
     } else {
       this.group = buildReserved(this.index, [this.cx, this.cz], this.ctx.style);
+      this.leaves = null; this.alertGroup = null; this.pin = null; this.bugs = [];
     }
     // 射线拾取用的隐形盒子
     const { x0, x1, z0, z1 } = this.bbox;
@@ -122,18 +119,21 @@ export class Slot {
     }
     this.group.add(g);
     this.alertGroup = g;
-    this.refreshAlert();
+    this.alertKey = undefined;
   }
 
   refreshAlert() {
-    const a = this.data.alerts[0];
+    const a = this.data?.alerts[0];
+    const key = a ? a.type : '';
+    if (key === this.alertKey) return;
+    this.alertKey = key;
     if (this.alertGroup) this.alertGroup.visible = !!a;
     for (const b of this.bugs || []) b.visible = a?.type === 'pest';
-    // 缺水、病害：告警点周围的叶子变黄、变褐
+    // 缺水、病害：告警点周围的叶子变黄、变褐（真实传感器告警不知道是哪种问题，只立告警针）
     if (this.leaves && this.baseLeafColors) {
       const arr = this.leaves.instanceColor.array;
       arr.set(this.baseLeafColors);
-      if (a && a.type !== 'pest') {
+      if (a && (a.type === 'dry' || a.type === 'disease')) {
         const tint = new THREE.Color(a.type === 'dry' ? '#c9b55c' : '#8a5a3c');
         const R = a.type === 'dry' ? 5 : 3;
         const r = mulberry32(this.index * 13);
@@ -203,24 +203,50 @@ export class Slot {
   }
 
   // ---------- 设备 ----------
-  addDevice(type, lx, lz, animate = true) {
+  // 场景里的设备 = 数据里「已摆放」的设备 + 气象站（摆了的话）。按 id 对齐，新出现的插进去，消失的拔掉
+  wantedDevices() {
+    const p = this.data;
+    const list = p.devices.filter((d) => d.placed).map((d) => ({ id: d.id, type: d.type, name: d.name, x: d.placed.x, z: d.placed.z, ref: d }));
+    if (p.weatherPlaced) list.push({ id: `weather-${p.id}`, type: 'weather', name: DEVICE_TYPES.weather.name, x: p.weatherPlaced.x, z: p.weatherPlaced.z, ref: null });
+    return list;
+  }
+
+  syncDevices(animateId = null) {
+    const want = this.wantedDevices();
+    const ids = new Set(want.map((w) => w.id));
+    for (const d of [...this.devices]) if (!ids.has(d.id)) this.removeDevice(d);
+    for (const w of want) {
+      const cur = this.devices.find((d) => d.id === w.id);
+      if (cur) { cur.ref = w.ref; cur.name = w.name; continue; }
+      this.addDevice(w, w.id === animateId);
+    }
+  }
+
+  addDevice({ id, type, name, x, z, ref }, animate) {
     const def = DEVICE_TYPES[type];
     const obj = this.ctx.makeDevice(type);
-    obj.position.set(lx, SOIL_Y, lz);
-    obj.rotation.y = type === 'camera' ? Math.atan2(-lx, -lz) : this.rng() * 6.28;
+    obj.position.set(x, SOIL_Y, z);
+    obj.rotation.y = type === 'camera' ? Math.atan2(-x, -z) : this.rng() * 6.28;
     const proxy = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, def.height + 0.4, 8), new THREE.MeshBasicMaterial({ visible: false }));
     proxy.position.y = def.height / 2;
     proxy.userData.noOutline = true;
     obj.add(proxy);
     this.group.add(obj);
-    const dev = { id: `${def.prefix}-${String(deviceSeq++).padStart(2, '0')}`, type, name: def.name, lx, lz, obj, proxy, slot: this, anim: animate ? 0 : -1, seed: Math.random() * 100 };
+    const dev = { id, type, name, ref, lx: x, lz: z, obj, proxy, slot: this, anim: animate ? 0 : -1, seed: this.rng() * 100 };
     proxy.userData.device = dev;
     if (animate) obj.position.y = SOIL_Y + 7;
     this.devices.push(dev);
     return dev;
   }
 
-  removeDevice(dev) { dev.obj.removeFromParent(); this.devices = this.devices.filter((d) => d !== dev); }
+  removeDevice(dev) {
+    dev.obj.removeFromParent();
+    dev.proxy.geometry.dispose(); dev.proxy.material.dispose();
+    if (dev.type === 'probe') disposeTree(dev.obj);
+    this.devices = this.devices.filter((d) => d !== dev);
+  }
+
+  clearDevices() { for (const d of [...this.devices]) this.removeDevice(d); }
 
   canPlace(lx, lz) { return this.inField(lx, lz, 0.5) && this.devices.every((d) => Math.hypot(d.lx - lx, d.lz - lz) > 1.4); }
 
@@ -251,17 +277,25 @@ export class Slot {
     pts.userData.noOutline = true;
     this.group.add(pts);
     const heads = [];
-    const headMat = toon('#5d6670');
+    const headGeo = new THREE.CylinderGeometry(0.1, 0.14, 1.4, 8), headMat = toon('#5d6670');
     for (const b of this.shape.blocks) {
       const n = Math.max(1, Math.round(b.w / 9));
       for (let i = 0; i < n; i++) {
-        const h = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.14, 1.4, 8), headMat);
+        const h = new THREE.Mesh(headGeo, headMat);
         h.position.set(b.x - b.w / 2 + (i + 0.5) * (b.w / n), SOIL_Y - 0.7, b.z);
         this.group.add(h); heads.push(h);
       }
     }
-    this.water = { t: 0, dur: 8, pts, pos, vel: new Float32Array(N * 3), N, heads, cursor: 0, onDone };
+    this.water = { t: 0, dur: 8, pts, pos, vel: new Float32Array(N * 3), N, heads, headGeo, headMat, cursor: 0, onDone };
     return true;
+  }
+
+  stopWater() {
+    const W = this.water;
+    W.pts.removeFromParent(); W.pts.geometry.dispose(); W.pts.material.dispose();
+    for (const h of W.heads) h.removeFromParent();
+    W.headGeo.dispose(); W.headMat.dispose();
+    this.water = null;
   }
 
   updateWater(dt) {
@@ -293,14 +327,16 @@ export class Slot {
     W.pts.geometry.attributes.position.needsUpdate = true;
     if (emitting) this.wet = Math.min(1, this.wet + dt * 0.22);
     if (W.t >= W.dur) {
-      W.pts.removeFromParent();
-      for (const h of W.heads) h.removeFromParent();
-      this.water = null;
-      this.data.moisture = Math.min(32, this.data.moisture + 9);
-      const n = this.data.alerts.length;
-      this.data.alerts = this.data.alerts.filter((a) => a.type !== 'dry');
-      if (this.data.alerts.length !== n) this.refreshAlert();
-      W.onDone?.();
+      const done = W.onDone;
+      this.stopWater();
+      // 演示数据：浇完湿度回升、缺水告警解除。真实数据等传感器下次上报
+      const p = this.data;
+      if (p?.demo) {
+        p.moisture = Math.min(32, p.moisture + 9);
+        p.alerts = p.alerts.filter((a) => a.type !== 'dry');
+        this.refreshAlert();
+      }
+      done?.();
     }
   }
 

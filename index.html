@@ -68,7 +68,6 @@
                         <path d="M12 4V2.5M5 6l-1-1M19 6l1-1"/>
                     </svg><span>系统总览</span>
                 </a>
-                <a class="nav-link" data-page="farm3d"><svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18c3-2 6-2 9 0s6 2 9 0M5 14l4-6 3 4 3-5 4 7M12 3v2"/></svg><span>小薯实时农场</span></a>
                 <a class="nav-link" data-page="harvest"><svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16M7 17v-5m5 5V8m5 9V4M4 9l6-4 4 1 6-4"/></svg><span>AI收成预测</span></a>
                 <a class="nav-link" data-page="farmtasks">
                     <svg class="agri-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -258,7 +257,6 @@
                 </div>
 
                 <!-- Farm Tasks -->
-                <div class="page" id="page-farm3d"><div id="farm3d-root" class="farm3d-root"></div></div>
                 <div class="page" id="page-harvest"><div id="harvest-root"></div></div>
                 <div class="page" id="page-farmtasks">
                     <div id="farmtasks-date-header"></div>
@@ -816,12 +814,27 @@
                     <label class="checkbox-row"><input type="checkbox" id="account-agent-debug"> Agent 调试模式</label>
                     <span class="field-hint">开启后聊天面板显示 AI 思考过程和工具调用详情</span>
                 </div>
+                <div class="form-group">
+                    <label class="checkbox-row"><input type="checkbox" id="account-farm-real"> 小薯实时农场用真实数据</label>
+                    <span class="field-hint">关闭时 3D 农场显示演示地块；打开后显示这个账号自己的地块、传感器和摄像头</span>
+                </div>
             </div>
             <div class="modal-footer"><button class="btn-ghost" onclick="app.closeModal('account')">取消</button><button class="btn-primary" onclick="app.saveAccount()">保存账号</button></div>
         </div>
     </div>
 
     <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- 小薯实时农场：右下角入口，点开全屏；关掉就整个卸载，不占显卡 -->
+    <button class="farm-fab" id="farm-fab" title="小薯实时农场" style="display:none">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18c3-2 6-2 9 0s6 2 9 0M5 14l4-6 3 4 3-5 4 7M12 3v2"/></svg>
+    </button>
+    <div class="farm-overlay" id="farm-overlay" hidden>
+        <div class="farm-overlay-loading"><h1>小薯农场</h1><p>正在铺开画布…</p><div class="bar"><i></i></div></div>
+        <button class="farm-overlay-close" id="farm-overlay-close" title="关闭农场" aria-label="关闭农场">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+    </div>
 
     <button class="agent-chat-fab" id="agent-chat-fab" title="AI 农业助手" style="display:none">
         <img src="assets/agent-sweet-potato.png" alt="AI助手" class="agent-chat-fab-img">

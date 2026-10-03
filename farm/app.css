@@ -1,3 +1,6 @@
+/* 标题用的马善政毛笔字，只裁了「小薯农场」和「一号地」这类字（6KB）；其余用系统楷体 / 宋体，不连外网字体 */
+@font-face { font-family: 'MaShanZheng-Subset'; src: url('assets/fonts/mashanzheng-subset.woff2') format('woff2'); font-display: swap; }
+
 :root {
   --paper: rgba(246, 238, 216, 0.92);
   --paper-solid: #f6eed8;
@@ -11,14 +14,18 @@
   --blue: #2f6f8f;
   --line: rgba(120, 95, 40, 0.22);
   --shadow: 0 10px 30px rgba(60, 45, 20, 0.2);
-  --serif: 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
-  --brush: 'Ma Shan Zheng', 'KaiTi', 'STKaiti', serif;
+  --serif: 'Songti SC', 'STSong', 'SimSun', serif;
+  --kai: 'STKaiti', 'KaiTi', 'Kaiti SC', serif;
+  --brush: 'MaShanZheng-Subset', var(--kai);
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #efe3c6; color: var(--ink); font-family: var(--serif); }
 #scene { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; }
 button { font-family: inherit; cursor: pointer; }
+/* 触屏：长按不弹系统菜单、不选中文字，按钮点击不等双击缩放 */
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+button, .dock-item, .plot-row, .banner { touch-action: manipulation; }
 svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 
 /* ---------- 标题 ---------- */
@@ -47,6 +54,8 @@ body.in-plot #back-btn { opacity: 1; pointer-events: auto; transform: none; }
 .p-head img { width: 52px; height: 52px; border-radius: 14px; background: #f3e1d8; object-fit: cover; image-rendering: pixelated; }
 .p-head h1 { margin: 0; font-family: var(--brush); font-weight: 400; font-size: 30px; letter-spacing: 2px; color: var(--blue); }
 .p-head p { margin: 0; color: var(--ink-soft); font-size: 13px; }
+.mode { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 8px; font-size: 11px; background: rgba(109, 98, 80, .14); color: var(--ink-soft); }
+.mode.real { background: rgba(95, 154, 110, .2); color: #3f7350; }
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 16px 0 10px; }
 .stats div { background: rgba(255, 255, 255, .6); border-radius: 12px; padding: 8px 4px; text-align: center; border: 1px solid var(--line); }
 .stats b { display: block; font-size: 20px; }
@@ -76,7 +85,8 @@ body.in-plot #back-btn { opacity: 1; pointer-events: auto; transform: none; }
 
 #panel .back { border: none; background: none; color: var(--ink-soft); padding: 0; font-size: 13px; }
 #panel .back:hover { color: var(--ink); }
-#panel h2 { font-family: var(--brush); font-weight: 400; font-size: 40px; margin: 6px 0 0; letter-spacing: 3px; color: var(--blue); }
+#panel h2 { font-family: var(--kai); font-weight: 400; font-size: 40px; margin: 6px 0 0; letter-spacing: 3px; color: var(--blue); }
+#panel h2.brush { font-family: var(--brush); }
 #panel .sub { margin: 0 0 12px; color: var(--ink-soft); font-size: 13px; }
 .alert-card { border-left: 4px solid var(--rose); background: rgba(200, 70, 61, .08); padding: 10px 12px; border-radius: 8px; margin-bottom: 8px; }
 .alert-card b { color: var(--rose); }
@@ -91,6 +101,9 @@ body.in-plot #back-btn { opacity: 1; pointer-events: auto; transform: none; }
 .dev-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .dev-list li { display: grid; grid-template-columns: 26px 64px 1fr 24px; align-items: center; gap: 6px; font-size: 13px; padding: 5px 6px; border-radius: 8px; background: rgba(255, 255, 255, .5); }
 .dev-list li.empty { display: block; color: var(--ink-soft); text-align: center; }
+.dev-list li.waiting { opacity: .6; background: transparent; border: 1px dashed var(--line); }
+.dev-list b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.metrics small { font-size: 12px; color: var(--ink-soft); font-weight: 500; }
 .dev-list .ico svg { width: 18px; height: 18px; color: var(--blue); }
 .dev-list span { color: var(--ink-soft); }
 .dev-list button { border: none; background: none; color: var(--ink-soft); }
@@ -109,7 +122,11 @@ body.in-plot #dock { transform: translate(-50%, 0); }
   background: rgba(255, 255, 255, .7); border: 1px solid var(--line); color: var(--blue); transition: .15s; }
 .dock-item:hover { transform: translateY(-3px); border-color: var(--lilac); background: #fff; }
 .dock-item svg { width: 28px; height: 28px; }
+.dock-item { position: relative; }
 .dock-item span { display: block; font-size: 12px; color: var(--ink); margin-top: 2px; }
+.dock-item .cnt { position: absolute; right: 6px; top: 4px; font-size: 11px; font-weight: 600; color: var(--ink-soft); }
+.dock-item.empty { opacity: .45; cursor: not-allowed; }
+.dock-item.empty:hover { transform: none; }
 .dock-sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
 .dock-btn { padding: 12px 16px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255, 255, 255, .7); font-size: 14px; color: var(--ink); }
 .dock-btn.water { background: linear-gradient(135deg, #2f6f8f, #24586f); color: #f6dc92; border: 1px solid var(--gold); }
@@ -148,6 +165,9 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
   box-shadow: inset 0 0 40px rgba(0, 0, 0, .45); }
 .feed-time, .feed-tag { position: absolute; font: 11px ui-monospace, monospace; color: #fff; text-shadow: 0 1px 2px #000; }
 .feed-time { left: 10px; bottom: 8px; }
+.feed-msg { position: absolute; inset: 0; display: none; place-items: center; color: #e9e3f0; font-size: 14px; letter-spacing: 1px; }
+#feed.placeholder .feed-view { background: #23212d; }
+#feed.placeholder .feed-msg { display: grid; }
 .feed-tag { right: 10px; top: 8px; color: #9fffc8; }
 
 /* ---------- 确认框 / 提示 ---------- */
@@ -177,9 +197,11 @@ body.dragging, body.dragging * { cursor: grabbing !important; }
 
 @media (max-width: 900px) {
   #panel { top: auto; left: 10px; right: 10px; bottom: 10px; width: auto; max-height: 38vh; }
-  #dock { left: 50%; bottom: calc(38vh + 20px); }
+  #dock { left: 50%; bottom: calc(38vh + 20px); transform: translate(-50%, 0); opacity: 0; pointer-events: none; transition: opacity .3s; }
+  body.in-plot #dock { opacity: 1; pointer-events: auto; }
   #toast { left: 50%; }
   #title-card h1 { font-size: 32px; }
   #hint { display: none; }
 }
 body.in-plot #labels { opacity: 0; transition: opacity .3s; }
+@media (min-width: 901px) { body.embedded #panel { top: 68px; } }

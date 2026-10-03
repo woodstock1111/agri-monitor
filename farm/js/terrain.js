@@ -47,11 +47,12 @@ export function mountainFactor(x, z) {
   return Math.max(smoothstep(-140, -215, z), smoothstep(185, 250, Math.abs(x)) * smoothstep(60, -40, z)) * inland;
 }
 
-// 不含弧度的真实高度
-export function rawHeight(x, z) {
+// 不含弧度的真实高度。out 可选：顺带带回山的系数 m 和到海岸的距离 sd（建地形时不用再算一遍）
+export function rawHeight(x, z, out) {
   let h = 0.25 + (fbm(x * 0.02, z * 0.02, 3) - 0.5) * 0.7;
+  const sd = shoreDist(x, z);
   // 山
-  const m = mountainFactor(x, z);
+  const m = Math.max(smoothstep(-140, -215, z), smoothstep(185, 250, Math.abs(x)) * smoothstep(60, -40, z)) * smoothstep(6, 40, sd);
   if (m > 0) {
     const r = 1 - Math.abs(2 * fbm(x * 0.012 + 9, z * 0.012, 5) - 1);
     h += m * (10 + 95 * r * r * fbm(x * 0.004, z * 0.004 + 2, 2));
@@ -71,12 +72,12 @@ export function rawHeight(x, z) {
   const dr = distRiver(x, z);
   h = lerp(h, -2.6, smoothstep(7.5 + m * 6, 4 + m * 3, dr));
   // 海岸：沙滩缓坡入海
-  const sd = shoreDist(x, z);
   if (sd < 18) {
     const beach = 0.5 + sd * 0.07;
     h = Math.min(h, lerp(beach, h, smoothstep(10, 18, sd)));
     if (sd < 0) h = Math.min(h, beach - smoothstep(0, -60, sd) * 9);
   }
+  if (out) { out.m = m; out.sd = sd; }
   return h;
 }
 
@@ -103,6 +104,8 @@ export function toon(color, extra = {}) {
 }
 
 const TER = { size: 1300, seg: 430 };
+// 建地形时算出的原始高度，水面直接拿来做深度贴图（同一张网格，不再整片重算）
+let heightGrid = null;
 
 export function buildTerrain(style) {
   const geo = new THREE.PlaneGeometry(TER.size, TER.size, TER.seg, TER.seg).rotateX(-Math.PI / 2);
@@ -112,14 +115,17 @@ export function buildTerrain(style) {
   const C = (k) => new THREE.Color(style[k]);
   const P = { land: C('land'), land2: C('land2'), slope: C('slope'), mountain: C('mountain'), peak: C('peak'), sand: C('sand'), bank: C('bank') };
   const c = new THREE.Color();
+  const parts = { m: 0, sd: 0 };
+  heightGrid = new Float32Array(pos.count);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i), z = pos.getZ(i);
-    const h = rawHeight(x, z);
+    const h = rawHeight(x, z, parts);
+    heightGrid[i] = h;
     pos.setY(i, h - drop(x, z));
-    const m = mountainFactor(x, z);
+    const m = parts.m;
     c.copy(P.land).lerp(P.land2, smoothstep(0.35, 0.65, fbm(x * 0.03, z * 0.03, 2)));
     if (h < 0.0) c.copy(P.bank);
-    if (shoreDist(x, z) < 12 && m < 0.5) c.copy(P.sand);
+    if (parts.sd < 12 && m < 0.5) c.copy(P.sand);
     if (m > 0.05) {
       const k = smoothstep(4, 40, h);
       c.lerp(P.slope, smoothstep(0.05, 0.4, m));
@@ -139,40 +145,30 @@ export function buildTerrain(style) {
   return mesh;
 }
 
-// 地面网格线（科技感风格）
+// 地面淡金网格线
 function addGrid(mat, style) {
   const gc = new THREE.Color(style.accent);
-  mat.userData.uTime = { value: 0 };
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uGridColor = { value: gc };
     sh.uniforms.uGrid = { value: style.grid };
-    sh.uniforms.uTime = mat.userData.uTime;
-    sh.uniforms.uSweep = { value: new THREE.Color(style.sweep || style.accent) };
-    sh.uniforms.uSweepOn = { value: style.sweep ? 1 : 0 };
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP;')
       .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWP = (modelMatrix*vec4(transformed,1.)).xyz;');
-    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP; uniform vec3 uGridColor; uniform float uGrid; uniform float uTime; uniform vec3 uSweep; uniform float uSweepOn;')
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP; uniform vec3 uGridColor; uniform float uGrid;')
       .replace('#include <dithering_fragment>', `
         vec2 g = abs(fract(vWP.xz/12.0 + 0.5) - 0.5) / fwidth(vWP.xz/12.0);
         float line = 1.0 - min(min(g.x, g.y), 1.0);
         float fade = 1.0 - smoothstep(120.0, 320.0, length(vWP.xz - vec2(0.0, -30.0)));
         gl_FragColor.rgb = mix(gl_FragColor.rgb, uGridColor, line * uGrid * 0.45 * fade);
-        if (uSweepOn > 0.5) {
-          float rr = length(vWP.xz - vec2(0.0, -40.0));
-          float front = mod(uTime * 45.0, 420.0);
-          float band = exp(-abs(rr - front) / 2.5) + 0.35 * exp(-max(front - rr, 0.0) / 30.0) * step(rr, front);
-          gl_FragColor.rgb = mix(gl_FragColor.rgb, uSweep, clamp(band * (0.35 + line * 1.5), 0.0, 0.6) * (1.0 - smoothstep(300.0, 420.0, front)));
-        }
         #include <dithering_fragment>`);
   };
 }
 
+// 和地形同一张网格：第 j 行 = z 方向，第 i 列 = x 方向（PlaneGeometry 转平后的顶点顺序）
 function heightTexture() {
-  const N = 512, data = new Uint8Array(N * N * 4);
+  const N = TER.seg + 1, data = new Uint8Array(N * N * 4);
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
-    const x = -TER.size / 2 + (i / (N - 1)) * TER.size;
-    const z = -60 - TER.size / 2 + (j / (N - 1)) * TER.size;
-    const v = Math.round(Math.min(1, Math.max(0, (rawHeight(x, z) + 12) / 24)) * 255);
+    const h = heightGrid ? heightGrid[j * N + i] : rawHeight(-TER.size / 2 + (i / (N - 1)) * TER.size, -60 - TER.size / 2 + (j / (N - 1)) * TER.size);
+    const v = Math.round(Math.min(1, Math.max(0, (h + 12) / 24)) * 255);
     const k = (j * N + i) * 4;
     data[k] = data[k + 1] = data[k + 2] = v; data[k + 3] = 255;
   }
@@ -192,7 +188,6 @@ export function buildWater(style) {
     uBounds: { value: new THREE.Vector4(-TER.size / 2, -60 - TER.size / 2, TER.size, TER.size) },
     uWater: { value: lin(style.water) }, uDeep: { value: lin(style.waterDeep) }, uLine: { value: lin(style.waterLine) }, uFoam: { value: lin(style.foam) },
     uFogColor: { value: lin(style.fog) }, uFogNear: { value: style.fogNear }, uFogFar: { value: style.fogFar },
-    uGlow: { value: style.lineGlow ? 1 : 0 },
   };
   const mat = new THREE.ShaderMaterial({
     uniforms,
@@ -201,7 +196,7 @@ export function buildWater(style) {
       void main(){ vec4 w = modelMatrix*vec4(position,1.); vW = w.xyz; vec4 mv = viewMatrix*w; vDist = -mv.z; gl_Position = projectionMatrix*mv; }`,
     fragmentShader: /* glsl */`
       uniform float uTime; uniform sampler2D uHeight; uniform vec4 uBounds;
-      uniform vec3 uWater, uDeep, uLine, uFoam, uFogColor; uniform float uFogNear, uFogFar, uGlow;
+      uniform vec3 uWater, uDeep, uLine, uFoam, uFogColor; uniform float uFogNear, uFogFar;
       varying vec3 vW; varying float vDist;
       float hash21(vec2 p){ p = fract(p*vec2(123.34, 456.21)); p += dot(p, p+45.32); return fract(p.x*p.y); }
       float vnoise(vec2 p){ vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.-2.*f);
@@ -227,7 +222,6 @@ export function buildWater(style) {
         float edge = 1.0 - smoothstep(0.0, 0.35, depth);
         float foam = max(crest * shore * (0.5 + 0.5*vnoise(p*0.15 + uTime*0.3)), edge);
         c = mix(c, uFoam, clamp(foam, 0., 1.) * 0.9);
-        if (uGlow > 0.5) c += uLine * foam * 0.8 + uLine * line * far * 0.35;
         float f = smoothstep(uFogNear, uFogFar, vDist);
         gl_FragColor = vec4(mix(c, uFogColor, f), 1.0);
         #include <colorspace_fragment>
