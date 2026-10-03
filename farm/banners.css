@@ -1,0 +1,74 @@
+/* 竖排地块标牌：每种风格一套 */
+.banner { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; transform-origin: 50% 100%; will-change: transform; }
+.banner .flag { writing-mode: vertical-rl; text-orientation: upright; display: flex; align-items: center; gap: 6px; padding: 12px 6px 16px; }
+.banner .nm { font-family: 'Ma Shan Zheng', 'KaiTi', serif; font-size: 26px; line-height: 1.05; letter-spacing: 2px; }
+.banner .al { font: 700 12px 'Noto Serif SC', serif; padding: 6px 2px; letter-spacing: 1px; border-radius: 3px; }
+.banner .pole { width: 2px; height: 40px; }
+
+/* A 水墨：红幡白字，底边燕尾 */
+.theme-ink .flag { background: #c8382f; color: #fff6ec; clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 92%, 0 100%); box-shadow: 0 6px 12px rgba(0,0,0,.2); }
+.theme-ink .pole { background: linear-gradient(#5b4a48, transparent); }
+.theme-ink .al { background: #fff6ec; color: #c8382f; }
+.theme-ink .alert .flag { animation: inkPulse 1.4s ease-in-out infinite; }
+@keyframes inkPulse { 50% { filter: brightness(1.25) drop-shadow(0 0 8px #ff5a4a); } }
+
+/* B 水墨×科技：红幡 + 青色细框和光柱 */
+.theme-inktech .flag { background: linear-gradient(#cf3a31, #a82a24); color: #fff; outline: 1.5px solid #18d6f0; outline-offset: 3px; box-shadow: 0 0 14px rgba(24,214,240,.45); }
+.theme-inktech .pole { width: 2px; height: 48px; background: linear-gradient(#18d6f0, rgba(24,214,240,0)); box-shadow: 0 0 6px #18d6f0; }
+.theme-inktech .al { background: #18d6f0; color: #102027; }
+.theme-inktech .alert .flag { outline-color: #ff4b4b; box-shadow: 0 0 18px rgba(255,75,75,.7); animation: blink 1.2s infinite; }
+
+/* C 夜墨赛博：深色玻璃 + 霓虹红边 */
+.theme-neon .flag { background: rgba(10,16,28,.75); color: #ffe3ea; border: 2px solid #ff3b6b; box-shadow: 0 0 12px #ff3b6b, inset 0 0 10px rgba(255,59,107,.35); text-shadow: 0 0 8px #ff3b6b; }
+.theme-neon .pole { background: linear-gradient(#ff3b6b, transparent); box-shadow: 0 0 6px #ff3b6b; }
+.theme-neon .al { background: #ffcf6b; color: #1a1020; }
+.theme-neon .alert .flag { animation: blink 1s infinite; }
+
+/* D 青绿：石青底 + 金边金字 */
+.theme-gold .flag { background: linear-gradient(#2f6f8f, #275a75); color: #f3d68a; border: 2px solid #c9a34a; border-radius: 3px 3px 12px 12px; box-shadow: 0 6px 12px rgba(60,40,10,.25); }
+.theme-gold .pole { background: linear-gradient(#c9a34a, transparent); }
+.theme-gold .al { background: #c8382f; color: #fff; }
+
+/* E 全息：半透明青色玻璃 + 扫描线 */
+.theme-holo .flag { background: repeating-linear-gradient(0deg, rgba(56,224,255,.16) 0 2px, rgba(56,224,255,.05) 2px 4px); color: #c9f6ff; border: 1px solid #38e0ff; box-shadow: 0 0 16px rgba(56,224,255,.5); text-shadow: 0 0 6px #38e0ff; }
+.theme-holo .nm { font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 20px; }
+.theme-holo .pole { background: linear-gradient(#38e0ff, transparent); box-shadow: 0 0 6px #38e0ff; }
+.theme-holo .al { background: #ff4b6e; color: #fff; }
+.theme-holo .alert .flag { border-color: #ff4b6e; box-shadow: 0 0 18px rgba(255,75,110,.7); }
+
+/* F 卡通：白底圆角牌 + 橙色顶 */
+.theme-cartoon .flag { background: #fffaf0; color: #3a2a20; border: 3px solid #2a2320; border-top: 10px solid #ff7a3d; border-radius: 10px; box-shadow: 0 5px 0 rgba(0,0,0,.25); }
+.theme-cartoon .nm { font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 20px; }
+.theme-cartoon .pole { width: 5px; background: #8a5a3c; border: 2px solid #2a2320; border-top: none; }
+.theme-cartoon .al { background: #ff4b4b; color: #fff; }
+.theme-cartoon .alert .flag { animation: bounce 1s infinite; }
+@keyframes bounce { 50% { transform: translateY(-4px); } }
+
+@keyframes blink { 50% { opacity: .6; } }
+
+/* 数据小条：只有科技风显示 */
+.banner .data { display: none; font: 600 11px 'Noto Serif SC', serif; padding: 2px 6px; margin-top: 4px; border-radius: 3px; white-space: nowrap; }
+
+/* G1 青绿 × 金线科技 */
+.theme-goldtech .flag { background: linear-gradient(#2f6f8f, #24586f); color: #f6dc92; border: 1.5px solid #e2b64f; border-radius: 2px; box-shadow: 0 0 0 3px rgba(226,182,79,.25), 0 6px 14px rgba(40,30,10,.3); position: relative; }
+.theme-goldtech .flag::before, .theme-goldtech .flag::after { content: ''; position: absolute; left: -5px; right: -5px; height: 6px; border: 1.5px solid #e2b64f; }
+.theme-goldtech .flag::before { top: -6px; border-bottom: none; }
+.theme-goldtech .flag::after { bottom: -6px; border-top: none; }
+.theme-goldtech .data { display: block; background: rgba(36,88,111,.9); color: #f6dc92; border: 1px solid #e2b64f; }
+.theme-goldtech .pole { width: 2px; height: 46px; background: linear-gradient(#e2b64f, rgba(226,182,79,0)); box-shadow: 0 0 6px #e2b64f; }
+.theme-goldtech .al { background: #c8382f; color: #fff; }
+.theme-goldtech .alert .flag { border-color: #ff5a4a; box-shadow: 0 0 0 3px rgba(255,90,74,.35), 0 0 16px rgba(255,90,74,.6); animation: blink 1.3s infinite; }
+
+/* G2 青绿 × 青光科技 */
+.theme-jadetech .flag { background: linear-gradient(rgba(28,110,104,.92), rgba(20,82,90,.92)); color: #f3e2a8; border: 1.5px solid #2fe0cf; border-radius: 3px; box-shadow: 0 0 14px rgba(47,224,207,.55), inset 0 0 10px rgba(47,224,207,.25); }
+.theme-jadetech .data { display: block; background: rgba(12,60,64,.85); color: #8ff5ea; border: 1px solid #2fe0cf; }
+.theme-jadetech .pole { width: 3px; height: 50px; background: linear-gradient(#2fe0cf, rgba(47,224,207,0)); box-shadow: 0 0 8px #2fe0cf; }
+.theme-jadetech .al { background: #ff5a4a; color: #fff; }
+.theme-jadetech .alert .flag { border-color: #ff5a4a; box-shadow: 0 0 18px rgba(255,90,74,.75); animation: blink 1.3s infinite; }
+
+/* H4 朱印：红色印章式竖幡 + 青色数据条 */
+.theme-sealtech .flag { background: #b8322a; color: #fff4e4; border: 2px solid #fff4e4; outline: 2px solid #b8322a; border-radius: 4px; box-shadow: 0 5px 10px rgba(80,30,20,.25); }
+.theme-sealtech .data { display: block; background: rgba(255,250,240,.92); color: #1c7c72; border: 1px solid #3bbfb0; }
+.theme-sealtech .pole { width: 2px; height: 42px; background: linear-gradient(#3bbfb0, rgba(59,191,176,0)); }
+.theme-sealtech .al { background: #fff4e4; color: #b8322a; }
+.theme-sealtech .alert .flag { animation: inkPulse 1.4s ease-in-out infinite; }

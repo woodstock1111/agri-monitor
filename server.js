@@ -2109,7 +2109,7 @@ const server = http.createServer(async (req, res) => {
             return res.end();
         }
         if (fs.existsSync(resolved) && fs.lstatSync(resolved).isFile()) {
-            res.writeHead(200, { 'Content-Type': { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.jpg': 'image/jpeg' }[path.extname(resolved).toLowerCase()] || 'text/plain; charset=utf-8' });
+            res.writeHead(200, { 'Content-Type': { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.jpg': 'image/jpeg', '.png': 'image/png', '.svg': 'image/svg+xml', '.webp': 'image/webp', '.glb': 'model/gltf-binary' }[path.extname(resolved).toLowerCase()] || 'text/plain; charset=utf-8' });
             return fs.createReadStream(resolved).pipe(res);
         }
         res.writeHead(404);

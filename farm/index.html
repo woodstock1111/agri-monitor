@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>小薯农场 · 海岛监测</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&family=Noto+Serif+SC:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="banners.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <div id="labels"></div>
+
+  <div id="title-card">
+    <h1>小薯农场</h1>
+    <p>海岛种植区 · 智慧监测</p>
+  </div>
+  <button id="back-btn">← 返回全岛</button>
+  <div id="hint">拖动平移 · 滚轮缩放 · 点地块进入 · WASD 也可以移动</div>
+
+  <aside id="panel"></aside>
+
+  <div id="dock">
+    <div class="dock-item" data-type="probe" title="拖进地里">
+      <svg viewBox="0 0 24 24"><rect x="7" y="3" width="10" height="8" rx="1.5"/><path d="M12 11v10M10 21h4"/></svg>
+      <span>土壤传感器</span>
+    </div>
+    <div class="dock-item" data-type="weather" title="拖进地里">
+      <svg viewBox="0 0 24 24"><path d="M12 22V9M7 9h10M9 4a3 3 0 0 1 6 0"/><circle cx="18" cy="13" r="2"/></svg>
+      <span>气象站</span>
+    </div>
+    <div class="dock-item" data-type="camera" title="拖进地里">
+      <svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="8" rx="2"/><path d="m16 9 5-2v6l-5-2M8 14v7"/></svg>
+      <span>摄像头</span>
+    </div>
+    <div class="dock-sep"></div>
+    <button class="dock-btn water" id="dock-water">💧 浇水</button>
+    <button class="dock-btn" id="dock-back">返回地图</button>
+  </div>
+
+  <div id="tip" hidden></div>
+
+  <div id="feed" hidden>
+    <div class="feed-h"><i class="rec"></i><span class="feed-id"></span>
+      <button class="btn-max" title="最大化 / 还原">⤢</button><button class="btn-close" title="关闭">✕</button></div>
+    <div class="feed-view"><div class="scan"></div><span class="feed-time"></span><span class="feed-tag">LIVE · 演示画面</span></div>
+  </div>
+
+  <div id="drag-chip" hidden></div>
+
+  <div id="modal" hidden>
+    <div class="box">
+      <h3></h3>
+      <p></p>
+      <div class="btns"><button class="cancel">取消</button><button class="ok">确认</button></div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <div id="loading">
+    <div class="inner">
+      <h1>小薯农场</h1>
+      <p>正在铺开画布…</p>
+      <div class="bar"><i></i></div>
+    </div>
+  </div>
+
+  <script>
+    // 调试：?debug 时把报错显示在页面上
+    if (location.search.includes('debug')) {
+      const show = (m) => { let d = document.getElementById('dbg'); if (!d) { d = document.createElement('pre'); d.id = 'dbg';
+        d.style.cssText = 'position:fixed;left:0;bottom:0;z-index:999;max-width:60vw;max-height:40vh;overflow:auto;background:#000c;color:#f88;font:11px monospace;margin:0;padding:6px'; document.body.appendChild(d); }
+        d.textContent += m + '\n'; };
+      window.addEventListener('error', (e) => show(e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
+      window.addEventListener('unhandledrejection', (e) => show('promise: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason)));
+      const ce = console.error; console.error = (...a) => { show(a.map(String).join(' ')); ce(...a); };
+    }
+  </script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
