@@ -2167,3 +2167,7 @@ body.ft-farm-dragging #ft-user-list .ft-card { opacity: 0.38; }
     scroll-behavior: auto !important;
   }
 }
+
+/* 小薯实时农场：整页嵌入 3D 农场 */
+.farm3d-root { height: calc(100vh - 120px); min-height: 520px; border-radius: 14px; overflow: hidden; box-shadow: 0 6px 24px rgba(0,0,0,.12); background: #efe3c6; }
+.farm3d-root iframe { display: block; width: 100%; height: 100%; border: 0; }

@@ -1356,7 +1356,7 @@ const app = {
     sessionStorage.setItem('agri_current_page', page);
     document.querySelectorAll('.nav-link').forEach(l => l.classList.toggle('active', l.dataset.page === page));
     const titles = {
-      harvest: 'AI收成预测',
+      harvest: 'AI收成预测', farm3d: '小薯实时农场',
       dashboard:'\u7cfb\u7edf\u603b\u89c8', realtime:'\u5b9e\u65f6\u6570\u636e', video:'\u89c6\u9891\u76d1\u63a7', history:'\u66f2\u7ebf\u56fe\u8868',
       farmtasks:'\u519c\u4e8b\u8ba1\u5212', cloudsync:'\u5386\u53f2\u8bb0\u5f55', pestdb:'\u75c5\u5bb3\u866b\u6570\u636e\u5e93', photos:'AI\u8bb0\u5f55', automation:'\u81ea\u52a8\u5316\u6d41\u7a0b', locations:'\u5730\u5757\u7ba1\u7406', devices:'\u8bbe\u5907\u7ba1\u7406',
       accounts:'\u8d26\u53f7\u7ba1\u7406'
@@ -1369,7 +1369,13 @@ const app = {
     document.getElementById('page-' + page)?.classList.add('active');
     document.querySelector('.main-wrap')?.scrollTo({ top: 0 });
     this.stopLive();
+    // 3D 农场只在打开时加载；离开就卸掉，免得后台一直占显卡
+    const farmRoot = document.getElementById('farm3d-root');
+    if (farmRoot && page !== 'farm3d') farmRoot.innerHTML = '';
     const init = {
+      farm3d: () => {
+        if (!farmRoot.firstChild) farmRoot.innerHTML = '<iframe src="/farm/index.html" title="小薯实时农场" allow="fullscreen"></iframe>';
+      },
       harvest: () => window.HarvestUI.init(Store.getLocations(), {
         requestSoil: async (lat, lng, signal) => {
           const response = await fetch('/api/v1/harvest/soil?' + new URLSearchParams({ lat, lng }), {
